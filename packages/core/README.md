@@ -1,6 +1,6 @@
 # `@pear-agent/core`
 
-PEAR RuntimeのDomain、Goal、Actor、Capability Policy、Plan DAG、Step状態を定義する、環境非依存のFoundation packageです。
+PEAR RuntimeのDomain、Goal、Actor、Capability Policy、Plan DAG、Execution Stateを定義する、環境非依存のFoundation packageです。
 
 ## Install
 
@@ -77,4 +77,28 @@ const states = deriveStepStatuses(
 );
 ```
 
-このFoundationには永続化、Voice Session、AI SDKによる計画・再計画は含まれません。これらは後続Phaseで提供します。
+## Execution State
+
+`InMemoryExecutionStateRepository`はAdapterのcontract testにも使える参照実装です。初期状態を登録し、冪等性キー付きEventを追加すると、同じ操作内でmaterialized stateが更新され、最新Snapshotを取得できます。
+
+```ts
+import { InMemoryExecutionStateRepository } from "@pear-agent/core";
+
+const repository = new InMemoryExecutionStateRepository();
+repository.create(initialState);
+
+repository.appendEvent({
+  id: "event-1",
+  sessionId: initialState.session.id,
+  idempotencyKey: "pack-complete",
+  actorId: "human-1",
+  origin: "user",
+  type: "step_completed",
+  payload: { stepId: "pack" },
+  occurredAt: new Date(),
+});
+
+const snapshot = repository.getSnapshot(initialState.session.id);
+```
+
+CoreはSession、WorldState、Runtime Event、Timer、materialized state、Snapshot、transactional Repository Portを提供します。`InMemoryExecutionStateRepository`は永続ストアではありません。Cloudflare/D1への永続化、Voice Session、AI SDKによる計画・再計画は後続Phaseで提供します。

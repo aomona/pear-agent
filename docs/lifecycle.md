@@ -9,6 +9,8 @@ not_started → active → paused → active → completed
 
 SessionのVoice接続が切れてもExecution Sessionは継続できます。
 
+Issue #3のCoreはSession、WorldState、Runtime Event、Timer、materialized state、Snapshot、Repository Portまでを定義します。Event追加と状態更新のatomic性および冪等性はPortの契約です。Cloudflare/D1へ永続化するAdapterはIssue #4の範囲です。
+
 ## Step
 
 ```text
@@ -112,4 +114,3 @@ Eventを記録
 ## Goal Completion
 
 成功条件は人間、Tool、状態ルール、AIのいずれかで評価します。全条件を満たした場合、Completion Policyに従って自動完了または人間確認へ進みます。
-

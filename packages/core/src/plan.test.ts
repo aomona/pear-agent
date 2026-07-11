@@ -180,9 +180,7 @@ describe("execution plan schemas", () => {
     };
 
     for (const domainData of [() => "not cloneable", Symbol("not cloneable")]) {
-      expect(schema.safeParse({ ...plan, steps: [{ ...step, domainData }] }).success).toBe(
-        false,
-      );
+      expect(schema.safeParse({ ...plan, steps: [{ ...step, domainData }] }).success).toBe(false);
     }
   });
 });

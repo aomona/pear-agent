@@ -35,6 +35,8 @@ create-pear-agent
 
 CloudflareやReactへ依存しない実行モデル、状態遷移、検証ロジックを提供します。
 
+Issue #3ではExecution Session、WorldState、Runtime Event、Timer、materialized state、Snapshot、冪等かつatomicな更新を表すRepository Portとin-memory参照実装までをCoreに実装しました。Cloudflare/D1の永続Repository実装は含まず、Issue #4でAdapterとして実装します。
+
 ### `@pear-agent/cloudflare`
 
 Workers、Agents、Durable Objects、D1、R2、WorkflowsへのAdapterを提供します。

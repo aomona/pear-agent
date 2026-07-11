@@ -84,10 +84,12 @@ export class InMemoryExecutionStateRepository implements ExecutionStateRepositor
   getSnapshot(sessionId: string): RuntimeSnapshot | undefined {
     const state = this.states.get(sessionId);
     if (!state) return undefined;
-    return clone(createRuntimeSnapshot({
-      plan: state.plan,
-      state,
-      recentEvents: this.events.get(sessionId) ?? [],
-    }));
+    return clone(
+      createRuntimeSnapshot({
+        plan: state.plan,
+        state,
+        recentEvents: this.events.get(sessionId) ?? [],
+      }),
+    );
   }
 }

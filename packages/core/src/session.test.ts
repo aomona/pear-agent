@@ -23,6 +23,8 @@ describe("executionSessionSchema", () => {
   });
 
   it("rejects an unknown session status", () => {
-    expect(executionSessionSchema.safeParse({ ...session, status: "archived" }).success).toBe(false);
+    expect(executionSessionSchema.safeParse({ ...session, status: "archived" }).success).toBe(
+      false,
+    );
   });
 });

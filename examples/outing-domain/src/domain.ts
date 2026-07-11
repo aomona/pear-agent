@@ -1,4 +1,9 @@
-import { defineDomain } from "@pear-agent/core";
+import {
+  defineDomain,
+  type ExecutionGoal,
+  type ExecutionPlan,
+  type WorldState,
+} from "@pear-agent/core";
 import { z } from "zod";
 
 const belongingInputSchema = z.object({
@@ -52,3 +57,59 @@ export const outingDomain = defineDomain({
   capabilities: [],
   completionPolicy: "automatic",
 });
+
+export const outingGoal: ExecutionGoal = {
+  id: "ready-to-leave",
+  description: "必要な持ち物を揃え、機器を充電して出発できる",
+  successCriteria: [
+    {
+      id: "packed",
+      description: "必要な持ち物がすべて梱包済みである",
+      evaluator: { type: "state_rule" },
+    },
+    {
+      id: "charged",
+      description: "必要な機器が充電済みである",
+      evaluator: { type: "state_rule" },
+    },
+  ],
+  completionPolicy: "automatic",
+};
+
+export const outingPlan: ExecutionPlan<{ belongingIds: string[] }> = {
+  id: "outing-plan",
+  version: 1,
+  goal: outingGoal,
+  steps: [
+    {
+      id: "pack",
+      executor: { type: "human" },
+      after: [],
+      requirements: [],
+      estimatedDurationSeconds: 60,
+      timers: [],
+      domainData: { belongingIds: ["keys"] },
+    },
+    {
+      id: "charge",
+      executor: { type: "human" },
+      after: [],
+      requirements: [],
+      estimatedDurationSeconds: 300,
+      timers: [],
+      domainData: { belongingIds: ["phone"] },
+    },
+  ],
+};
+
+export const initialOutingWorldState: WorldState = {
+  facts: {
+    departureAt: "2026-07-11T03:00:00Z",
+    packedBelongingIds: [],
+    chargeByBelongingId: { phone: 20 },
+  },
+  resources: [],
+  observations: [],
+  activeConstraints: [],
+  updatedAt: new Date("2026-07-11T00:00:00.000Z"),
+};

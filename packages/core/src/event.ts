@@ -26,21 +26,18 @@ const timerCompletedEventSchema = coreEventSchema("timer_completed");
 const worldStateUpdatedEventSchema = coreEventSchema("world_state_updated");
 const goalEvaluatedEventSchema = coreEventSchema("goal_evaluated");
 
-export const coreRuntimeEventSchema = z.discriminatedUnion(
-  "type",
-  [
-    sessionStartedEventSchema,
-    sessionPausedEventSchema,
-    stepStartedEventSchema,
-    stepCompletedEventSchema,
-    stepFailedEventSchema,
-    timerStartedEventSchema,
-    timerPausedEventSchema,
-    timerCompletedEventSchema,
-    worldStateUpdatedEventSchema,
-    goalEvaluatedEventSchema,
-  ],
-);
+export const coreRuntimeEventSchema = z.discriminatedUnion("type", [
+  sessionStartedEventSchema,
+  sessionPausedEventSchema,
+  stepStartedEventSchema,
+  stepCompletedEventSchema,
+  stepFailedEventSchema,
+  timerStartedEventSchema,
+  timerPausedEventSchema,
+  timerCompletedEventSchema,
+  worldStateUpdatedEventSchema,
+  goalEvaluatedEventSchema,
+]);
 
 export type CoreRuntimeEvent = z.infer<typeof coreRuntimeEventSchema>;
 
