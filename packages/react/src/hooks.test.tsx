@@ -417,4 +417,95 @@ describe("react hooks", () => {
     });
     expect(cancelled).toBe(false);
   });
+
+  it("useVoiceSession session switch releases prior lease without painting it on the new session", async () => {
+    const provider = new FakeVoiceProvider();
+    const releasedSessions: string[] = [];
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const sessionMatch = url.match(/\/sessions\/([^/]+)\/voice\//);
+      const sessionId = sessionMatch?.[1] ?? "unknown";
+
+      if (url.endsWith("/voice/lease") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: `lease-${sessionId}`,
+              sessionId,
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/token") && method === "POST") {
+        return new Response(JSON.stringify({ token: "ephemeral", model: "fake-model" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/voice/lease") && method === "DELETE") {
+        releasedSessions.push(sessionId);
+        // Slow release so stale setState would race without epoch guards.
+        await new Promise((r) => setTimeout(r, 20));
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: `lease-${sessionId}`,
+              sessionId,
+              actorId: "traveler",
+              status: "released",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result, rerender } = renderHook(
+      ({ sid }: { sid: string }) => useVoiceSession(sid, { provider }),
+      {
+        initialProps: { sid: "s1" },
+        wrapper: createWrapper(client),
+      },
+    );
+
+    await act(async () => {
+      await result.current.connect();
+    });
+    expect(result.current.status).toBe("connected");
+    expect(result.current.lease?.sessionId).toBe("s1");
+
+    await act(async () => {
+      rerender({ sid: "s2" });
+    });
+
+    // New session view starts idle; async release of s1 must not overwrite with released lease.
+    expect(result.current.status).toBe("idle");
+    expect(result.current.lease).toBeNull();
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 40));
+    });
+
+    expect(releasedSessions).toContain("s1");
+    expect(result.current.status).toBe("idle");
+    expect(result.current.lease).toBeNull();
+  });
 });
