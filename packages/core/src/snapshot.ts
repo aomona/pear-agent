@@ -34,6 +34,35 @@ export type CreateRuntimeSnapshotInput<TStepData = unknown> = {
   generatedAt?: Date;
 };
 
+function structurallyEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => structurallyEqual(value, right[index]))
+    );
+  }
+  if (Object.getPrototypeOf(left) !== Object.getPrototypeOf(right)) return false;
+  if (left instanceof Date && right instanceof Date) return left.getTime() === right.getTime();
+
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] && structurallyEqual(leftRecord[key], rightRecord[key]),
+    )
+  );
+}
+
 /**
  * Builds a snapshot without mutating the materialized state or event log.
  * Step state keys are deliberately projected through the plan so stale keys
@@ -55,7 +84,7 @@ export function createRuntimeSnapshot<TStepData = unknown>({
   ) {
     throw new Error("Plan identity/version does not match execution state session");
   }
-  if (JSON.stringify(parsedPlan) !== JSON.stringify(parsedState.plan)) {
+  if (!structurallyEqual(parsedPlan, parsedState.plan)) {
     throw new Error("Supplied plan does not match execution state plan");
   }
   if (parsedState.session.goalId !== parsedPlan.goal.id) {

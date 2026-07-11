@@ -150,6 +150,25 @@ describe("createRuntimeSnapshot", () => {
     );
   });
 
+  it("accepts equivalent domain data with different object key insertion order", () => {
+    const suppliedPlan = {
+      ...plan,
+      steps: [{ ...plan.steps[0]!, domainData: { first: 1, second: 2 } }, plan.steps[1]!],
+    };
+    const statePlan = {
+      ...plan,
+      steps: [{ ...plan.steps[0]!, domainData: { second: 2, first: 1 } }, plan.steps[1]!],
+    };
+
+    expect(() =>
+      createRuntimeSnapshot({
+        plan: suppliedPlan,
+        state: { ...state, plan: statePlan },
+        recentEvents: [],
+      }),
+    ).not.toThrow();
+  });
+
   it("rejects a session whose goal does not match the plan", () => {
     expect(() =>
       createRuntimeSnapshot({
