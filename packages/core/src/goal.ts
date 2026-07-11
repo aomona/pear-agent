@@ -36,9 +36,18 @@ export const criterionEvaluationSchema = z.object({
 export type CriterionEvaluation = z.infer<typeof criterionEvaluationSchema>;
 
 export function evaluateGoalCompletion(
+  goal: Pick<ExecutionGoal, "successCriteria">,
   evaluations: readonly CriterionEvaluation[],
 ): "satisfied" | "incomplete" {
-  return evaluations.length > 0 && evaluations.every(({ status }) => status === "satisfied")
+  const expectedIds = new Set(goal.successCriteria.map(({ id }) => id));
+  const evaluatedIds = new Set(evaluations.map(({ criterionId }) => criterionId));
+  const isExactEvaluationSet =
+    expectedIds.size === goal.successCriteria.length &&
+    evaluations.length === expectedIds.size &&
+    evaluatedIds.size === evaluations.length &&
+    evaluations.every(({ criterionId }) => expectedIds.has(criterionId));
+
+  return isExactEvaluationSet && evaluations.every(({ status }) => status === "satisfied")
     ? "satisfied"
     : "incomplete";
 }

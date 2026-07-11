@@ -1,7 +1,32 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
 
-import { defineDomain } from "./index.js";
+import {
+  capabilityDefinitionSchema,
+  defineDomain,
+  executionDomainDefinitionSchema,
+} from "./index.js";
+
+const schemas = {
+  input: z.object({ departureAt: z.iso.datetime() }),
+  normalizedInput: z.object({ departureAt: z.iso.datetime(), items: z.array(z.string()) }),
+  stepData: z.object({ itemIds: z.array(z.string()) }),
+  worldState: z.object({ packedItemIds: z.array(z.string()) }),
+  events: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("delay"), minutes: z.number().positive() }),
+  ]),
+};
+
+const validDefinition = () => ({
+  id: "outing",
+  version: 1,
+  schemas,
+  normalizeInput: async (input: z.output<typeof schemas.input>) => ({ ...input, items: [] }),
+  planning: { instructions: "Plan the outing", objectives: ["Leave on time"] as const },
+  replanning: { instructions: "Replan affected work", defaultMode: "automatic" as const },
+  capabilities: [],
+  completionPolicy: "automatic" as const,
+});
 
 describe("defineDomain", () => {
   it("preserves the domain definition and its inferred schema types", async () => {
@@ -73,5 +98,66 @@ describe("defineDomain", () => {
         completionPolicy: "automatic",
       }),
     ).toThrow("Domain planning objectives must not be empty");
+  });
+
+  it.each([
+    ["empty id", { id: "" }],
+    ["non-positive version", { version: 0 }],
+    ["empty planning instructions", { planning: { instructions: "", objectives: ["Goal"] } }],
+    [
+      "empty replanning instructions",
+      { replanning: { instructions: "", defaultMode: "automatic" } },
+    ],
+    ["empty objective", { planning: { instructions: "Plan", objectives: [""] } }],
+  ])("rejects %s", (_name, override) => {
+    expect(() => defineDomain({ ...validDefinition(), ...override } as never)).toThrow();
+  });
+
+  it("rejects an invalid capability", () => {
+    const inputSchema = z.object({ value: z.string() });
+    const outputSchema = z.object({ ok: z.boolean() });
+    expect(() =>
+      defineDomain({
+        ...validDefinition(),
+        capabilities: [
+          {
+            id: "",
+            description: "Run action",
+            inputSchema,
+            outputSchema,
+            executionMode: "automatic",
+            riskLevel: "low",
+            execute: async () => ({ ok: true }),
+          },
+        ],
+      }),
+    ).toThrow();
+  });
+
+  it("exposes a schema factory that preserves supplied schema identity", () => {
+    const capabilityInput = z.object({ value: z.string() });
+    const capabilityOutput = z.object({ ok: z.boolean() });
+    const capabilitySchema = capabilityDefinitionSchema(capabilityInput, capabilityOutput);
+    const schema = executionDomainDefinitionSchema(schemas, [capabilitySchema] as const);
+    const definition = {
+      ...validDefinition(),
+      capabilities: [
+        {
+          id: "run",
+          description: "Run action",
+          inputSchema: capabilityInput,
+          outputSchema: capabilityOutput,
+          executionMode: "automatic" as const,
+          riskLevel: "low" as const,
+          execute: async () => ({ ok: true }),
+        },
+      ] as const,
+    };
+
+    const parsed = schema.parse(definition);
+    expect(parsed.schemas.input).toBe(schemas.input);
+    expect(parsed.capabilities[0]?.inputSchema).toBe(capabilityInput);
+    const inferredInputSchema: typeof schemas.input = parsed.schemas.input;
+    expect(inferredInputSchema).toBe(schemas.input);
   });
 });

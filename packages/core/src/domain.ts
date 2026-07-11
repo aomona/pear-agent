@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-import type { CapabilityDefinition, ExecutionMode } from "./actor.js";
+import {
+  capabilityDefinitionSchema,
+  executionModeSchema,
+  type CapabilityDefinition,
+  type ExecutionMode,
+} from "./actor.js";
+import { executionGoalSchema } from "./goal.js";
 import type { ExecutionGoal } from "./goal.js";
 
 export type DomainSchemas = {
@@ -36,6 +42,40 @@ export interface ExecutionDomainDefinition<
   completionPolicy: ExecutionGoal["completionPolicy"];
 }
 
+export function executionDomainDefinitionSchema<
+  const TSchemas extends DomainSchemas,
+  const TCapabilitySchemas extends readonly z.ZodType[],
+>(schemas: TSchemas, capabilitySchemas: TCapabilitySchemas) {
+  return z.object({
+    id: z.string().min(1),
+    version: z.number().int().positive(),
+    schemas: z.custom<TSchemas>(
+      (value) =>
+        typeof value === "object" &&
+        value !== null &&
+        Object.entries(schemas).every(
+          ([key, schema]) => (value as Record<string, unknown>)[key] === schema,
+        ),
+    ),
+    normalizeInput: z.function(),
+    planning: z.object({
+      instructions: z.string().min(1),
+      objectives: z.tuple([z.string().min(1)], z.string().min(1)),
+    }),
+    replanning: z.object({
+      instructions: z.string().min(1),
+      defaultMode: executionModeSchema,
+    }),
+    capabilities: z.custom<{
+      [K in keyof TCapabilitySchemas]: z.output<TCapabilitySchemas[K]>;
+    }>((value) => {
+      if (!Array.isArray(value) || value.length !== capabilitySchemas.length) return false;
+      return capabilitySchemas.every((schema, index) => schema.safeParse(value[index]).success);
+    }),
+    completionPolicy: executionGoalSchema.shape.completionPolicy,
+  });
+}
+
 export function defineDomain<
   const TSchemas extends DomainSchemas,
   const TId extends string,
@@ -47,6 +87,11 @@ export function defineDomain<
   if (definition.planning.objectives.length === 0) {
     throw new Error("Domain planning objectives must not be empty");
   }
+
+  const capabilitySchemas = definition.capabilities.map(({ inputSchema, outputSchema }) =>
+    capabilityDefinitionSchema(inputSchema, outputSchema),
+  );
+  executionDomainDefinitionSchema(definition.schemas, capabilitySchemas).parse(definition);
 
   return {
     ...definition,
