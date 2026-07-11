@@ -29,11 +29,3 @@ export class AuthorizationError extends Error {
 
 /** Development helper that allows every operation. Do not use in production. */
 export const allowAllAuthorize: AuthorizeFn = () => undefined;
-
-export async function runAuthorize(
-  authorize: AuthorizeFn,
-  operation: PearOperation,
-  context: PearRequestContext,
-): Promise<void> {
-  await authorize(operation, context);
-}

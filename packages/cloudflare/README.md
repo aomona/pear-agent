@@ -6,7 +6,7 @@ Cloudflare Adapter for PEAR Runtime: Execution Session Agents, D1 persistence, R
 
 - **D1** is the durable source of truth for sessions, events, materialized state, and normalized input.
 - **Drizzle ORM** (`drizzle-orm/d1`) owns the typed schema (`src/d1/schema.ts`) and repository queries; SQL migrations live in `migrations/`.
-- **ExecutionSessionAgent** (Cloudflare Agent / Durable Object) serializes mutations per `sessionId`.
+- **ExecutionSessionAgent** (Cloudflare Agent / Durable Object) serializes mutations per `sessionId` via typed DO RPC; D1 text columns are the JSON boundary.
 - **R2** stores Raw Input bytes; metadata and checksums live in D1.
 - **PlanGenerator** is injected by the host (AI SDK Planner in production, static fixtures in tests).
 

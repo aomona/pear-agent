@@ -11,7 +11,6 @@ export {
 export {
   allowAllAuthorize,
   AuthorizationError,
-  runAuthorize,
   type AuthorizeFn,
   type PearOperation,
 } from "./authorize.js";
@@ -30,7 +29,7 @@ export {
   insertRawInputMetadata,
   isUniqueConstraintError,
   sessionExists,
-  type D1ExecutionStateRepositoryOptions,
+  type D1CreateOptions,
   type RawInputMetadata,
 } from "./d1/repository.js";
 export {
@@ -42,6 +41,11 @@ export {
   runtimeEvents,
 } from "./d1/schema.js";
 export type { PearEnv } from "./env.js";
+export {
+  EventIdentityConflictError,
+  SessionConflictError,
+  SessionNotFoundError,
+} from "./errors.js";
 export { createPearApp, type CreatePearAppOptions, type PearApp } from "./http/app.js";
 export {
   createStaticPlanGenerator,
@@ -57,14 +61,14 @@ export {
 export {
   parseExecutionState,
   parseJson,
-  parseJsonWithDates,
   parseRuntimeEvent,
+  parseRuntimeEventValue,
   parseRuntimeSnapshot,
-  reviveJsonDates,
   serializeExecutionState,
   serializeJson,
   serializeRuntimeEvent,
   serializeRuntimeSnapshot,
+  toJsonValue,
 } from "./serialize.js";
 export {
   buildInitialExecutionState,

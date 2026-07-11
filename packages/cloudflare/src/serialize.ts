@@ -7,42 +7,10 @@ import {
   type RuntimeSnapshot,
 } from "@pear-agent/core";
 
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-
-/** Field names that Core schemas treat as Date values. */
-const DATE_FIELD_NAMES = new Set([
-  "createdAt",
-  "updatedAt",
-  "occurredAt",
-  "evaluatedAt",
-  "generatedAt",
-  "startedAt",
-  "endsAt",
-  "deadline",
-  "lastAppliedEventAt",
-]);
-
 /**
- * Revives known Core date field names in a value tree.
- * Safe for Core models; do not apply to Domain normalizedInput payloads.
+ * Serialize values for D1 JSON columns and HTTP JSON bodies.
+ * Core `Date` instances become ISO-8601 strings; Domain JSON is left as-is.
  */
-export function reviveJsonDates(value: unknown, key?: string): unknown {
-  if (typeof value === "string" && key && DATE_FIELD_NAMES.has(key) && ISO_DATE_RE.test(value)) {
-    const date = new Date(value);
-    if (!Number.isNaN(date.getTime())) return date;
-  }
-  if (Array.isArray(value)) return value.map((item) => reviveJsonDates(item));
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([nestedKey, nested]) => [
-        nestedKey,
-        reviveJsonDates(nested, nestedKey),
-      ]),
-    );
-  }
-  return value;
-}
-
 export function serializeJson(value: unknown): string {
   return JSON.stringify(value, (_key, nested) => {
     if (nested instanceof Date) return nested.toISOString();
@@ -50,22 +18,30 @@ export function serializeJson(value: unknown): string {
   });
 }
 
-/** JSON.parse without date revival (safe for Domain normalized input payloads). */
+/**
+ * Plain JSON-safe value for `c.json` / DO-adjacent responses.
+ * Core schemas coerce ISO strings back to `Date` on parse; Domain blobs stay strings.
+ */
+export function toJsonValue<T>(value: T): unknown {
+  return JSON.parse(serializeJson(value));
+}
+
+/** JSON.parse without date magic (Domain normalized input, opaque payloads). */
 export function parseJson(text: string): unknown {
   return JSON.parse(text) as unknown;
 }
 
-/** JSON.parse that revives known Core date fields only. */
-export function parseJsonWithDates(text: string): unknown {
-  return reviveJsonDates(JSON.parse(text));
-}
-
+/**
+ * Parse Core models from D1/HTTP JSON.
+ * Date coercion lives only on Core schema leaves (`dateSchema`); nested Domain
+ * JSON under `facts` / `domainData` / json payloads is never rewritten by key name.
+ */
 export function serializeExecutionState(state: MaterializedExecutionState): string {
   return serializeJson(materializedExecutionStateSchema.parse(state));
 }
 
 export function parseExecutionState(text: string): MaterializedExecutionState {
-  return materializedExecutionStateSchema.parse(parseJsonWithDates(text));
+  return materializedExecutionStateSchema.parse(parseJson(text));
 }
 
 export function serializeRuntimeEvent(event: RuntimeEvent): string {
@@ -73,7 +49,12 @@ export function serializeRuntimeEvent(event: RuntimeEvent): string {
 }
 
 export function parseRuntimeEvent(text: string): RuntimeEvent {
-  return runtimeEventSchema.parse(parseJsonWithDates(text));
+  return runtimeEventSchema.parse(parseJson(text));
+}
+
+/** Parse a RuntimeEvent from an already-decoded JSON value (HTTP body). */
+export function parseRuntimeEventValue(value: unknown): RuntimeEvent {
+  return runtimeEventSchema.parse(value);
 }
 
 export function serializeRuntimeSnapshot(snapshot: RuntimeSnapshot): string {
@@ -81,5 +62,5 @@ export function serializeRuntimeSnapshot(snapshot: RuntimeSnapshot): string {
 }
 
 export function parseRuntimeSnapshot(text: string): RuntimeSnapshot {
-  return runtimeSnapshotSchema.parse(parseJsonWithDates(text));
+  return runtimeSnapshotSchema.parse(parseJson(text));
 }

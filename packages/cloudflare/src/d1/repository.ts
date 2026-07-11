@@ -2,6 +2,8 @@ import {
   applyRuntimeEvent,
   createRuntimeSnapshot,
   DEFAULT_RECENT_EVENT_LIMIT,
+  materializedExecutionStateSchema,
+  runtimeEventSchema,
   type AppendEventResult,
   type ExecutionStateRepository,
   type GetSnapshotOptions,
@@ -11,6 +13,11 @@ import {
 } from "@pear-agent/core";
 import { and, desc, eq } from "drizzle-orm";
 
+import {
+  EventIdentityConflictError,
+  SessionConflictError,
+  SessionNotFoundError,
+} from "../errors.js";
 import {
   parseExecutionState,
   parseRuntimeEvent,
@@ -27,33 +34,49 @@ import {
   runtimeEvents,
 } from "./schema.js";
 
-export type D1ExecutionStateRepositoryOptions = {
-  /** Domain id stored on the session row for listing / provenance. */
-  domainId?: string;
+/**
+ * Cloudflare-only create fields. Not part of Core {@link ExecutionStateRepository}:
+ * `domainId` is D1 session-row provenance; `normalizedInput` is stored in the same batch.
+ */
+export type D1CreateOptions = {
+  domainId: string;
+  normalizedInput?: unknown;
 };
 
 /**
  * Drizzle + D1 implementation of {@link ExecutionStateRepository}.
  * Event append and materialized state replacement use a single D1 batch.
+ *
+ * Prefer {@link D1ExecutionStateRepository.createWithDomain} from Agent/HTTP paths.
+ * `create` without options exists only for Core port assignability and throws.
  */
 export class D1ExecutionStateRepository implements ExecutionStateRepository {
   private readonly db: PearDatabase;
 
-  constructor(
-    d1: D1Database,
-    private readonly options: D1ExecutionStateRepositoryOptions = {},
-  ) {
+  constructor(d1: D1Database) {
     this.db = createPearDatabase(d1);
   }
 
-  async create(
+  /**
+   * Core port entry. Always throws — D1 requires {@link D1CreateOptions.domainId}.
+   * Use {@link createWithDomain} instead.
+   */
+  async create(initialState: MaterializedExecutionState): Promise<void> {
+    void initialState;
+    throw new Error(
+      "D1ExecutionStateRepository.create requires domain metadata; use createWithDomain(state, { domainId })",
+    );
+  }
+
+  /** Create session (+ optional normalized input) with required domain provenance. */
+  async createWithDomain(
     initialState: MaterializedExecutionState,
-    createOptions: { normalizedInput?: unknown } = {},
+    createOptions: D1CreateOptions,
   ): Promise<void> {
-    const state = parseExecutionState(serializeExecutionState(initialState));
+    const state = materializedExecutionStateSchema.parse(initialState);
     const sessionId = state.session.id;
     const now = state.session.updatedAt.toISOString();
-    const domainId = this.options.domainId ?? "unknown";
+    const domainId = createOptions.domainId;
 
     const sessionInsert = this.db.insert(executionSessions).values({
       id: sessionId,
@@ -88,7 +111,7 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
       }
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        throw new Error(`Execution session already exists: ${sessionId}`);
+        throw new SessionConflictError(sessionId);
       }
       throw error;
     }
@@ -103,9 +126,9 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
   }
 
   async appendEvent(event: RuntimeEvent): Promise<AppendEventResult> {
-    const parsedEvent = parseRuntimeEvent(serializeRuntimeEvent(event));
+    const parsedEvent = runtimeEventSchema.parse(event);
     const current = await this.get(parsedEvent.sessionId);
-    if (!current) throw new Error(`Unknown execution session: ${parsedEvent.sessionId}`);
+    if (!current) throw new SessionNotFoundError(parsedEvent.sessionId);
 
     const appliedEventIds = new Set(current.appliedEventIds);
     const appliedIdempotencyKeys = new Set(current.appliedIdempotencyKeys);
@@ -157,9 +180,7 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
         ) {
           return { kind: "duplicate", event: parsedEvent, state: afterRace };
         }
-        throw new Error(
-          `Event identity conflict for id=${parsedEvent.id} idempotencyKey=${parsedEvent.idempotencyKey}`,
-        );
+        throw new EventIdentityConflictError(parsedEvent.id, parsedEvent.idempotencyKey);
       }
       throw error;
     }
@@ -204,7 +225,7 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
       where: eq(executionSessions.id, sessionId),
       columns: { id: true },
     });
-    if (!session) throw new Error(`Unknown execution session: ${sessionId}`);
+    if (!session) throw new SessionNotFoundError(sessionId);
 
     const updatedAt = new Date().toISOString();
     await this.db
@@ -244,10 +265,10 @@ export type RawInputMetadata = {
 };
 
 export async function insertRawInputMetadata(
-  dbOrD1: PearDatabase | D1Database,
+  d1: D1Database,
   metadata: RawInputMetadata,
 ): Promise<void> {
-  const db = isPearDatabase(dbOrD1) ? dbOrD1 : createPearDatabase(dbOrD1);
+  const db = createPearDatabase(d1);
   await db.insert(rawInputs).values({
     id: metadata.id,
     sessionId: metadata.sessionId,
@@ -261,11 +282,11 @@ export async function insertRawInputMetadata(
 }
 
 export async function getRawInputMetadata(
-  dbOrD1: PearDatabase | D1Database,
+  d1: D1Database,
   sessionId: string,
   inputId: string,
 ): Promise<RawInputMetadata | undefined> {
-  const db = isPearDatabase(dbOrD1) ? dbOrD1 : createPearDatabase(dbOrD1);
+  const db = createPearDatabase(d1);
   const row = await db.query.rawInputs.findFirst({
     where: and(eq(rawInputs.id, inputId), eq(rawInputs.sessionId, sessionId)),
   });
@@ -282,20 +303,13 @@ export async function getRawInputMetadata(
   };
 }
 
-export async function sessionExists(
-  dbOrD1: PearDatabase | D1Database,
-  sessionId: string,
-): Promise<boolean> {
-  const db = isPearDatabase(dbOrD1) ? dbOrD1 : createPearDatabase(dbOrD1);
+export async function sessionExists(d1: D1Database, sessionId: string): Promise<boolean> {
+  const db = createPearDatabase(d1);
   const row = await db.query.executionSessions.findFirst({
     where: eq(executionSessions.id, sessionId),
     columns: { id: true },
   });
   return row !== undefined;
-}
-
-function isPearDatabase(value: PearDatabase | D1Database): value is PearDatabase {
-  return typeof value === "object" && value !== null && "query" in value && "batch" in value;
 }
 
 /** Detect SQLite/D1 unique violations only — not FK / NOT NULL / generic errors. */

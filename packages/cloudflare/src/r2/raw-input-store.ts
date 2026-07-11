@@ -5,6 +5,7 @@ import {
   sessionExists,
   type RawInputMetadata,
 } from "../d1/repository.js";
+import { SessionNotFoundError } from "../errors.js";
 
 export type PutRawInputInput = {
   sessionId: string;
@@ -30,7 +31,7 @@ export class R2RawInputStore {
 
   async put(input: PutRawInputInput): Promise<PutRawInputResult> {
     if (!(await sessionExists(this.db, input.sessionId))) {
-      throw new Error(`Unknown execution session: ${input.sessionId}`);
+      throw new SessionNotFoundError(input.sessionId);
     }
 
     const id = input.inputId ?? crypto.randomUUID();

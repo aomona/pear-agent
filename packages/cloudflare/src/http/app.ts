@@ -11,21 +11,21 @@ import {
   agentGetState,
   agentPutNormalizedInput,
 } from "../agent/client.js";
-import {
-  AuthorizationError,
-  runAuthorize,
-  type AuthorizeFn,
-  type PearOperation,
-} from "../authorize.js";
+import { AuthorizationError, type AuthorizeFn, type PearOperation } from "../authorize.js";
 import {
   PearContextError,
   resolvePearContextFromHeader,
   type PearRequestContext,
 } from "../context.js";
 import type { PearEnv } from "../env.js";
+import {
+  EventIdentityConflictError,
+  SessionConflictError,
+  SessionNotFoundError,
+} from "../errors.js";
 import type { PlanGenerator } from "../planner.js";
 import { DEFAULT_MAX_RAW_INPUT_BYTES, R2RawInputStore } from "../r2/raw-input-store.js";
-import { parseRuntimeEvent, reviveJsonDates, serializeJson } from "../serialize.js";
+import { parseRuntimeEventValue, toJsonValue } from "../serialize.js";
 import { buildInitialExecutionState } from "../session/build-initial-state.js";
 
 export type PearAppVariables = {
@@ -65,11 +65,14 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   const app = new Hono<{ Bindings: PearEnv; Variables: PearAppVariables }>();
 
   app.onError((error, c) => {
-    if (error instanceof AuthorizationError) {
-      return c.json({ error: error.message }, 403);
-    }
-    if (error instanceof PearContextError) {
-      return c.json({ error: error.message }, 401);
+    if (
+      error instanceof AuthorizationError ||
+      error instanceof PearContextError ||
+      error instanceof SessionNotFoundError ||
+      error instanceof SessionConflictError ||
+      error instanceof EventIdentityConflictError
+    ) {
+      return c.json({ error: error.message }, error.status);
     }
     if (error instanceof HTTPException) {
       return error.getResponse();
@@ -78,12 +81,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       return c.json({ error: error.message }, 400);
     }
     const message = error instanceof Error ? error.message : "Internal error";
-    const status = message.startsWith("Unknown execution session")
-      ? 404
-      : message.includes("already exists")
-        ? 409
-        : 500;
-    return c.json({ error: message }, status);
+    return c.json({ error: message }, 500);
   });
 
   app.use("*", async (c, next) => {
@@ -101,15 +99,11 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   app.post("/sessions", async (c) => {
     const context = c.get("pearContext");
     const raw = createSessionBodySchema.parse(await c.req.json());
-    // Revive Core goal dates only — leave Domain normalizedInput as JSON-safe values.
-    const goal = executionGoalSchema.parse(reviveJsonDates(raw.goal));
+    // Core goal dates coerce via dateSchema; Domain normalizedInput stays JSON-safe.
+    const goal = executionGoalSchema.parse(raw.goal);
     const body = { ...raw, goal };
 
-    await authorize(
-      options.authorize,
-      { type: "session.create", domainId: body.domainId },
-      context,
-    );
+    await options.authorize({ type: "session.create", domainId: body.domainId }, context);
 
     const sessionId = body.sessionId ?? crypto.randomUUID();
     const plan = await options.planGenerator.generatePlan({
@@ -141,9 +135,9 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     return c.json(
       {
         sessionId,
-        session: JSON.parse(serializeJson(initialState.session)),
-        plan: JSON.parse(serializeJson(initialState.plan)),
-        stepStates: JSON.parse(serializeJson(initialState.stepStates)),
+        session: toJsonValue(initialState.session),
+        plan: toJsonValue(initialState.plan),
+        stepStates: toJsonValue(initialState.stepStates),
       },
       201,
     );
@@ -152,17 +146,16 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   app.get("/sessions/:sessionId", async (c) => {
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
-    await authorize(options.authorize, { type: "session.read", sessionId }, context);
+    await options.authorize({ type: "session.read", sessionId }, context);
     const state = await agentGetState(c.env, sessionId);
-    if (!state)
-      throw new HTTPException(404, { message: `Unknown execution session: ${sessionId}` });
-    return c.json({ state: JSON.parse(serializeJson(state)) });
+    if (!state) throw new SessionNotFoundError(sessionId);
+    return c.json({ state: toJsonValue(state) });
   });
 
   app.get("/sessions/:sessionId/snapshot", async (c) => {
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
-    await authorize(options.authorize, { type: "session.read", sessionId }, context);
+    await options.authorize({ type: "session.read", sessionId }, context);
 
     const limitParam = c.req.query("recentEventLimit");
     let recentEventLimit: number | undefined;
@@ -180,36 +173,33 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       sessionId,
       recentEventLimit === undefined ? undefined : { recentEventLimit },
     );
-    if (!snapshot) {
-      throw new HTTPException(404, { message: `Unknown execution session: ${sessionId}` });
-    }
-    return c.json({ snapshot: JSON.parse(serializeJson(snapshot)) });
+    if (!snapshot) throw new SessionNotFoundError(sessionId);
+    return c.json({ snapshot: toJsonValue(snapshot) });
   });
 
   app.post("/sessions/:sessionId/events", async (c) => {
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
-    const event = parseRuntimeEvent(JSON.stringify(await c.req.json()));
+    const event = parseRuntimeEventValue(await c.req.json());
     if (event.sessionId !== sessionId) {
       throw new HTTPException(400, { message: "event.sessionId must match path sessionId" });
     }
-    await authorize(
-      options.authorize,
+    await options.authorize(
       { type: "session.appendEvent", sessionId, eventType: event.type },
       context,
     );
     const result = await agentAppendEvent(c.env, event);
     return c.json({
       kind: result.kind,
-      event: JSON.parse(serializeJson(result.event)),
-      state: JSON.parse(serializeJson(result.state)),
+      event: toJsonValue(result.event),
+      state: toJsonValue(result.state),
     });
   });
 
   app.post("/sessions/:sessionId/raw-inputs", async (c) => {
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
-    await authorize(options.authorize, { type: "rawInput.put", sessionId }, context);
+    await options.authorize({ type: "rawInput.put", sessionId }, context);
 
     const form = await c.req.formData();
     const file = form.get("file") ?? form.get("raw");
@@ -227,12 +217,6 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
 
     const store = new R2RawInputStore(c.env.RAW_INPUTS, c.env.DB);
     const body = await file.arrayBuffer();
-    if (body.byteLength > maxRawInputBytes) {
-      throw new HTTPException(413, {
-        message: `Raw input exceeds max size of ${maxRawInputBytes} bytes`,
-      });
-    }
-
     const metadata = await store.put({
       sessionId,
       actorId: context.actorId,
@@ -240,25 +224,25 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       contentType: file.type || null,
     });
 
-    return c.json({ rawInput: serializeRawInputMetadata(metadata) }, 201);
+    return c.json({ rawInput: toJsonValue(metadata) }, 201);
   });
 
   app.get("/sessions/:sessionId/raw-inputs/:inputId", async (c) => {
     const sessionId = c.req.param("sessionId");
     const inputId = c.req.param("inputId");
     const context = c.get("pearContext");
-    await authorize(options.authorize, { type: "rawInput.read", sessionId, inputId }, context);
+    await options.authorize({ type: "rawInput.read", sessionId, inputId }, context);
 
     const store = new R2RawInputStore(c.env.RAW_INPUTS, c.env.DB);
     const metadata = await store.getMetadata(sessionId, inputId);
     if (!metadata) throw new HTTPException(404, { message: "Raw input not found" });
-    return c.json({ rawInput: serializeRawInputMetadata(metadata) });
+    return c.json({ rawInput: toJsonValue(metadata) });
   });
 
   app.put("/sessions/:sessionId/normalized-input", async (c) => {
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
-    await authorize(options.authorize, { type: "normalizedInput.write", sessionId }, context);
+    await options.authorize({ type: "normalizedInput.write", sessionId }, context);
     const payload = await c.req.json();
     await agentPutNormalizedInput(c.env, sessionId, payload);
     return c.json({ ok: true });
@@ -267,7 +251,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   app.get("/sessions/:sessionId/normalized-input", async (c) => {
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
-    await authorize(options.authorize, { type: "normalizedInput.read", sessionId }, context);
+    await options.authorize({ type: "normalizedInput.read", sessionId }, context);
     const payload = await agentGetNormalizedInput(c.env, sessionId);
     if (payload === undefined) {
       throw new HTTPException(404, { message: "Normalized input not found" });
@@ -278,32 +262,5 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   return app;
 }
 
-async function authorize(
-  authorizeFn: AuthorizeFn,
-  operation: PearOperation,
-  context: PearRequestContext,
-): Promise<void> {
-  await runAuthorize(authorizeFn, operation, context);
-}
-
-function serializeRawInputMetadata(metadata: {
-  id: string;
-  sessionId: string;
-  objectKey: string;
-  contentType: string | null;
-  byteSize: number;
-  checksumSha256: string;
-  createdAt: Date;
-  createdByActorId: string;
-}) {
-  return {
-    id: metadata.id,
-    sessionId: metadata.sessionId,
-    objectKey: metadata.objectKey,
-    contentType: metadata.contentType,
-    byteSize: metadata.byteSize,
-    checksumSha256: metadata.checksumSha256,
-    createdAt: metadata.createdAt.toISOString(),
-    createdByActorId: metadata.createdByActorId,
-  };
-}
+// Keep PearOperation exported usage visible for hosts reading route shapes.
+export type { PearOperation };

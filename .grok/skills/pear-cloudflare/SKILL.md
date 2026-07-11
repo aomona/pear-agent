@@ -44,7 +44,7 @@ HTTP (Hono)
 
 1. **D1 is source of truth.** Agent rehydrates from D1; do not treat Agent SQL storage as primary PEAR state.
 2. **Batch event + materialized update** in one D1 batch after pure `applyRuntimeEvent`.
-3. **Dates:** use `parseJsonWithDates` / `serializeJson` for Core models. Do not revive all ISO strings (Domain normalized input must stay strings).
+3. **Dates:** Core schemas use `dateSchema` (Date | ISO → Date) on Core leaves only. Use `serializeJson` / `parseExecutionState` at D1 boundaries. Never revive Domain JSON by key name (`facts`, `domainData`, `normalizedInput` stay JSON-safe strings).
 4. **Event ids are globally unique** in `runtime_events.id` (primary key). Prefer `${sessionId}-…` ids in tests.
 5. **Raw Input:** `multipart/form-data` field `file` or `raw`; checksum + metadata in D1, body in R2.
 6. **Session create:** `goal` + `normalizedInput` + `domainId` + `actorIds` → `PlanGenerator.generatePlan` → `buildInitialExecutionState` → Agent create.

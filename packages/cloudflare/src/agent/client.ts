@@ -1,27 +1,38 @@
 import { getAgentByName } from "agents";
 import type {
   AppendEventResult,
+  GetSnapshotOptions,
   MaterializedExecutionState,
   RuntimeEvent,
   RuntimeSnapshot,
 } from "@pear-agent/core";
 
 import type { PearEnv } from "../env.js";
-import {
-  parseExecutionState,
-  parseRuntimeSnapshot,
-  serializeExecutionState,
-  serializeRuntimeEvent,
-} from "../serialize.js";
-import { ExecutionSessionAgent, parseAppendEventResult } from "./execution-session-agent.js";
+
+/**
+ * Typed Worker→Agent RPC surface.
+ * Avoid `DurableObjectStub<ExecutionSessionAgent>` — Zod-inferred Core unions
+ * make stub type instantiation excessively deep under tsgo.
+ */
+export type ExecutionSessionAgentRpc = {
+  createSession(input: {
+    initialState: MaterializedExecutionState;
+    domainId: string;
+    normalizedInput?: unknown;
+  }): Promise<{ ok: true }>;
+  getState(): Promise<MaterializedExecutionState | null>;
+  appendEvent(event: RuntimeEvent): Promise<AppendEventResult>;
+  getSnapshot(options?: GetSnapshotOptions): Promise<RuntimeSnapshot | null>;
+  putNormalizedInput(payload: unknown): Promise<{ ok: true }>;
+  getNormalizedInput(): Promise<unknown | null>;
+};
 
 export async function getExecutionSessionAgent(
   env: PearEnv,
   sessionId: string,
-): Promise<DurableObjectStub<ExecutionSessionAgent>> {
-  // getAgentByName is typed against a generic Agent; cast to our RPC surface.
+): Promise<ExecutionSessionAgentRpc> {
   const stub = await getAgentByName(env.ExecutionSessionAgent as never, sessionId);
-  return stub as unknown as DurableObjectStub<ExecutionSessionAgent>;
+  return stub as unknown as ExecutionSessionAgentRpc;
 }
 
 export async function agentCreateSession(
@@ -36,11 +47,9 @@ export async function agentCreateSession(
 ): Promise<void> {
   const agent = await getExecutionSessionAgent(env, input.sessionId);
   await agent.createSession({
-    initialStateJson: serializeExecutionState(input.initialState),
+    initialState: input.initialState,
     domainId: input.domainId,
-    ...(input.normalizedInput === undefined
-      ? {}
-      : { normalizedInputJson: JSON.stringify(input.normalizedInput) }),
+    ...(input.normalizedInput === undefined ? {} : { normalizedInput: input.normalizedInput }),
   });
 }
 
@@ -49,8 +58,8 @@ export async function agentGetState(
   sessionId: string,
 ): Promise<MaterializedExecutionState | undefined> {
   const agent = await getExecutionSessionAgent(env, sessionId);
-  const json = await agent.getState();
-  return json ? parseExecutionState(json) : undefined;
+  const state = await agent.getState();
+  return state ?? undefined;
 }
 
 export async function agentAppendEvent(
@@ -58,8 +67,7 @@ export async function agentAppendEvent(
   event: RuntimeEvent,
 ): Promise<AppendEventResult> {
   const agent = await getExecutionSessionAgent(env, event.sessionId);
-  const json = await agent.appendEvent(serializeRuntimeEvent(event));
-  return parseAppendEventResult(json);
+  return agent.appendEvent(event);
 }
 
 export async function agentGetSnapshot(
@@ -68,8 +76,8 @@ export async function agentGetSnapshot(
   options?: { recentEventLimit?: number },
 ): Promise<RuntimeSnapshot | undefined> {
   const agent = await getExecutionSessionAgent(env, sessionId);
-  const json = await agent.getSnapshot(options ? JSON.stringify(options) : undefined);
-  return json ? parseRuntimeSnapshot(json) : undefined;
+  const snapshot = await agent.getSnapshot(options);
+  return snapshot ?? undefined;
 }
 
 export async function agentPutNormalizedInput(
@@ -78,7 +86,7 @@ export async function agentPutNormalizedInput(
   payload: unknown,
 ): Promise<void> {
   const agent = await getExecutionSessionAgent(env, sessionId);
-  await agent.putNormalizedInput(JSON.stringify(payload));
+  await agent.putNormalizedInput(payload);
 }
 
 export async function agentGetNormalizedInput(
@@ -86,6 +94,6 @@ export async function agentGetNormalizedInput(
   sessionId: string,
 ): Promise<unknown | undefined> {
   const agent = await getExecutionSessionAgent(env, sessionId);
-  const json = await agent.getNormalizedInput();
-  return json === null ? undefined : (JSON.parse(json) as unknown);
+  const payload = await agent.getNormalizedInput();
+  return payload === null ? undefined : payload;
 }
