@@ -1,1 +1,1 @@
-export {};
+export * from "./goal.js";
