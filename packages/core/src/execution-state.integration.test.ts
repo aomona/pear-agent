@@ -33,7 +33,7 @@ function event(
 }
 
 describe("execution state contract", () => {
-  it("runs independent packing and charging work through timer and goal completion", () => {
+  it("runs independent packing and charging work through timer and goal completion", async () => {
     const initialState: MaterializedExecutionState = {
       session: {
         id: "outing-session",
@@ -56,31 +56,34 @@ describe("execution state contract", () => {
     };
     const repository = new InMemoryExecutionStateRepository([initialState]);
 
-    expect(repository.getSnapshot("outing-session")?.readyStepIds).toEqual(["pack", "charge"]);
+    expect((await repository.getSnapshot("outing-session"))?.readyStepIds).toEqual([
+      "pack",
+      "charge",
+    ]);
 
-    repository.appendEvent(event("charge-start", "step_started", { stepId: "charge" }));
-    repository.appendEvent(
+    await repository.appendEvent(event("charge-start", "step_started", { stepId: "charge" }));
+    await repository.appendEvent(
       event("charge-timer-start", "timer_started", {
         timerId: "charge-phone",
         durationSeconds: 300,
       }),
     );
-    repository.appendEvent(event("pack-start", "step_started", { stepId: "pack" }));
-    repository.appendEvent(event("pack-complete", "step_completed", { stepId: "pack" }));
+    await repository.appendEvent(event("pack-start", "step_started", { stepId: "pack" }));
+    await repository.appendEvent(event("pack-complete", "step_completed", { stepId: "pack" }));
 
-    const inProgress = repository.getSnapshot("outing-session")!;
+    const inProgress = (await repository.getSnapshot("outing-session"))!;
     expect(inProgress.stepStates.pack).toEqual({ status: "completed" });
     expect(inProgress.stepStates.charge).toEqual({ status: "active" });
     expect(inProgress.activeStepIds).toEqual(["charge"]);
 
     const timerEndedAt = new Date("2026-07-11T00:05:00.000Z");
-    repository.appendEvent(
+    await repository.appendEvent(
       event("charge-timer-complete", "timer_completed", { timerId: "charge-phone" }, timerEndedAt),
     );
-    repository.appendEvent(
+    await repository.appendEvent(
       event("charge-complete", "step_completed", { stepId: "charge" }, timerEndedAt),
     );
-    repository.appendEvent(
+    await repository.appendEvent(
       event(
         "packed-evaluated",
         "goal_evaluated",
@@ -88,7 +91,7 @@ describe("execution state contract", () => {
         timerEndedAt,
       ),
     );
-    repository.appendEvent(
+    await repository.appendEvent(
       event(
         "charged-evaluated",
         "goal_evaluated",
@@ -97,7 +100,7 @@ describe("execution state contract", () => {
       ),
     );
 
-    const completed = repository.getSnapshot("outing-session")!;
+    const completed = (await repository.getSnapshot("outing-session"))!;
     expect(completed.activeTimers).toEqual([]);
     expect(completed.session.status).toBe("completed");
   });

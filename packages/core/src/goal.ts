@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { jsonValueSchema } from "./world-state.js";
+
 export const successCriterionEvaluatorSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("human_confirmation") }),
   z.object({ type: z.literal("tool_result") }),
@@ -44,11 +46,28 @@ export type ExecutionGoal = z.infer<typeof executionGoalSchema>;
 export const criterionEvaluationSchema = z.object({
   criterionId: z.string().min(1),
   status: z.enum(["satisfied", "unsatisfied", "unknown"]),
-  evidence: z.array(z.unknown()),
+  // Must stay JSON-safe: repository boundaries clone state with structuredClone.
+  evidence: z.array(jsonValueSchema),
   evaluatedAt: z.date(),
 });
 
 export type CriterionEvaluation = z.infer<typeof criterionEvaluationSchema>;
+
+/**
+ * Builds the evaluation set used for completion decisions: one latest evaluation
+ * per expected criterion ID. History and unknown criteria are ignored here.
+ */
+export function latestCriterionEvaluations(
+  goal: Pick<ExecutionGoal, "successCriteria">,
+  evaluationsByCriterionId: Readonly<Record<string, CriterionEvaluation>>,
+): CriterionEvaluation[] {
+  const latest: CriterionEvaluation[] = [];
+  for (const { id } of goal.successCriteria) {
+    const evaluation = evaluationsByCriterionId[id];
+    if (evaluation) latest.push(evaluation);
+  }
+  return latest;
+}
 
 export function evaluateGoalCompletion(
   goal: Pick<ExecutionGoal, "successCriteria">,

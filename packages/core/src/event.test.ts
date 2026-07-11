@@ -49,4 +49,21 @@ describe("runtimeEventSchema", () => {
       runtimeEventSchema.safeParse({ ...event, type: "goal_evaluated", payload: {} }).success,
     ).toBe(false);
   });
+
+  it("accepts session and timer cancel events", () => {
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "session_cancelled",
+        payload: {},
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "timer_cancelled",
+        payload: { timerId: "tea" },
+      }).success,
+    ).toBe(true);
+  });
 });

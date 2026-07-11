@@ -1,12 +1,18 @@
 import { z } from "zod";
 
-import { criterionEvaluationSchema, evaluateGoalCompletion } from "./goal.js";
+import {
+  criterionEvaluationSchema,
+  evaluateGoalCompletion,
+  latestCriterionEvaluations,
+} from "./goal.js";
 import { executionPlanSchema } from "./plan.js";
 import { type RuntimeEvent } from "./event.js";
 import { executionSessionSchema } from "./session.js";
-import { stepStatesSchema, transitionStep } from "./step-state.js";
+import { deriveStepStatuses, stepStatesSchema, transitionStep } from "./step-state.js";
 import { worldStateSchema } from "./world-state.js";
 import { executionTimerSchema } from "./timer.js";
+
+const TERMINAL_SESSION_STATUSES = new Set(["completed", "cancelled"]);
 
 export const materializedExecutionStateSchema = z.object({
   session: executionSessionSchema,
@@ -14,9 +20,9 @@ export const materializedExecutionStateSchema = z.object({
   worldState: worldStateSchema,
   stepStates: stepStatesSchema,
   timers: z.record(z.string(), executionTimerSchema),
-  // Latest materialized evaluation by criterion ID. Evaluation history is
-  // kept separately so duplicate/unknown evaluations remain visible to the
-  // completion evaluator.
+  // Latest materialized evaluation by criterion ID (projection for reads and
+  // completion). History is audit-only; completion never consults the full
+  // append-only list, so re-evaluation can still complete a goal.
   criterionEvaluations: z.record(z.string(), criterionEvaluationSchema),
   criterionEvaluationHistory: z.array(criterionEvaluationSchema),
   lastAppliedEventAt: z.date().optional(),
@@ -30,10 +36,9 @@ export function applyRuntimeEvent(
   state: Readonly<MaterializedExecutionState>,
   event: RuntimeEvent,
 ): MaterializedExecutionState {
-  if (
-    state.appliedEventIds.includes(event.id) ||
-    state.appliedIdempotencyKeys.includes(event.idempotencyKey)
-  ) {
+  const appliedEventIds = new Set(state.appliedEventIds);
+  const appliedIdempotencyKeys = new Set(state.appliedIdempotencyKeys);
+  if (appliedEventIds.has(event.id) || appliedIdempotencyKeys.has(event.idempotencyKey)) {
     return state;
   }
 
@@ -41,6 +46,10 @@ export function applyRuntimeEvent(
     throw new Error(
       `Event session ${event.sessionId} does not match state session ${state.session.id}`,
     );
+  }
+
+  if (TERMINAL_SESSION_STATUSES.has(state.session.status)) {
+    throw new Error(`Cannot apply event to ${state.session.status} session`);
   }
 
   let stepStates = state.stepStates;
@@ -63,7 +72,15 @@ export function applyRuntimeEvent(
         : event.type === "step_completed"
           ? "completed"
           : "failed";
-    stepStates = { ...state.stepStates, [stepId]: transitionStep(current, nextStatus) };
+    const afterTransition = {
+      ...state.stepStates,
+      [stepId]: transitionStep(current, nextStatus),
+    };
+    // Overlay readiness for plan steps so dependents leave blocked when deps complete.
+    stepStates = {
+      ...afterTransition,
+      ...deriveStepStatuses(state.plan.steps, afterTransition),
+    };
   }
 
   if (event.type === "timer_started") {
@@ -126,8 +143,36 @@ export function applyRuntimeEvent(
     };
   }
 
+  if (event.type === "timer_cancelled") {
+    const { timerId } = event.payload;
+    const existing = state.timers[timerId];
+    if (!existing) throw new Error(`Unknown timer: ${timerId}`);
+    if (existing.status !== "running" && existing.status !== "paused") {
+      throw new Error(`Invalid timer transition: ${existing.status} -> cancelled`);
+    }
+    const remainingSeconds =
+      existing.status === "paused"
+        ? existing.remainingSeconds
+        : Math.max(
+            0,
+            Math.ceil(
+              ((existing.endsAt ?? event.occurredAt).getTime() - event.occurredAt.getTime()) / 1000,
+            ),
+          );
+    timers = {
+      ...state.timers,
+      [timerId]: {
+        ...existing,
+        status: "cancelled",
+        remainingSeconds,
+        endsAt: undefined,
+      },
+    };
+  }
+
   if (event.type === "world_state_updated") {
-    worldState = event.payload;
+    // Full-document replace; stamp updatedAt from the event clock for coherence.
+    worldState = { ...event.payload, updatedAt: event.occurredAt };
   }
 
   if (event.type === "session_started") {
@@ -144,6 +189,17 @@ export function applyRuntimeEvent(
     session = { ...state.session, status: "paused", updatedAt: event.occurredAt };
   }
 
+  if (event.type === "session_cancelled") {
+    if (
+      state.session.status !== "not_started" &&
+      state.session.status !== "active" &&
+      state.session.status !== "paused"
+    ) {
+      throw new Error(`Invalid session transition: ${state.session.status} -> cancelled`);
+    }
+    session = { ...state.session, status: "cancelled", updatedAt: event.occurredAt };
+  }
+
   if (event.type === "goal_evaluated") {
     const payload = event.payload;
     const evaluation = criterionEvaluationSchema.parse({
@@ -155,9 +211,10 @@ export function applyRuntimeEvent(
       [evaluation.criterionId]: evaluation,
     };
     criterionEvaluationHistory = [...state.criterionEvaluationHistory, evaluation];
+    const latestEvaluations = latestCriterionEvaluations(state.plan.goal, criterionEvaluations);
     if (
       state.plan.goal.completionPolicy === "automatic" &&
-      evaluateGoalCompletion(state.plan.goal, Object.values(criterionEvaluations)) === "satisfied"
+      evaluateGoalCompletion(state.plan.goal, latestEvaluations) === "satisfied"
     ) {
       session = { ...state.session, status: "completed", updatedAt: event.occurredAt };
     }
@@ -169,9 +226,11 @@ export function applyRuntimeEvent(
     if (state.plan.goal.completionPolicy !== "human_confirmation") {
       throw new Error("Goal does not require human confirmation");
     }
-    if (
-      evaluateGoalCompletion(state.plan.goal, Object.values(criterionEvaluations)) !== "satisfied"
-    ) {
+    const latestEvaluations = latestCriterionEvaluations(
+      state.plan.goal,
+      criterionEvaluations,
+    );
+    if (evaluateGoalCompletion(state.plan.goal, latestEvaluations) !== "satisfied") {
       throw new Error("Cannot confirm goal completion before all criteria are satisfied");
     }
     session = { ...state.session, status: "completed", updatedAt: event.occurredAt };

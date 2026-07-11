@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { InMemoryExecutionStateRepository, type AppendEventResult } from "./repository.js";
+import {
+  DEFAULT_RECENT_EVENT_LIMIT,
+  InMemoryExecutionStateRepository,
+  type AppendEventResult,
+} from "./repository.js";
 import type { MaterializedExecutionState } from "./execution-state.js";
+import { criterionEvaluationSchema } from "./goal.js";
 
 const now = new Date("2026-07-11T00:00:00.000Z");
 const state: MaterializedExecutionState = {
@@ -59,94 +64,147 @@ const event = {
 };
 
 describe("InMemoryExecutionStateRepository", () => {
-  it("creates, reads, appends atomically, and returns a current snapshot", () => {
+  it("creates, reads, appends atomically, and returns a current snapshot", async () => {
     const repository = new InMemoryExecutionStateRepository();
-    repository.create(state);
+    await repository.create(state);
 
-    expect(repository.get("session-1")).toEqual(state);
-    const result = repository.appendEvent(event);
+    expect(await repository.get("session-1")).toEqual(state);
+    const result = await repository.appendEvent(event);
     expect(result.kind).toBe("applied");
-    expect(repository.get("session-1")?.stepStates.pack).toEqual({ status: "completed" });
-    expect(repository.getSnapshot("session-1")?.stepStates.pack).toEqual({ status: "completed" });
-    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+    expect((await repository.get("session-1"))?.stepStates.pack).toEqual({ status: "completed" });
+    expect((await repository.getSnapshot("session-1"))?.stepStates.pack).toEqual({
+      status: "completed",
+    });
+    expect((await repository.getSnapshot("session-1"))?.recentEvents).toEqual([event]);
   });
 
-  it("defensively clones state and event values at every repository boundary", () => {
+  it("defensively clones state and event values at every repository boundary", async () => {
     const repository = new InMemoryExecutionStateRepository();
-    repository.create(state);
+    await repository.create(state);
 
-    const read = repository.get("session-1")!;
+    const read = (await repository.get("session-1"))!;
     read.stepStates.pack = { status: "completed" };
     read.worldState.facts.changed = true;
-    expect(repository.get("session-1")?.stepStates.pack).toEqual({ status: "active" });
-    expect(repository.get("session-1")?.worldState.facts).toEqual({});
+    expect((await repository.get("session-1"))?.stepStates.pack).toEqual({ status: "active" });
+    expect((await repository.get("session-1"))?.worldState.facts).toEqual({});
 
-    const result = repository.appendEvent(event);
+    const result = await repository.appendEvent(event);
     result.state.stepStates.pack = { status: "active" };
     if (result.event.type === "step_completed") {
       (result.event.payload as { stepId: string }).stepId = "other";
     }
-    expect(repository.get("session-1")?.stepStates.pack).toEqual({ status: "completed" });
-    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+    expect((await repository.get("session-1"))?.stepStates.pack).toEqual({ status: "completed" });
+    expect((await repository.getSnapshot("session-1"))?.recentEvents).toEqual([event]);
 
-    const snapshot = repository.getSnapshot("session-1")!;
+    const snapshot = (await repository.getSnapshot("session-1"))!;
     snapshot.worldState.facts.changedAgain = true;
     snapshot.recentEvents[0]!.payload = { stepId: "other" };
-    expect(repository.getSnapshot("session-1")?.worldState.facts).toEqual({});
-    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+    expect((await repository.getSnapshot("session-1"))?.worldState.facts).toEqual({});
+    expect((await repository.getSnapshot("session-1"))?.recentEvents).toEqual([event]);
   });
 
-  it("does not apply the same idempotency key twice within one session", () => {
+  it("does not apply the same idempotency key twice within one session", async () => {
     const repository = new InMemoryExecutionStateRepository([state]);
-    const first = repository.appendEvent(event);
-    const second = repository.appendEvent({ ...event, id: "event-2" });
+    const first = await repository.appendEvent(event);
+    const second = await repository.appendEvent({ ...event, id: "event-2" });
 
     expect(first.kind).toBe("applied");
     expect(second.kind).toBe("duplicate");
-    expect(repository.get("session-1")?.appliedEventIds).toEqual(["event-1"]);
-    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+    expect((await repository.get("session-1"))?.appliedEventIds).toEqual(["event-1"]);
+    expect((await repository.getSnapshot("session-1"))?.recentEvents).toEqual([event]);
 
     second.state.stepStates.pack = { status: "active" };
     if (second.event.type === "step_completed") {
       (second.event.payload as { stepId: string }).stepId = "other";
     }
-    expect(repository.get("session-1")?.stepStates.pack).toEqual({ status: "completed" });
-    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+    expect((await repository.get("session-1"))?.stepStates.pack).toEqual({ status: "completed" });
+    expect((await repository.getSnapshot("session-1"))?.recentEvents).toEqual([event]);
   });
 
-  it("allows the same idempotency key in a different session", () => {
+  it("allows the same idempotency key in a different session", async () => {
     const other = { ...state, session: { ...state.session, id: "session-2" } };
     const repository = new InMemoryExecutionStateRepository([state, other]);
-    expect(repository.appendEvent(event).kind).toBe("applied");
-    expect(repository.appendEvent({ ...event, id: "event-2", sessionId: "session-2" }).kind).toBe(
-      "applied",
-    );
+    expect((await repository.appendEvent(event)).kind).toBe("applied");
+    expect(
+      (await repository.appendEvent({ ...event, id: "event-2", sessionId: "session-2" })).kind,
+    ).toBe("applied");
   });
 
-  it("keeps event log and state unchanged when event application fails", () => {
+  it("keeps event log and state unchanged when event application fails", async () => {
     const repository = new InMemoryExecutionStateRepository([state]);
-    expect(() =>
+    await expect(
       repository.appendEvent({
         ...event,
         id: "event-invalid",
         idempotencyKey: "invalid-transition",
         type: "step_started",
       }),
-    ).toThrow("Invalid step transition");
-    expect(repository.get("session-1")).toEqual(state);
-    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([]);
+    ).rejects.toThrow("Invalid step transition");
+    expect(await repository.get("session-1")).toEqual(state);
+    expect((await repository.getSnapshot("session-1"))?.recentEvents).toEqual([]);
   });
 
-  it("returns undefined for an unknown session", () => {
+  it("returns undefined for an unknown session", async () => {
     const repository = new InMemoryExecutionStateRepository();
-    expect(repository.get("missing")).toBeUndefined();
-    expect(repository.getSnapshot("missing")).toBeUndefined();
+    expect(await repository.get("missing")).toBeUndefined();
+    expect(await repository.getSnapshot("missing")).toBeUndefined();
   });
 
-  it("exposes a discriminated append result", () => {
+  it("exposes a discriminated append result", async () => {
     const repository = new InMemoryExecutionStateRepository([state]);
-    const result: AppendEventResult = repository.appendEvent(event);
+    const result: AppendEventResult = await repository.appendEvent(event);
     expect(result.kind).toBe("applied");
     if (result.kind === "applied") expect(result.event).toEqual(event);
+  });
+
+  it("windows recentEvents in snapshots by default and option", async () => {
+    const repository = new InMemoryExecutionStateRepository([state]);
+    expect(DEFAULT_RECENT_EVENT_LIMIT).toBe(100);
+
+    for (let i = 0; i < 3; i += 1) {
+      await repository.appendEvent({
+        id: `evt-${i}`,
+        sessionId: "session-1",
+        idempotencyKey: `world-${i}`,
+        actorId: "human-1",
+        origin: "user",
+        type: "world_state_updated",
+        payload: {
+          facts: { i },
+          resources: [],
+          observations: [],
+          activeConstraints: [],
+          updatedAt: now,
+        },
+        occurredAt: new Date(now.getTime() + i * 1000),
+      });
+    }
+
+    const limited = await repository.getSnapshot("session-1", { recentEventLimit: 2 });
+    expect(limited?.recentEvents).toHaveLength(2);
+    expect(limited?.recentEvents.map((e) => e.id)).toEqual(["evt-1", "evt-2"]);
+
+    const empty = await repository.getSnapshot("session-1", { recentEventLimit: 0 });
+    expect(empty?.recentEvents).toEqual([]);
+  });
+
+  it("rejects non-JSON-safe goal evaluation evidence at the repository boundary", async () => {
+    const repository = new InMemoryExecutionStateRepository([state]);
+    const badEvidence = { criterionId: "ready", status: "satisfied", evidence: [() => 1] };
+    expect(criterionEvaluationSchema.safeParse({ ...badEvidence, evaluatedAt: now }).success).toBe(
+      false,
+    );
+    await expect(
+      repository.appendEvent({
+        id: "bad-eval",
+        sessionId: "session-1",
+        idempotencyKey: "bad-eval",
+        actorId: "human-1",
+        origin: "user",
+        type: "goal_evaluated",
+        payload: badEvidence as never,
+        occurredAt: now,
+      }),
+    ).rejects.toThrow();
   });
 });

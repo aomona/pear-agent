@@ -126,7 +126,3 @@ export function createRuntimeSnapshot<TStepData = unknown>({
     generatedAt,
   });
 }
-
-// Keep these imports part of this module's public schema boundary. This also
-// ensures consumers can validate a materialized state before snapshotting.
-export { materializedExecutionStateSchema };

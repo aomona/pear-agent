@@ -85,9 +85,9 @@ const states = deriveStepStatuses(
 import { InMemoryExecutionStateRepository } from "@pear-agent/core";
 
 const repository = new InMemoryExecutionStateRepository();
-repository.create(initialState);
+await repository.create(initialState);
 
-repository.appendEvent({
+await repository.appendEvent({
   id: "event-1",
   sessionId: initialState.session.id,
   idempotencyKey: "pack-complete",
@@ -98,7 +98,8 @@ repository.appendEvent({
   occurredAt: new Date(),
 });
 
-const snapshot = repository.getSnapshot(initialState.session.id);
+const snapshot = await repository.getSnapshot(initialState.session.id);
+// Snapshot recentEvents are windowed (default 100); pass { recentEventLimit } to override.
 ```
 
 CoreはSession、WorldState、Runtime Event、Timer、materialized state、Snapshot、transactional Repository Portを提供します。`InMemoryExecutionStateRepository`は永続ストアではありません。Cloudflare/D1への永続化、Voice Session、AI SDKによる計画・再計画は後続Phaseで提供します。
