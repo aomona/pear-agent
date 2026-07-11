@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { criterionEvaluationSchema } from "./goal.js";
+import { executionPlanSchema } from "./plan.js";
 import { worldStateSchema, jsonValueSchema } from "./world-state.js";
 
 const runtimeEventEnvelopeSchema = z.object({
@@ -20,6 +21,12 @@ const timerStartedPayloadSchema = z
 const timerPayloadSchema = z.object({ timerId: z.string().min(1) }).strict();
 const goalEvaluatedPayloadSchema = criterionEvaluationSchema.omit({ evaluatedAt: true }).strict();
 const goalCompletionConfirmedPayloadSchema = z.object({ goalId: z.string().min(1) }).strict();
+const worldStateFactsPatchedPayloadSchema = z
+  .object({ facts: z.record(z.string(), jsonValueSchema) })
+  .strict();
+const planUpdatedPayloadSchema = z
+  .object({ plan: executionPlanSchema(z.unknown()) })
+  .strict();
 
 function coreEventSchema<TType extends string, TPayload extends z.ZodType>(
   type: TType,
@@ -34,11 +41,18 @@ const sessionCancelledEventSchema = coreEventSchema("session_cancelled", emptyPa
 const stepStartedEventSchema = coreEventSchema("step_started", stepPayloadSchema);
 const stepCompletedEventSchema = coreEventSchema("step_completed", stepPayloadSchema);
 const stepFailedEventSchema = coreEventSchema("step_failed", stepPayloadSchema);
+const stepPausedEventSchema = coreEventSchema("step_paused", stepPayloadSchema);
+const stepSkippedEventSchema = coreEventSchema("step_skipped", stepPayloadSchema);
 const timerStartedEventSchema = coreEventSchema("timer_started", timerStartedPayloadSchema);
 const timerPausedEventSchema = coreEventSchema("timer_paused", timerPayloadSchema);
 const timerCompletedEventSchema = coreEventSchema("timer_completed", timerPayloadSchema);
 const timerCancelledEventSchema = coreEventSchema("timer_cancelled", timerPayloadSchema);
 const worldStateUpdatedEventSchema = coreEventSchema("world_state_updated", worldStateSchema);
+const worldStateFactsPatchedEventSchema = coreEventSchema(
+  "world_state_facts_patched",
+  worldStateFactsPatchedPayloadSchema,
+);
+const planUpdatedEventSchema = coreEventSchema("plan_updated", planUpdatedPayloadSchema);
 const goalEvaluatedEventSchema = coreEventSchema("goal_evaluated", goalEvaluatedPayloadSchema);
 const goalCompletionConfirmedEventSchema = coreEventSchema(
   "goal_completion_confirmed",
@@ -52,11 +66,15 @@ const coreEventSchemas = [
   stepStartedEventSchema,
   stepCompletedEventSchema,
   stepFailedEventSchema,
+  stepPausedEventSchema,
+  stepSkippedEventSchema,
   timerStartedEventSchema,
   timerPausedEventSchema,
   timerCompletedEventSchema,
   timerCancelledEventSchema,
   worldStateUpdatedEventSchema,
+  worldStateFactsPatchedEventSchema,
+  planUpdatedEventSchema,
   goalEvaluatedEventSchema,
   goalCompletionConfirmedEventSchema,
 ] as const;

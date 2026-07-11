@@ -5,10 +5,15 @@ import {
   evaluateGoalCompletion,
   latestCriterionEvaluations,
 } from "./goal.js";
-import { executionPlanSchema } from "./plan.js";
+import { executionPlanSchema, type ExecutionPlan, type ExecutionStep } from "./plan.js";
 import { type RuntimeEvent } from "./event.js";
 import { executionSessionSchema } from "./session.js";
-import { deriveStepStatuses, stepStatesSchema, transitionStep } from "./step-state.js";
+import {
+  deriveStepStatuses,
+  stepStatesSchema,
+  transitionStep,
+  type StepStates,
+} from "./step-state.js";
 import { worldStateSchema } from "./world-state.js";
 import { executionTimerSchema } from "./timer.js";
 
@@ -58,10 +63,13 @@ export function applyRuntimeEvent(
   let criterionEvaluationHistory = state.criterionEvaluationHistory;
   let worldState = state.worldState;
   let session = state.session;
+  let plan = state.plan;
   if (
     event.type === "step_started" ||
     event.type === "step_completed" ||
-    event.type === "step_failed"
+    event.type === "step_failed" ||
+    event.type === "step_paused" ||
+    event.type === "step_skipped"
   ) {
     const { stepId } = event.payload;
     const current = state.stepStates[stepId];
@@ -71,7 +79,11 @@ export function applyRuntimeEvent(
         ? "active"
         : event.type === "step_completed"
           ? "completed"
-          : "failed";
+          : event.type === "step_failed"
+            ? "failed"
+            : event.type === "step_paused"
+              ? "paused"
+              : "skipped";
     const afterTransition = {
       ...state.stepStates,
       [stepId]: transitionStep(current, nextStatus),
@@ -175,6 +187,36 @@ export function applyRuntimeEvent(
     worldState = { ...event.payload, updatedAt: event.occurredAt };
   }
 
+  if (event.type === "world_state_facts_patched") {
+    worldState = {
+      ...state.worldState,
+      facts: { ...state.worldState.facts, ...event.payload.facts },
+      updatedAt: event.occurredAt,
+    };
+  }
+
+  if (event.type === "domain_event") {
+    // Domain events are observations by default; Domain-specific projection is
+    // handled by adapters using parseDomainEvent + higher-level handlers.
+    worldState = {
+      ...state.worldState,
+      observations: [
+        ...state.worldState.observations,
+        { type: event.domainType, data: event.payload },
+      ],
+      updatedAt: event.occurredAt,
+    };
+  }
+
+  if (event.type === "plan_updated") {
+    const nextPlan = event.payload.plan as ExecutionPlan;
+    const applied = applyPlanUpdate(state, nextPlan, event.occurredAt);
+    plan = applied.plan;
+    session = applied.session;
+    stepStates = applied.stepStates;
+    criterionEvaluations = applied.criterionEvaluations;
+  }
+
   if (event.type === "session_started") {
     if (state.session.status !== "not_started" && state.session.status !== "paused") {
       throw new Error(`Invalid session transition: ${state.session.status} -> active`);
@@ -239,6 +281,7 @@ export function applyRuntimeEvent(
   return {
     ...state,
     session,
+    plan,
     worldState,
     stepStates,
     timers,
@@ -248,4 +291,119 @@ export function applyRuntimeEvent(
     appliedEventIds: [...state.appliedEventIds, event.id],
     appliedIdempotencyKeys: [...state.appliedIdempotencyKeys, event.idempotencyKey],
   };
+}
+
+const PROTECTED_STEP_STATUSES = new Set(["completed", "skipped", "active"]);
+
+function applyPlanUpdate(
+  state: Readonly<MaterializedExecutionState>,
+  nextPlan: ExecutionPlan,
+  occurredAt: Date,
+): {
+  plan: ExecutionPlan;
+  session: MaterializedExecutionState["session"];
+  stepStates: StepStates;
+  criterionEvaluations: MaterializedExecutionState["criterionEvaluations"];
+} {
+  if (nextPlan.id !== state.plan.id) {
+    throw new Error(`Plan id mismatch: ${nextPlan.id} !== ${state.plan.id}`);
+  }
+  if (nextPlan.version <= state.plan.version) {
+    throw new Error("Plan version must increase");
+  }
+  if (nextPlan.goal.id !== state.session.goalId) {
+    throw new Error(`Goal id mismatch: ${nextPlan.goal.id} !== ${state.session.goalId}`);
+  }
+
+  const previousSteps = new Map(state.plan.steps.map((step) => [step.id, step]));
+  const nextStepIds = new Set(nextPlan.steps.map(({ id }) => id));
+
+  for (const [stepId, stepState] of Object.entries(state.stepStates)) {
+    if (!PROTECTED_STEP_STATUSES.has(stepState.status)) continue;
+    if (!nextStepIds.has(stepId)) {
+      throw new Error(`Cannot remove ${stepState.status} step: ${stepId}`);
+    }
+  }
+
+  for (const nextStep of nextPlan.steps) {
+    const previous = previousSteps.get(nextStep.id);
+    const status = state.stepStates[nextStep.id]?.status;
+    if (!previous || !status) continue;
+    if (
+      (status === "completed" || status === "skipped" || status === "active") &&
+      !stepsStructurallyEqual(previous, nextStep)
+    ) {
+      throw new Error(`Cannot mutate ${status} step: ${nextStep.id}`);
+    }
+  }
+
+  // Retain status only when the step structure is unchanged, or when the step
+  // is protected (completed/skipped/active — already structurally equal above).
+  // Non-protected steps that were rewritten (e.g. failed) drop status so
+  // deriveStepStatuses can re-ready them after replan.
+  const retainedStates: StepStates = {};
+  for (const step of nextPlan.steps) {
+    const existing = state.stepStates[step.id];
+    if (!existing) continue;
+    const previous = previousSteps.get(step.id);
+    if (!previous) continue;
+    if (
+      PROTECTED_STEP_STATUSES.has(existing.status) ||
+      stepsStructurallyEqual(previous, step)
+    ) {
+      retainedStates[step.id] = existing;
+    }
+  }
+
+  const stepStates = {
+    ...retainedStates,
+    ...deriveStepStatuses(nextPlan.steps, retainedStates),
+  };
+
+  // Drop projected evaluations for criterion IDs no longer on the goal.
+  // History remains an audit log; completion only consults the projection.
+  const criterionIds = new Set(nextPlan.goal.successCriteria.map(({ id }) => id));
+  const criterionEvaluations = Object.fromEntries(
+    Object.entries(state.criterionEvaluations).filter(([criterionId]) =>
+      criterionIds.has(criterionId),
+    ),
+  );
+
+  let session: MaterializedExecutionState["session"] = {
+    ...state.session,
+    planId: nextPlan.id,
+    planVersion: nextPlan.version,
+    goalId: nextPlan.goal.id,
+    updatedAt: occurredAt,
+  };
+
+  if (nextPlan.goal.completionPolicy === "automatic") {
+    const latestEvaluations = latestCriterionEvaluations(nextPlan.goal, criterionEvaluations);
+    if (evaluateGoalCompletion(nextPlan.goal, latestEvaluations) === "satisfied") {
+      session = { ...session, status: "completed", updatedAt: occurredAt };
+    }
+  }
+
+  return {
+    plan: nextPlan,
+    session,
+    stepStates,
+    criterionEvaluations,
+  };
+}
+
+function stepsStructurallyEqual(left: ExecutionStep, right: ExecutionStep): boolean {
+  return stableSerialize(left) === stableSerialize(right);
+}
+
+function stableSerialize(value: unknown): string {
+  return JSON.stringify(value, (_key, nested) => {
+    if (nested instanceof Date) return nested.toISOString();
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      return Object.fromEntries(
+        Object.entries(nested as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)),
+      );
+    }
+    return nested;
+  });
 }

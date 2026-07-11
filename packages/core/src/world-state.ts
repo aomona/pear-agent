@@ -27,3 +27,56 @@ export const worldStateSchema = z.object({
 });
 
 export type WorldState = z.infer<typeof worldStateSchema>;
+
+export type CreateWorldStateInput = {
+  facts?: Record<string, JsonValue>;
+  resources?: WorldStateResource[];
+  observations?: WorldStateObservation[];
+  activeConstraints?: string[];
+  updatedAt: Date;
+};
+
+/**
+ * Builds a runtime WorldState envelope. Domain-specific state belongs in
+ * `facts`; Domain schemas describe that facts object, not this envelope.
+ */
+export function createWorldState(input: CreateWorldStateInput): WorldState {
+  return worldStateSchema.parse({
+    facts: input.facts ?? {},
+    resources: input.resources ?? [],
+    observations: input.observations ?? [],
+    activeConstraints: input.activeConstraints ?? [],
+    updatedAt: input.updatedAt,
+  });
+}
+
+/**
+ * Validates domain facts with the Domain `schemas.worldState` schema and wraps
+ * them in the Core WorldState envelope.
+ */
+export function createWorldStateFromDomainFacts<TFactsSchema extends z.ZodType>(
+  domainWorldStateSchema: TFactsSchema,
+  facts: z.input<TFactsSchema>,
+  options: Omit<CreateWorldStateInput, "facts">,
+): WorldState {
+  const parsedFacts = domainWorldStateSchema.parse(facts);
+  const jsonFacts = jsonValueSchema.parse(parsedFacts);
+  if (typeof jsonFacts !== "object" || jsonFacts === null || Array.isArray(jsonFacts)) {
+    throw new Error("Domain worldState facts must be a JSON object");
+  }
+  return createWorldState({
+    ...options,
+    facts: jsonFacts as Record<string, JsonValue>,
+  });
+}
+
+/**
+ * Reads and validates Domain facts from a runtime WorldState envelope using
+ * the Domain `schemas.worldState` schema.
+ */
+export function parseDomainWorldStateFacts<TFactsSchema extends z.ZodType>(
+  domainWorldStateSchema: TFactsSchema,
+  worldState: WorldState,
+): z.output<TFactsSchema> {
+  return domainWorldStateSchema.parse(worldState.facts);
+}

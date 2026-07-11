@@ -5,6 +5,7 @@ import {
   capabilityDefinitionSchema,
   defineDomain,
   executionDomainDefinitionSchema,
+  parseDomainEvent,
 } from "./index.js";
 
 const schemas = {
@@ -169,5 +170,61 @@ describe("defineDomain", () => {
     };
 
     expect(schema.safeParse(definition).success).toBe(false);
+  });
+});
+
+describe("parseDomainEvent", () => {
+  it("reconstructs and validates a domain event from domainType + payload", () => {
+    const domain = defineDomain(validDefinition());
+
+    expect(
+      parseDomainEvent(domain.schemas.events, {
+        domainType: "delay",
+        payload: { minutes: 15 },
+      }),
+    ).toEqual({ type: "delay", minutes: 15 });
+  });
+
+  it("accepts a payload that already includes the type discriminator", () => {
+    const domain = defineDomain(validDefinition());
+
+    expect(
+      parseDomainEvent(domain.schemas.events, {
+        domainType: "delay",
+        payload: { type: "delay", minutes: 20 },
+      }),
+    ).toEqual({ type: "delay", minutes: 20 });
+  });
+
+  it("rejects an unknown domain event type", () => {
+    const domain = defineDomain(validDefinition());
+
+    expect(() =>
+      parseDomainEvent(domain.schemas.events, {
+        domainType: "unknown",
+        payload: {},
+      }),
+    ).toThrow();
+  });
+
+  it("rejects payload.type that disagrees with domainType", () => {
+    const multiEventSchemas = {
+      ...schemas,
+      events: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("delay"), minutes: z.number().positive() }),
+        z.object({ type: z.literal("cancel"), reason: z.string().min(1) }),
+      ]),
+    };
+    const domain = defineDomain({
+      ...validDefinition(),
+      schemas: multiEventSchemas,
+    });
+
+    expect(() =>
+      parseDomainEvent(domain.schemas.events, {
+        domainType: "delay",
+        payload: { type: "cancel", reason: "user" },
+      }),
+    ).toThrow("Domain event type mismatch");
   });
 });

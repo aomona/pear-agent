@@ -30,6 +30,7 @@ const domain = defineDomain({
     input: z.object({ destination: z.string() }),
     normalizedInput: z.object({ destination: z.string() }),
     stepData: z.object({ label: z.string() }),
+    // Domain schemas.worldState describes facts stored in WorldState.facts
     worldState: z.object({ ready: z.boolean() }),
     events: z.object({ type: z.literal("ready") }),
   },
@@ -46,6 +47,8 @@ const domain = defineDomain({
   completionPolicy: "automatic",
 });
 ```
+
+Domain固有の状態はCoreの`WorldState` envelope（facts / resources / observations / constraints）の`facts`に載せます。`createWorldStateFromDomainFacts()`と`parseDomainWorldStateFacts()`でDomain schemaと往復できます。Runtimeの`domain_event`は`parseDomainEvent()`でDomain schemaへ検証できます。
 
 ## DAG検証
 
@@ -102,4 +105,6 @@ const snapshot = await repository.getSnapshot(initialState.session.id);
 // Snapshot recentEvents are windowed (default 100); pass { recentEventLimit } to override.
 ```
 
-CoreはSession、WorldState、Runtime Event、Timer、materialized state、Snapshot、transactional Repository Portを提供します。`InMemoryExecutionStateRepository`は永続ストアではありません。Cloudflare/D1への永続化、Voice Session、AI SDKによる計画・再計画は後続Phaseで提供します。
+CoreはSession、WorldState、Runtime Event、Timer、materialized state、Snapshot、transactional Repository Portを提供します。Stepは`step_paused` / `step_skipped`、WorldStateは全文置換に加え`world_state_facts_patched`（**トップレベル key の shallow merge**。ネストした object は置換）、Planは`plan_updated`（version増加、completed/skipped/active の保護、構造変更された非保護 Step の再 ready、automatic 完了の再評価）で更新できます。`domain_event`は既定でobservationsへ記録します。
+
+`InMemoryExecutionStateRepository`は永続ストアではありません。Cloudflare/D1への永続化、Voice Session、AI SDKによる計画・再計画、Continuationは後続Phaseで提供します。

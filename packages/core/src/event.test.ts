@@ -66,4 +66,66 @@ describe("runtimeEventSchema", () => {
       }).success,
     ).toBe(true);
   });
+
+  it("accepts step_paused and step_skipped events", () => {
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "step_paused",
+        payload: { stepId: "pack" },
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "step_skipped",
+        payload: { stepId: "pack" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts world_state_facts_patched and plan_updated events", () => {
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "world_state_facts_patched",
+        payload: { facts: { packedItemIds: ["keys"] } },
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "plan_updated",
+        payload: {
+          plan: {
+            id: "plan-1",
+            version: 2,
+            goal: {
+              id: "goal-1",
+              description: "Pack",
+              successCriteria: [
+                {
+                  id: "packed",
+                  description: "Packed",
+                  evaluator: { type: "human_confirmation" },
+                },
+              ],
+              completionPolicy: "automatic",
+            },
+            steps: [
+              {
+                id: "pack",
+                executor: { type: "human" },
+                after: [],
+                requirements: [],
+                estimatedDurationSeconds: 60,
+                timers: [],
+                domainData: {},
+              },
+            ],
+          },
+        },
+      }).success,
+    ).toBe(true);
+  });
 });
