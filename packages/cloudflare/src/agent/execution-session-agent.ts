@@ -5,10 +5,12 @@ import type {
   RuntimeEvent,
   RuntimeSnapshot,
 } from "@pear-agent/core";
-import { Agent } from "agents";
+import { Agent, type Connection, type ConnectionContext } from "agents";
 
 import { D1ExecutionStateRepository } from "../d1/repository.js";
 import type { PearEnv } from "../env.js";
+import { toJsonValue } from "../serialize.js";
+import { EMPTY_SYNC_STATE, type ExecutionSessionSyncState } from "./sync-state.js";
 
 /**
  * Per-session Durable Agent. Serializes mutations for one Execution Session
@@ -20,9 +22,30 @@ import type { PearEnv } from "../env.js";
  * Mutations share an in-isolate write queue so concurrent RPC cannot interleave
  * D1 read-modify-write (lost step updates). DO input gates help, but miniflare
  * and concurrent Worker→DO RPC still need an explicit chain.
+ *
+ * {@link ExecutionSessionSyncState} is a broadcast mirror for WebSocket clients
+ * (`agents/client` / `agents/react`). It is not the durable PEAR store.
  */
-export class ExecutionSessionAgent extends Agent<PearEnv, Record<string, never>> {
-  override initialState: Record<string, never> = {};
+export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncState> {
+  override initialState: ExecutionSessionSyncState = EMPTY_SYNC_STATE;
+
+  /**
+   * UI clients only subscribe; mutations go through authorized HTTP + DO RPC.
+   * Marking WS connections readonly prevents client-originated `setState`.
+   */
+  override shouldConnectionBeReadonly(_connection: Connection, _ctx: ConnectionContext): boolean {
+    return true;
+  }
+
+  /**
+   * On (re)connect, rehydrate the sync mirror from D1 so clients converge
+   * to the durable snapshot even if Agent SQLite lagged or was empty.
+   */
+  override async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
+    void connection;
+    void ctx;
+    await this.publishSyncStateFromD1();
+  }
 
   /** Chains session mutations so only one D1 RMW runs at a time in this isolate. */
   private writeChain: Promise<void> = Promise.resolve();
@@ -64,6 +87,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, Record<string, never>>
         domainId: input.domainId,
         ...(input.normalizedInput === undefined ? {} : { normalizedInput: input.normalizedInput }),
       });
+      await this.publishSyncStateFromD1();
       return { ok: true as const };
     });
   }
@@ -78,7 +102,11 @@ export class ExecutionSessionAgent extends Agent<PearEnv, Record<string, never>>
 
   async appendEvent(event: RuntimeEvent): Promise<AppendEventResult> {
     this.assertSession(event.sessionId);
-    return this.runExclusive(() => this.repository().appendEvent(event));
+    return this.runExclusive(async () => {
+      const result = await this.repository().appendEvent(event);
+      await this.publishSyncStateFromD1();
+      return result;
+    });
   }
 
   async getSnapshot(options?: GetSnapshotOptions): Promise<RuntimeSnapshot | null> {
@@ -91,6 +119,9 @@ export class ExecutionSessionAgent extends Agent<PearEnv, Record<string, never>>
   async putNormalizedInput(payload: unknown): Promise<{ ok: true }> {
     return this.runExclusive(async () => {
       await this.repository().putNormalizedInput(this.sessionId(), payload);
+      // Normalized input is not part of RuntimeSnapshot today; still bump so
+      // reconnecting clients re-fetch related HTTP resources if they care.
+      await this.publishSyncStateFromD1();
       return { ok: true as const };
     });
   }
@@ -99,6 +130,25 @@ export class ExecutionSessionAgent extends Agent<PearEnv, Record<string, never>>
     return this.runExclusive(async () => {
       const payload = await this.repository().getNormalizedInput(this.sessionId());
       return payload === undefined ? null : payload;
+    });
+  }
+
+  /** Current broadcast mirror (for tests and diagnostics). */
+  async getSyncState(): Promise<ExecutionSessionSyncState> {
+    return this.state;
+  }
+
+  /**
+   * Loads the latest snapshot from D1 and broadcasts via `setState`.
+   * Safe when the session row does not exist yet (snapshot stays null).
+   */
+  private async publishSyncStateFromD1(): Promise<void> {
+    const snapshot = await this.repository().getSnapshot(this.sessionId());
+    const previous = this.state ?? EMPTY_SYNC_STATE;
+    this.setState({
+      revision: previous.revision + 1,
+      snapshot: snapshot === undefined ? null : toJsonValue(snapshot),
+      continuation: null,
     });
   }
 

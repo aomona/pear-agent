@@ -9,7 +9,14 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["packages/*/src/**/*.test.ts", "examples/**/src/**/*.test.ts"],
-    exclude: ["**/node_modules/**", "**/.worktrees/**", "**/dist/**", "packages/cloudflare/**"],
+    exclude: [
+      "**/node_modules/**",
+      "**/.worktrees/**",
+      "**/dist/**",
+      "packages/cloudflare/**",
+      // jsdom + React Testing Library — package vitest config
+      "packages/react/**",
+    ],
     environment: "node",
     passWithNoTests: true,
   },
