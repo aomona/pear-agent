@@ -36,7 +36,8 @@ const initialState: MaterializedExecutionState = {
   worldState: { facts: {}, resources: [], observations: [], activeConstraints: [], updatedAt: now },
   stepStates: { pack: { status: "active" } },
   timers: {},
-  criterionEvaluations: [],
+  criterionEvaluations: {},
+  criterionEvaluationHistory: [],
   lastAppliedEventAt: undefined,
   appliedEventIds: [],
   appliedIdempotencyKeys: [],
@@ -158,8 +159,37 @@ describe("applyRuntimeEvent", () => {
     expect(missing.session.status).toBe("active");
     expect(duplicate.session.status).toBe("active");
     expect(unknown.session.status).toBe("active");
-    expect(duplicate.criterionEvaluations).toHaveLength(2);
-    expect(unknown.criterionEvaluations).toHaveLength(1);
+    expect(duplicate.criterionEvaluations).toMatchObject({ packed: { status: "satisfied" } });
+    expect(unknown.criterionEvaluations).toMatchObject({ unknown: { status: "satisfied" } });
+    expect(duplicate.criterionEvaluationHistory).toHaveLength(2);
+    expect(unknown.criterionEvaluationHistory).toHaveLength(1);
+  });
+
+  it("overwrites the materialized evaluation while retaining duplicate history for completion", () => {
+    const twoCriterionState: MaterializedExecutionState = {
+      ...initialState,
+      plan: {
+        ...initialState.plan,
+        goal: {
+          ...initialState.plan.goal,
+          successCriteria: [
+            ...initialState.plan.goal.successCriteria,
+            {
+              id: "ready",
+              description: "Ready to leave",
+              evaluator: { type: "human_confirmation" },
+            },
+          ],
+        },
+      },
+    };
+
+    const first = applyRuntimeEvent(twoCriterionState, goalEvent("packed", "satisfied"));
+    const duplicate = applyRuntimeEvent(first, goalEvent("packed", "unsatisfied", 1));
+
+    expect(duplicate.criterionEvaluations).toMatchObject({ packed: { status: "unsatisfied" } });
+    expect(duplicate.criterionEvaluationHistory).toHaveLength(2);
+    expect(duplicate.session.status).toBe("active");
   });
 
   it("completes a multi-criterion goal once its complete evaluation history is satisfied", () => {

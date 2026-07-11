@@ -14,7 +14,11 @@ export const materializedExecutionStateSchema = z.object({
   worldState: worldStateSchema,
   stepStates: stepStatesSchema,
   timers: z.record(z.string(), executionTimerSchema),
-  criterionEvaluations: z.array(criterionEvaluationSchema),
+  // Latest materialized evaluation by criterion ID. Evaluation history is
+  // kept separately so duplicate/unknown evaluations remain visible to the
+  // completion evaluator.
+  criterionEvaluations: z.record(z.string(), criterionEvaluationSchema),
+  criterionEvaluationHistory: z.array(criterionEvaluationSchema),
   lastAppliedEventAt: z.date().optional(),
   appliedEventIds: z.array(z.string().min(1)),
   appliedIdempotencyKeys: z.array(z.string().min(1)),
@@ -54,6 +58,7 @@ export function applyRuntimeEvent(
   let stepStates = state.stepStates;
   let timers = state.timers;
   let criterionEvaluations = state.criterionEvaluations;
+  let criterionEvaluationHistory = state.criterionEvaluationHistory;
   let worldState = state.worldState;
   let session = state.session;
   if (
@@ -153,14 +158,16 @@ export function applyRuntimeEvent(
 
   if (event.type === "goal_evaluated") {
     const payload = goalEvaluatedPayloadSchema.parse(event.payload);
-    criterionEvaluations = [
+    const evaluation = criterionEvaluationSchema.parse({
+      ...payload,
+      evaluatedAt: event.occurredAt,
+    });
+    criterionEvaluations = {
       ...state.criterionEvaluations,
-      criterionEvaluationSchema.parse({
-        ...payload,
-        evaluatedAt: event.occurredAt,
-      }),
-    ];
-    if (evaluateGoalCompletion(state.plan.goal, criterionEvaluations) === "satisfied") {
+      [evaluation.criterionId]: evaluation,
+    };
+    criterionEvaluationHistory = [...state.criterionEvaluationHistory, evaluation];
+    if (evaluateGoalCompletion(state.plan.goal, criterionEvaluationHistory) === "satisfied") {
       session = { ...state.session, status: "completed", updatedAt: event.occurredAt };
     }
   }
@@ -172,6 +179,7 @@ export function applyRuntimeEvent(
     stepStates,
     timers,
     criterionEvaluations,
+    criterionEvaluationHistory,
     lastAppliedEventAt: event.occurredAt,
     appliedEventIds: [...state.appliedEventIds, event.id],
     appliedIdempotencyKeys: [...state.appliedIdempotencyKeys, event.idempotencyKey],

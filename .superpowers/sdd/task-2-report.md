@@ -65,3 +65,11 @@ There is no `timer_cancelled` runtime event in the existing `RuntimeEvent` union
 - Goal completion now has a single decision path: `evaluateGoalCompletion(plan.goal, criterionEvaluations)`. Its exact-set validation rejects missing, duplicate, and unknown criterion evaluations.
 - Added coverage for invalid materialized plans, incomplete evaluation histories, and successful multi-criterion completion.
 - Verification passed: `pnpm test -- packages/core/src/execution-state.test.ts` (12 files / 84 tests), `pnpm typecheck`, `pnpm lint`, and `git diff --check`.
+
+## Public state contract correction (2026-07-11)
+
+- Restored `criterionEvaluations` as a `Record<string, CriterionEvaluation>` latest-value materialized view.
+- Added append-only `criterionEvaluationHistory: CriterionEvaluation[]` so duplicate, unknown, and missing evaluations remain visible to completion checks.
+- `evaluateGoalCompletion(plan.goal, criterionEvaluationHistory)` is the sole completion decision path; repeated evaluation events overwrite the record while leaving history (and therefore incomplete status) intact.
+- Added regression coverage for latest-value overwrite and duplicate history semantics.
+- Verification passed: `pnpm test`, `pnpm typecheck`, `pnpm lint`, and `git diff --check`.
