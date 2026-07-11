@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { jsonValueSchema } from "./world-state.js";
+import { criterionEvaluationSchema } from "./goal.js";
+import { worldStateSchema, jsonValueSchema } from "./world-state.js";
 
 const runtimeEventEnvelopeSchema = z.object({
   id: z.string().min(1),
@@ -11,22 +12,38 @@ const runtimeEventEnvelopeSchema = z.object({
   occurredAt: z.date(),
 });
 
-function coreEventSchema<TType extends string>(type: TType) {
-  return runtimeEventEnvelopeSchema.extend({ type: z.literal(type), payload: jsonValueSchema });
+const emptyPayloadSchema = z.object({}).strict();
+const stepPayloadSchema = z.object({ stepId: z.string().min(1) }).strict();
+const timerStartedPayloadSchema = z
+  .object({ timerId: z.string().min(1), durationSeconds: z.number().nonnegative().optional() })
+  .strict();
+const timerPayloadSchema = z.object({ timerId: z.string().min(1) }).strict();
+const goalEvaluatedPayloadSchema = criterionEvaluationSchema.omit({ evaluatedAt: true }).strict();
+const goalCompletionConfirmedPayloadSchema = z.object({ goalId: z.string().min(1) }).strict();
+
+function coreEventSchema<TType extends string, TPayload extends z.ZodType>(
+  type: TType,
+  payload: TPayload,
+) {
+  return runtimeEventEnvelopeSchema.extend({ type: z.literal(type), payload });
 }
 
-const sessionStartedEventSchema = coreEventSchema("session_started");
-const sessionPausedEventSchema = coreEventSchema("session_paused");
-const stepStartedEventSchema = coreEventSchema("step_started");
-const stepCompletedEventSchema = coreEventSchema("step_completed");
-const stepFailedEventSchema = coreEventSchema("step_failed");
-const timerStartedEventSchema = coreEventSchema("timer_started");
-const timerPausedEventSchema = coreEventSchema("timer_paused");
-const timerCompletedEventSchema = coreEventSchema("timer_completed");
-const worldStateUpdatedEventSchema = coreEventSchema("world_state_updated");
-const goalEvaluatedEventSchema = coreEventSchema("goal_evaluated");
+const sessionStartedEventSchema = coreEventSchema("session_started", emptyPayloadSchema);
+const sessionPausedEventSchema = coreEventSchema("session_paused", emptyPayloadSchema);
+const stepStartedEventSchema = coreEventSchema("step_started", stepPayloadSchema);
+const stepCompletedEventSchema = coreEventSchema("step_completed", stepPayloadSchema);
+const stepFailedEventSchema = coreEventSchema("step_failed", stepPayloadSchema);
+const timerStartedEventSchema = coreEventSchema("timer_started", timerStartedPayloadSchema);
+const timerPausedEventSchema = coreEventSchema("timer_paused", timerPayloadSchema);
+const timerCompletedEventSchema = coreEventSchema("timer_completed", timerPayloadSchema);
+const worldStateUpdatedEventSchema = coreEventSchema("world_state_updated", worldStateSchema);
+const goalEvaluatedEventSchema = coreEventSchema("goal_evaluated", goalEvaluatedPayloadSchema);
+const goalCompletionConfirmedEventSchema = coreEventSchema(
+  "goal_completion_confirmed",
+  goalCompletionConfirmedPayloadSchema,
+);
 
-export const coreRuntimeEventSchema = z.discriminatedUnion("type", [
+const coreEventSchemas = [
   sessionStartedEventSchema,
   sessionPausedEventSchema,
   stepStartedEventSchema,
@@ -37,8 +54,10 @@ export const coreRuntimeEventSchema = z.discriminatedUnion("type", [
   timerCompletedEventSchema,
   worldStateUpdatedEventSchema,
   goalEvaluatedEventSchema,
-]);
+  goalCompletionConfirmedEventSchema,
+] as const;
 
+export const coreRuntimeEventSchema = z.discriminatedUnion("type", coreEventSchemas);
 export type CoreRuntimeEvent = z.infer<typeof coreRuntimeEventSchema>;
 
 export const domainRuntimeEventSchema = runtimeEventEnvelopeSchema.extend({
@@ -46,21 +65,10 @@ export const domainRuntimeEventSchema = runtimeEventEnvelopeSchema.extend({
   domainType: z.string().min(1),
   payload: jsonValueSchema,
 });
-
 export type DomainRuntimeEvent = z.infer<typeof domainRuntimeEventSchema>;
 
 export const runtimeEventSchema = z.discriminatedUnion("type", [
-  sessionStartedEventSchema,
-  sessionPausedEventSchema,
-  stepStartedEventSchema,
-  stepCompletedEventSchema,
-  stepFailedEventSchema,
-  timerStartedEventSchema,
-  timerPausedEventSchema,
-  timerCompletedEventSchema,
-  worldStateUpdatedEventSchema,
-  goalEvaluatedEventSchema,
+  ...coreEventSchemas,
   domainRuntimeEventSchema,
 ]);
-
 export type RuntimeEvent = z.infer<typeof runtimeEventSchema>;

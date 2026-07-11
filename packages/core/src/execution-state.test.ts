@@ -217,7 +217,46 @@ describe("applyRuntimeEvent", () => {
     expect(partlyEvaluated.session.status).toBe("active");
     expect(completed.session.status).toBe("completed");
   });
+
+  it("uses only the latest evaluation of each criterion for automatic completion", () => {
+    const unknown = applyRuntimeEvent(initialState, goalEvent("packed", "unknown"));
+    const unsatisfied = applyRuntimeEvent(unknown, goalEvent("packed", "unsatisfied", 1));
+    const satisfied = applyRuntimeEvent(unsatisfied, goalEvent("packed", "satisfied", 2));
+
+    expect(satisfied.session.status).toBe("completed");
+    expect(satisfied.criterionEvaluationHistory).toHaveLength(3);
+  });
+
+  it("requires an explicit valid confirmation for human-confirmation goals", () => {
+    const state: MaterializedExecutionState = {
+      ...initialState,
+      plan: {
+        ...initialState.plan,
+        goal: { ...initialState.plan.goal, completionPolicy: "human_confirmation" },
+      },
+    };
+    expect(() => applyRuntimeEvent(state, confirmationEvent())).toThrow(
+      "before all criteria are satisfied",
+    );
+
+    const evaluated = applyRuntimeEvent(state, goalEvent("packed", "satisfied"));
+    expect(evaluated.session.status).toBe("active");
+    expect(applyRuntimeEvent(evaluated, confirmationEvent()).session.status).toBe("completed");
+  });
 });
+
+function confirmationEvent(): Extract<RuntimeEvent, { type: "goal_completion_confirmed" }> {
+  return {
+    id: "goal-confirmed",
+    sessionId: "session-1",
+    idempotencyKey: "goal-confirmed",
+    actorId: "human-1",
+    origin: "user",
+    type: "goal_completion_confirmed",
+    payload: { goalId: "goal-1" },
+    occurredAt: now,
+  };
+}
 
 function timerEvent(
   type: "timer_started" | "timer_paused" | "timer_completed",

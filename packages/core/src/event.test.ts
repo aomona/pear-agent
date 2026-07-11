@@ -36,4 +36,17 @@ describe("runtimeEventSchema", () => {
   it("rejects an unknown event type", () => {
     expect(runtimeEventSchema.safeParse({ ...event, type: "unknown_event" }).success).toBe(false);
   });
+
+  it("rejects null and arbitrary core payloads", () => {
+    expect(runtimeEventSchema.safeParse({ ...event, payload: null }).success).toBe(false);
+    expect(runtimeEventSchema.safeParse({ ...event, payload: { arbitrary: true } }).success).toBe(
+      false,
+    );
+    expect(
+      runtimeEventSchema.safeParse({ ...event, type: "timer_paused", payload: {} }).success,
+    ).toBe(false);
+    expect(
+      runtimeEventSchema.safeParse({ ...event, type: "goal_evaluated", payload: {} }).success,
+    ).toBe(false);
+  });
 });

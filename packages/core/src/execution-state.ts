@@ -26,18 +26,6 @@ export const materializedExecutionStateSchema = z.object({
 
 export type MaterializedExecutionState = z.infer<typeof materializedExecutionStateSchema>;
 
-const stepPayloadSchema = z.object({ stepId: z.string().min(1) });
-const timerStartedPayloadSchema = z.object({
-  timerId: z.string().min(1),
-  durationSeconds: z.number().nonnegative().optional(),
-});
-const timerPayloadSchema = z.object({ timerId: z.string().min(1) });
-const goalEvaluatedPayloadSchema = z.object({
-  criterionId: z.string().min(1),
-  status: z.enum(["satisfied", "unsatisfied", "unknown"]),
-  evidence: z.array(z.unknown()),
-});
-
 export function applyRuntimeEvent(
   state: Readonly<MaterializedExecutionState>,
   event: RuntimeEvent,
@@ -66,7 +54,7 @@ export function applyRuntimeEvent(
     event.type === "step_completed" ||
     event.type === "step_failed"
   ) {
-    const { stepId } = stepPayloadSchema.parse(event.payload);
+    const { stepId } = event.payload;
     const current = state.stepStates[stepId];
     if (!current) throw new Error(`Unknown step: ${stepId}`);
     const nextStatus =
@@ -79,7 +67,7 @@ export function applyRuntimeEvent(
   }
 
   if (event.type === "timer_started") {
-    const { timerId, durationSeconds } = timerStartedPayloadSchema.parse(event.payload);
+    const { timerId, durationSeconds } = event.payload;
     const existing = state.timers[timerId];
     if (existing && existing.status !== "paused") {
       throw new Error(`Invalid timer transition: ${existing.status} -> running`);
@@ -102,7 +90,7 @@ export function applyRuntimeEvent(
   }
 
   if (event.type === "timer_paused") {
-    const { timerId } = timerPayloadSchema.parse(event.payload);
+    const { timerId } = event.payload;
     const existing = state.timers[timerId];
     if (!existing) throw new Error(`Unknown timer: ${timerId}`);
     if (existing.status !== "running") {
@@ -121,7 +109,7 @@ export function applyRuntimeEvent(
   }
 
   if (event.type === "timer_completed") {
-    const { timerId } = timerPayloadSchema.parse(event.payload);
+    const { timerId } = event.payload;
     const existing = state.timers[timerId];
     if (!existing) throw new Error(`Unknown timer: ${timerId}`);
     if (existing.status !== "running" && existing.status !== "paused") {
@@ -139,7 +127,7 @@ export function applyRuntimeEvent(
   }
 
   if (event.type === "world_state_updated") {
-    worldState = worldStateSchema.parse(event.payload);
+    worldState = event.payload;
   }
 
   if (event.type === "session_started") {
@@ -157,7 +145,7 @@ export function applyRuntimeEvent(
   }
 
   if (event.type === "goal_evaluated") {
-    const payload = goalEvaluatedPayloadSchema.parse(event.payload);
+    const payload = event.payload;
     const evaluation = criterionEvaluationSchema.parse({
       ...payload,
       evaluatedAt: event.occurredAt,
@@ -167,9 +155,26 @@ export function applyRuntimeEvent(
       [evaluation.criterionId]: evaluation,
     };
     criterionEvaluationHistory = [...state.criterionEvaluationHistory, evaluation];
-    if (evaluateGoalCompletion(state.plan.goal, criterionEvaluationHistory) === "satisfied") {
+    if (
+      state.plan.goal.completionPolicy === "automatic" &&
+      evaluateGoalCompletion(state.plan.goal, Object.values(criterionEvaluations)) === "satisfied"
+    ) {
       session = { ...state.session, status: "completed", updatedAt: event.occurredAt };
     }
+  }
+
+  if (event.type === "goal_completion_confirmed") {
+    if (event.payload.goalId !== state.plan.goal.id)
+      throw new Error("Goal confirmation ID mismatch");
+    if (state.plan.goal.completionPolicy !== "human_confirmation") {
+      throw new Error("Goal does not require human confirmation");
+    }
+    if (
+      evaluateGoalCompletion(state.plan.goal, Object.values(criterionEvaluations)) !== "satisfied"
+    ) {
+      throw new Error("Cannot confirm goal completion before all criteria are satisfied");
+    }
+    session = { ...state.session, status: "completed", updatedAt: event.occurredAt };
   }
 
   return {
