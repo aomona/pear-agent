@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  initialOutingWorldState,
+  outingGoal,
+  outingPlan,
+} from "../../../examples/outing-domain/src/domain.js";
+import {
   InMemoryExecutionStateRepository,
+  runtimeEventSchema,
   type MaterializedExecutionState,
   type RuntimeEvent,
 } from "./index.js";
@@ -14,7 +20,7 @@ function event(
   payload: RuntimeEvent["payload"],
   occurredAt = startedAt,
 ): RuntimeEvent {
-  return {
+  return runtimeEventSchema.parse({
     id,
     sessionId: "outing-session",
     idempotencyKey: id,
@@ -23,7 +29,7 @@ function event(
     type,
     payload,
     occurredAt,
-  } as RuntimeEvent;
+  });
 }
 
 describe("execution state contract", () => {
@@ -31,58 +37,16 @@ describe("execution state contract", () => {
     const initialState: MaterializedExecutionState = {
       session: {
         id: "outing-session",
-        planId: "outing-plan",
-        planVersion: 1,
-        goalId: "ready-to-leave",
+        planId: outingPlan.id,
+        planVersion: outingPlan.version,
+        goalId: outingGoal.id,
         status: "active",
         actorIds: ["traveler"],
         createdAt: startedAt,
         updatedAt: startedAt,
       },
-      plan: {
-        id: "outing-plan",
-        version: 1,
-        goal: {
-          id: "ready-to-leave",
-          description: "Be ready to leave",
-          successCriteria: [
-            {
-              id: "packed",
-              description: "Belongings are packed",
-              evaluator: { type: "state_rule" },
-            },
-            { id: "charged", description: "Phone is charged", evaluator: { type: "state_rule" } },
-          ],
-          completionPolicy: "automatic",
-        },
-        steps: [
-          {
-            id: "pack",
-            executor: { type: "human" },
-            after: [],
-            requirements: [],
-            estimatedDurationSeconds: 60,
-            timers: [],
-            domainData: {},
-          },
-          {
-            id: "charge",
-            executor: { type: "human" },
-            after: [],
-            requirements: [],
-            estimatedDurationSeconds: 300,
-            timers: [],
-            domainData: {},
-          },
-        ],
-      },
-      worldState: {
-        facts: {},
-        resources: [],
-        observations: [],
-        activeConstraints: [],
-        updatedAt: startedAt,
-      },
+      plan: outingPlan,
+      worldState: initialOutingWorldState,
       stepStates: { pack: { status: "ready" }, charge: { status: "ready" } },
       timers: {},
       criterionEvaluations: {},
