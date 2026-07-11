@@ -43,3 +43,8 @@
 
 - packageは現在`private: true`かつexportsがTypeScript source直参照であり、公開registry配布用build設定は後続作業が必要。
 - リポジトリ全体のOxfmt checkは既存文書のformat差分により失敗する。
+
+## レビュー修正
+
+- `docs/domain-contract.md`のCapability説明を修正し、Foundationの保証をCapability SchemaとPolicy評価に限定した。認可Hook、Capability呼び出し、Execution Stateへの結果反映は後続のCloudflare / Execution State Phaseで統合することを明記した。
+- privateかつsource exportである現状に合わせ、`packages/core/README.md`のInstallを`workspace:*`利用例へ変更した。Registry向け`pnpm add`は公開後の予定として明記した。

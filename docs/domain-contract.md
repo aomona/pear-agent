@@ -81,11 +81,11 @@ type CapabilityDefinition<TInput, TOutput> = {
 };
 ```
 
-CapabilityはPEAR Runtimeの認可とPolicy評価を通じて実行します。
+FoundationはCapability定義のSchemaと、`executionMode` / `riskLevel`に基づくPolicy評価を提供します。Capabilityの呼び出し、認可Hookの適用、実行結果のExecution Stateへの反映はまだ統合しません。
 
 ### Authorization
 
-認証Contextと操作単位の認可は後続PhaseでDomain Contractへ追加します。Foundationの`ExecutionDomainDefinition`にはまだ含まれません。
+認証Contextと操作単位の認可Hookは後続のCloudflare / Execution State PhaseでDomain Contractへ追加し、Capability実行へ統合します。Foundationの`ExecutionDomainDefinition`にはまだ含まれません。
 
 ## RuntimeがDomainへ保証するもの
 
@@ -95,7 +95,7 @@ CapabilityはPEAR Runtimeの認可とPolicy評価を通じて実行します。
 - Goal評価の実行基盤
 - Capability Policy
 
-Event追加とWorldState更新、認可、Continuation、Voice Session lifecycle、Plan Patch、Plan Version / Rollback、React hooksは後続Phaseで提供します。
+Event追加とWorldState更新、認可HookとCapability実行統合、Continuation、Voice Session lifecycle、Plan Patch、Plan Version / Rollback、React hooksは後続のCloudflare / Execution State Phase以降で提供します。
 
 ## Domainが保証するもの
 
