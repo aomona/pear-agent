@@ -50,12 +50,12 @@ describe("outingDomain", () => {
       { id: "charge", after: [] },
     ]);
     expect(worldStateSchema.parse(initialOutingWorldState)).toEqual(initialOutingWorldState);
-    expect(parseDomainWorldStateFacts(outingDomain.schemas.worldState, initialOutingWorldState)).toEqual(
-      {
-        departureAt: "2026-07-11T03:00:00Z",
-        packedBelongingIds: [],
-        chargeByBelongingId: { phone: 20 },
-      },
-    );
+    expect(
+      parseDomainWorldStateFacts(outingDomain.schemas.worldState, initialOutingWorldState),
+    ).toEqual({
+      departureAt: "2026-07-11T03:00:00Z",
+      packedBelongingIds: [],
+      chargeByBelongingId: { phone: 20 },
+    });
   });
 });
