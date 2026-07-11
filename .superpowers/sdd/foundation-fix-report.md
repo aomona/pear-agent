@@ -81,5 +81,9 @@ Results:
 
 ## Deferred / concerns
 
-- Recursive DFS and npm build remain intentionally deferred as requested.
-- The optional `wakeAt` ISO datetime tightening was not included to avoid expanding the API-validation change beyond the two Important findings.
+- `validatePlanGraph()` now uses an iterative DFS with an explicit stack, so deep plans no longer risk a `RangeError: Maximum call stack size exceeded` during schema parsing. A deep linear DAG is covered in tests.
+- `wakeAt` is now validated as an ISO datetime (`z.iso.datetime`), and malformed timestamps are rejected at the plan-schema boundary with regression coverage.
+- `successCriteria[].id` values must be unique at the `executionGoalSchema` boundary, so a Goal can no longer parse into a permanently unsatisfiable state.
+- `executionDomainDefinitionSchema` rejects unexpected `schemas` keys in addition to asserting each expected schema identity.
+- The Vitest workspace now includes `examples/*`, so example-domain tests execute in CI.
+- npm build remains intentionally deferred as requested.

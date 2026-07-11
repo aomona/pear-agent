@@ -15,14 +15,29 @@ export const successCriterionSchema = z.object({
 
 export type SuccessCriterion = z.infer<typeof successCriterionSchema>;
 
-export const executionGoalSchema = z.object({
-  id: z.string().min(1),
-  description: z.string().min(1),
-  successCriteria: z.array(successCriterionSchema).min(1),
-  completionPolicy: z.enum(["automatic", "human_confirmation"]),
-  deadline: z.date().optional(),
-  priority: z.number().optional(),
-});
+export const executionGoalSchema = z
+  .object({
+    id: z.string().min(1),
+    description: z.string().min(1),
+    successCriteria: z.array(successCriterionSchema).min(1),
+    completionPolicy: z.enum(["automatic", "human_confirmation"]),
+    deadline: z.date().optional(),
+    priority: z.number().optional(),
+  })
+  .superRefine((goal, context) => {
+    const seen = new Set<string>();
+    goal.successCriteria.forEach((criterion, index) => {
+      if (seen.has(criterion.id)) {
+        context.addIssue({
+          code: "custom",
+          message: `Duplicate successCriteria id: ${criterion.id}`,
+          path: ["successCriteria", index, "id"],
+        });
+        return;
+      }
+      seen.add(criterion.id);
+    });
+  });
 
 export type ExecutionGoal = z.infer<typeof executionGoalSchema>;
 

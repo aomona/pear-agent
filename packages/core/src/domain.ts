@@ -53,6 +53,9 @@ export function executionDomainDefinitionSchema<
       (value) =>
         typeof value === "object" &&
         value !== null &&
+        // Reject unexpected schema keys so a definition cannot smuggle extra
+        // fields past validation, then assert each expected schema identity.
+        Object.keys(value as Record<string, unknown>).length === Object.keys(schemas).length &&
         Object.entries(schemas).every(
           ([key, schema]) => (value as Record<string, unknown>)[key] === schema,
         ),

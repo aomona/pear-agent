@@ -4,7 +4,7 @@ import { executionGoalSchema, type ExecutionGoal } from "./goal.js";
 
 export const wakeConditionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("manual") }),
-  z.object({ type: z.literal("time"), wakeAt: z.string().min(1) }),
+  z.object({ type: z.literal("time"), wakeAt: z.iso.datetime({ offset: true }) }),
   z.object({ type: z.literal("event"), eventType: z.string().min(1) }),
 ]);
 
@@ -94,21 +94,39 @@ export function validatePlanGraph(nodes: readonly PlanGraphNode[]): PlanGraphVal
   }
 
   const dependencies = new Map(nodes.map(({ id, after }) => [id, after]));
-  const visiting = new Set<string>();
   const visited = new Set<string>();
 
-  const hasCycle = (id: string): boolean => {
-    if (visiting.has(id)) return true;
-    if (visited.has(id)) return false;
+  // Iterative DFS: an explicit stack avoids RangeError on deep plans that a
+  // recursive traversal would hit as "Maximum call stack size exceeded".
+  for (const { id: rootId } of nodes) {
+    if (visited.has(rootId)) continue;
 
-    visiting.add(id);
-    for (const dependencyId of dependencies.get(id) ?? []) {
-      if (hasCycle(dependencyId)) return true;
+    // `enter === true` marks descent into a node; `enter === false` is the
+    // post-order visit that pops the node off the current DFS path.
+    const stack: { id: string; enter: boolean }[] = [{ id: rootId, enter: true }];
+    const onPath = new Set<string>();
+
+    while (stack.length > 0) {
+      const frame = stack.pop()!;
+      const { id } = frame;
+
+      if (!frame.enter) {
+        onPath.delete(id);
+        continue;
+      }
+
+      if (visited.has(id)) continue;
+
+      visited.add(id);
+      onPath.add(id);
+      stack.push({ id, enter: false });
+
+      for (const dependencyId of dependencies.get(id) ?? []) {
+        if (onPath.has(dependencyId)) return { valid: false, reason: "cycle" };
+        if (!visited.has(dependencyId)) stack.push({ id: dependencyId, enter: true });
+      }
     }
-    visiting.delete(id);
-    visited.add(id);
-    return false;
-  };
+  }
 
-  return nodes.some(({ id }) => hasCycle(id)) ? { valid: false, reason: "cycle" } : { valid: true };
+  return { valid: true };
 }

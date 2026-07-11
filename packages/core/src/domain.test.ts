@@ -160,4 +160,14 @@ describe("defineDomain", () => {
     const inferredInputSchema: typeof schemas.input = parsed.schemas.input;
     expect(inferredInputSchema).toBe(schemas.input);
   });
+
+  it("rejects a schemas object with unexpected keys", () => {
+    const schema = executionDomainDefinitionSchema(schemas, [] as const);
+    const definition = {
+      ...validDefinition(),
+      schemas: { ...schemas, extra: z.object({}) },
+    };
+
+    expect(schema.safeParse(definition).success).toBe(false);
+  });
 });

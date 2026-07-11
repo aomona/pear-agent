@@ -91,4 +91,32 @@ describe("executionGoalSchema", () => {
       }),
     ).toThrow();
   });
+
+  it("rejects duplicate successCriteria ids", () => {
+    expect(() =>
+      executionGoalSchema.parse({
+        id: "leave-home",
+        description: "Be ready to leave home",
+        successCriteria: [
+          { id: "packed", description: "Bag is packed", evaluator: { type: "state_rule" } },
+          { id: "packed", description: "Bag is packed again", evaluator: { type: "state_rule" } },
+        ],
+        completionPolicy: "automatic",
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a goal with unique successCriteria ids", () => {
+    expect(
+      executionGoalSchema.safeParse({
+        id: "leave-home",
+        description: "Be ready to leave home",
+        successCriteria: [
+          { id: "packed", description: "Bag is packed", evaluator: { type: "state_rule" } },
+          { id: "charged", description: "Phone is charged", evaluator: { type: "state_rule" } },
+        ],
+        completionPolicy: "automatic",
+      }).success,
+    ).toBe(true);
+  });
 });
