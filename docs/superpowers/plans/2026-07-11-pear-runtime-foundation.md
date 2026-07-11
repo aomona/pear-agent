@@ -41,6 +41,7 @@ examples/outing-domain/src/domain.ts 外出準備Domain fixture
 ### Task 1: Workspaceと品質基盤
 
 **Files:**
+
 - Create: `package.json`
 - Create: `pnpm-workspace.yaml`
 - Create: `tsconfig.base.json`
@@ -51,6 +52,7 @@ examples/outing-domain/src/domain.ts 外出準備Domain fixture
 - Create: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: なし
 - Produces: `pnpm typecheck`、`pnpm test`、`pnpm lint`、`@pear-agent/core`
 
@@ -101,21 +103,25 @@ git commit -m "chore: initialize PEAR Runtime workspace"
 ### Task 2: Goalと成功条件
 
 **Files:**
+
 - Create: `packages/core/src/goal.ts`
 - Create: `packages/core/src/goal.test.ts`
 - Modify: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: Zod
 - Produces: `ExecutionGoal`、`SuccessCriterion`、`CriterionEvaluation`、`evaluateGoalCompletion()`
 
 - [ ] **Step 1: 失敗テストを書く**
 
 ```ts
-expect(evaluateGoalCompletion([
-  { criterionId: 'packed', status: 'satisfied', evidence: [], evaluatedAt: now },
-  { criterionId: 'charged', status: 'unknown', evidence: [], evaluatedAt: now },
-])).toBe('incomplete');
+expect(
+  evaluateGoalCompletion(goal, [
+    { criterionId: "packed", status: "satisfied", evidence: [], evaluatedAt: now },
+    { criterionId: "charged", status: "unknown", evidence: [], evaluatedAt: now },
+  ]),
+).toBe("incomplete");
 ```
 
 - [ ] **Step 2: FAILを確認する**
@@ -126,7 +132,7 @@ Expected: `Cannot find module './goal'`でFAIL。
 
 - [ ] **Step 3: Schemaと評価関数を実装する**
 
-`ExecutionGoal`は必須の`id`、`description`、1件以上の`successCriteria`、`completionPolicy`と、任意の`deadline`、`priority`を持つ。Evaluatorは`human_confirmation`、`tool_result`、`state_rule`、`ai_evaluation`のdiscriminated unionにする。`evaluateGoalCompletion()`は1件以上の全評価が`satisfied`のときだけ`satisfied`を返す。
+`ExecutionGoal`は必須の`id`、`description`、1件以上の`successCriteria`、`completionPolicy`と、任意の`deadline`、`priority`を持つ。Evaluatorは`human_confirmation`、`tool_result`、`state_rule`、`ai_evaluation`のdiscriminated unionにする。`evaluateGoalCompletion(goal, evaluations)`はGoalの全criterion IDが重複・欠落・未知IDなしでちょうど1回ずつ評価され、全評価が`satisfied`のときだけ`satisfied`を返す。
 
 - [ ] **Step 4: 境界値テストを追加して実行する**
 
@@ -146,18 +152,20 @@ git commit -m "feat(core): add goals and success criteria"
 ### Task 3: ActorとCapability Policy
 
 **Files:**
+
 - Create: `packages/core/src/actor.ts`
 - Create: `packages/core/src/actor.test.ts`
 - Modify: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: Capability設定
 - Produces: `ExecutionActor`、`StepAssignment`、`CapabilityDefinition`、`resolveExecutionMode()`
 
 - [ ] **Step 1: Policyの失敗テストを書く**
 
 ```ts
-expect(resolveExecutionMode({ configuredMode: 'automatic', riskLevel: 'high' })).toBe('confirm');
+expect(resolveExecutionMode({ configuredMode: "automatic", riskLevel: "high" })).toBe("confirm");
 ```
 
 - [ ] **Step 2: FAILを確認する**
@@ -186,21 +194,25 @@ git commit -m "feat(core): add actors and capability policy"
 ### Task 4: Execution PlanとDAG検証
 
 **Files:**
+
 - Create: `packages/core/src/plan.ts`
 - Create: `packages/core/src/plan.test.ts`
 - Modify: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `ExecutionGoal`
 - Produces: `ExecutionPlan<TStepData>`、`ExecutionStep<TStepData>`、`validatePlanGraph()`
 
 - [ ] **Step 1: 循環DAGの失敗テストを書く**
 
 ```ts
-expect(validatePlanGraph([
-  { id: 'a', after: ['b'] },
-  { id: 'b', after: ['a'] },
-])).toEqual({ valid: false, reason: 'cycle' });
+expect(
+  validatePlanGraph([
+    { id: "a", after: ["b"] },
+    { id: "b", after: ["a"] },
+  ]),
+).toEqual({ valid: false, reason: "cycle" });
 ```
 
 - [ ] **Step 2: FAILを確認する**
@@ -229,25 +241,30 @@ git commit -m "feat(core): add execution plan DAG"
 ### Task 5: Step状態遷移と並行実行
 
 **Files:**
+
 - Create: `packages/core/src/step-state.ts`
 - Create: `packages/core/src/step-state.test.ts`
 - Modify: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `ExecutionStep<TStepData>`
 - Produces: `StepStatus`、`deriveStepStatuses()`、`transitionStep()`
 
 - [ ] **Step 1: 並行readyの失敗テストを書く**
 
 ```ts
-const states = deriveStepStatuses([
-  { id: 'pack', after: [] },
-  { id: 'charge', after: [] },
-  { id: 'leave', after: ['pack', 'charge'] },
-], {});
-expect(states.pack?.status).toBe('ready');
-expect(states.charge?.status).toBe('ready');
-expect(states.leave?.status).toBe('blocked');
+const states = deriveStepStatuses(
+  [
+    { id: "pack", after: [] },
+    { id: "charge", after: [] },
+    { id: "leave", after: ["pack", "charge"] },
+  ],
+  {},
+);
+expect(states.pack?.status).toBe("ready");
+expect(states.charge?.status).toBe("ready");
+expect(states.leave?.status).toBe("blocked");
 ```
 
 - [ ] **Step 2: FAILを確認する**
@@ -278,6 +295,7 @@ git commit -m "feat(core): add parallel step state machine"
 ### Task 6: 型安全なDomain Contract
 
 **Files:**
+
 - Create: `packages/core/src/domain.ts`
 - Create: `packages/core/src/domain.test.ts`
 - Modify: `packages/core/src/index.ts`
@@ -287,6 +305,7 @@ git commit -m "feat(core): add parallel step state machine"
 - Create: `examples/outing-domain/src/domain.test.ts`
 
 **Interfaces:**
+
 - Consumes: Zod Schema、`ExecutionMode`、`CapabilityDefinition`
 - Produces: `defineDomain()`、`ExecutionDomainDefinition`
 
@@ -294,25 +313,25 @@ git commit -m "feat(core): add parallel step state machine"
 
 ```ts
 const domain = defineDomain({
-  id: 'outing',
+  id: "outing",
   version: 1,
   schemas: {
     input: z.object({ departureAt: z.iso.datetime() }),
     normalizedInput: z.object({ departureAt: z.iso.datetime(), items: z.array(z.string()) }),
     stepData: z.object({ itemIds: z.array(z.string()) }),
     worldState: z.object({ packedItemIds: z.array(z.string()) }),
-    events: z.discriminatedUnion('type', [
-      z.object({ type: z.literal('delay'), minutes: z.number().positive() }),
+    events: z.discriminatedUnion("type", [
+      z.object({ type: z.literal("delay"), minutes: z.number().positive() }),
     ]),
   },
   normalizeInput: async (input) => ({ ...input, items: [] }),
-  planning: { instructions: '出発準備を計画する', objectives: ['期限を守る'] },
-  replanning: { instructions: '影響範囲だけを更新する', defaultMode: 'automatic' },
+  planning: { instructions: "出発準備を計画する", objectives: ["期限を守る"] },
+  replanning: { instructions: "影響範囲だけを更新する", defaultMode: "automatic" },
   capabilities: [],
-  completionPolicy: 'automatic',
+  completionPolicy: "automatic",
 });
 
-expect(domain.id).toBe('outing');
+expect(domain.id).toBe("outing");
 ```
 
 - [ ] **Step 2: FAILを確認する**
@@ -351,12 +370,14 @@ git commit -m "feat(core): add typed domain contract"
 ### Task 7: Foundation公開APIと文書
 
 **Files:**
+
 - Modify: `packages/core/src/index.ts`
 - Create: `packages/core/README.md`
 - Modify: `README.md`
 - Modify: `docs/domain-contract.md`
 
 **Interfaces:**
+
 - Consumes: Task 2〜6の型と関数
 - Produces: Foundationで保証する`@pear-agent/core`公開API
 
