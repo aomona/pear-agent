@@ -2,12 +2,11 @@ import { useCallback, useState } from "react";
 
 import type { AppendEventResult, RuntimeEvent } from "@pear-agent/core";
 
-import type { PearClient } from "./client.js";
+import type { CreateSessionResult, PearClient } from "./client.js";
 import { usePearContext } from "./provider.js";
 import type {
   AsyncStatus,
   CreateSessionInput,
-  CreateSessionResult,
   DomainEventInput,
   StepActionInput,
   TimerActionInput,
@@ -40,18 +39,20 @@ export type UseExecutionSessionResult = {
 
 /**
  * Session-scoped actions against the typed Worker client.
- * Pass `sessionId` to bind, or call `create` / `setSessionId` later.
+ *
+ * - **Unbound** (default): call `useExecutionSession()` with no argument, then
+ *   `create()` / `setSessionId()`. Passing `null` is also unbound and does not
+ *   wipe a session created via `create()`.
+ * - **Controlled**: pass a `string` session id; the bound id tracks the prop.
  */
 export function useExecutionSession(sessionId?: string | null): UseExecutionSessionResult {
   const { client } = usePearContext();
-  const [boundSessionId, setBoundSessionId] = useState<string | null>(sessionId ?? null);
+  const controlled = typeof sessionId === "string";
+  const [unboundSessionId, setUnboundSessionId] = useState<string | null>(null);
   const [status, setStatus] = useState<AsyncStatus>("idle");
   const [error, setError] = useState<Error | null>(null);
 
-  // Keep bound id in sync when the caller-controlled prop changes.
-  if (sessionId !== undefined && sessionId !== boundSessionId) {
-    setBoundSessionId(sessionId);
-  }
+  const boundSessionId = controlled ? sessionId : unboundSessionId;
 
   const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
     setStatus("loading");
@@ -75,15 +76,29 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
     return boundSessionId;
   }, [boundSessionId]);
 
+  const setSessionId = useCallback(
+    (next: string | null) => {
+      if (controlled) {
+        throw new Error(
+          "useExecutionSession is controlled by a string sessionId prop; change the prop instead of setSessionId()",
+        );
+      }
+      setUnboundSessionId(next);
+    },
+    [controlled],
+  );
+
   const create = useCallback(
     async (input: CreateSessionInput) => {
       return run(async () => {
         const result = await client.createSession(input);
-        setBoundSessionId(result.sessionId);
+        if (!controlled) {
+          setUnboundSessionId(result.sessionId);
+        }
         return result;
       });
     },
-    [client, run],
+    [client, controlled, run],
   );
 
   const appendEvent = useCallback(
@@ -204,7 +219,7 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
     error,
     client,
     create,
-    setSessionId: setBoundSessionId,
+    setSessionId,
     appendEvent,
     startSession,
     pauseSession,

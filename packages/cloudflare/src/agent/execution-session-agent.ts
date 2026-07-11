@@ -12,6 +12,9 @@ import type { PearEnv } from "../env.js";
 import { toJsonValue } from "../serialize.js";
 import { EMPTY_SYNC_STATE, type ExecutionSessionSyncState } from "./sync-state.js";
 
+/** Keep Agent mirror lighter than full HTTP snapshots; clients hydrate events via HTTP. */
+const SYNC_RECENT_EVENT_LIMIT = 50;
+
 /**
  * Per-session Durable Agent. Serializes mutations for one Execution Session
  * while D1 remains the durable source of truth for state and the event log.
@@ -25,6 +28,7 @@ import { EMPTY_SYNC_STATE, type ExecutionSessionSyncState } from "./sync-state.j
  *
  * {@link ExecutionSessionSyncState} is a broadcast mirror for WebSocket clients
  * (`agents/client` / `agents/react`). It is not the durable PEAR store.
+ * WebSocket auth is enforced in {@link createPearWorker} `onBeforeConnect`.
  */
 export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncState> {
   override initialState: ExecutionSessionSyncState = EMPTY_SYNC_STATE;
@@ -44,7 +48,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   override async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
     void connection;
     void ctx;
-    await this.publishSyncStateFromD1();
+    await this.runExclusive(() => this.publishSyncStateFromD1());
   }
 
   /** Chains session mutations so only one D1 RMW runs at a time in this isolate. */
@@ -119,9 +123,14 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   async putNormalizedInput(payload: unknown): Promise<{ ok: true }> {
     return this.runExclusive(async () => {
       await this.repository().putNormalizedInput(this.sessionId(), payload);
-      // Normalized input is not part of RuntimeSnapshot today; still bump so
-      // reconnecting clients re-fetch related HTTP resources if they care.
-      await this.publishSyncStateFromD1();
+      // Normalized input is not in the RuntimeSnapshot mirror; bump revision only
+      // so clients can re-fetch related HTTP resources without a full D1 snapshot load.
+      const previous = this.state ?? EMPTY_SYNC_STATE;
+      this.setState({
+        revision: previous.revision + 1,
+        snapshot: previous.snapshot,
+        continuation: null,
+      });
       return { ok: true as const };
     });
   }
@@ -141,9 +150,12 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   /**
    * Loads the latest snapshot from D1 and broadcasts via `setState`.
    * Safe when the session row does not exist yet (snapshot stays null).
+   * Must be called under {@link runExclusive} when concurrent with other writers.
    */
   private async publishSyncStateFromD1(): Promise<void> {
-    const snapshot = await this.repository().getSnapshot(this.sessionId());
+    const snapshot = await this.repository().getSnapshot(this.sessionId(), {
+      recentEventLimit: SYNC_RECENT_EVENT_LIMIT,
+    });
     const previous = this.state ?? EMPTY_SYNC_STATE;
     this.setState({
       revision: previous.revision + 1,

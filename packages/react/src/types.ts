@@ -58,13 +58,6 @@ export type CreateSessionInput = {
   normalizedInput: unknown;
 };
 
-export type CreateSessionResult = {
-  sessionId: string;
-  session: unknown;
-  plan: unknown;
-  stepStates: unknown;
-};
-
 export type AppendEventInput = {
   id?: string;
   idempotencyKey?: string;

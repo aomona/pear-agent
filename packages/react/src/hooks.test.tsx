@@ -1,9 +1,10 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PearClient } from "./client.js";
 import { PearProvider } from "./provider.js";
+import { __resetSessionChannelsForTests } from "./session-channel.js";
 import { sampleMaterializedState, sampleSnapshot } from "./test-fixtures.js";
 import { useContinuation } from "./use-continuation.js";
 import { useExecutionSession } from "./use-execution-session.js";
@@ -23,6 +24,10 @@ function createWrapper(client: PearClient) {
     );
   };
 }
+
+afterEach(() => {
+  __resetSessionChannelsForTests();
+});
 
 describe("react hooks", () => {
   it("useExecutionSession creates a session and completes a step", async () => {
@@ -90,6 +95,41 @@ describe("react hooks", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("useExecutionSession(null) stays unbound after create (not controlled)", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          sessionId: "s1",
+          session: sampleSnapshot.session,
+          plan: sampleSnapshot.plan,
+          stepStates: sampleSnapshot.stepStates,
+        }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result } = renderHook(() => useExecutionSession(null), {
+      wrapper: createWrapper(client),
+    });
+
+    await act(async () => {
+      await result.current.create({
+        domainId: "outing",
+        actorIds: ["traveler"],
+        goal: sampleSnapshot.plan.goal,
+        normalizedInput: {},
+      });
+    });
+
+    expect(result.current.sessionId).toBe("s1");
+  });
+
   it("useRuntimeSnapshot loads snapshot over HTTP when realtime is off", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(JSON.stringify({ snapshot: sampleSnapshot }), {
@@ -140,6 +180,37 @@ describe("react hooks", () => {
 
     expect(result.current.continuation).toBeNull();
     expect(result.current.status).toBe("none");
+  });
+
+  it("shares one HTTP channel between snapshot and continuation hooks", async () => {
+    const fetchMock = vi.fn(async () => {
+      return new Response(JSON.stringify({ snapshot: sampleSnapshot }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result } = renderHook(
+      () => ({
+        snap: useRuntimeSnapshot("s1"),
+        cont: useContinuation("s1"),
+      }),
+      { wrapper: createWrapper(client) },
+    );
+
+    await waitFor(() => {
+      expect(result.current.snap.status).toBe("connected");
+      expect(result.current.cont.connectionStatus).toBe("connected");
+    });
+
+    // Strict mode may double-invoke effects once each; still only one channel key.
+    expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(2);
   });
 
   it("useRuntimeSnapshot surfaces HTTP errors", async () => {

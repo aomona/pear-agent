@@ -1,16 +1,22 @@
 import {
+  executionPlanSchema,
+  executionSessionSchema,
+  stepStatesSchema,
   type AppendEventResult,
+  type ExecutionPlan,
+  type ExecutionSession,
   type MaterializedExecutionState,
   type RuntimeEvent,
   type RuntimeSnapshot,
+  type StepStates,
 } from "@pear-agent/core";
+import { z } from "zod";
 
 import { PearClientError } from "./errors.js";
 import { parseAppendEventResult, parseMaterializedState, parseRuntimeSnapshot } from "./parse.js";
 import type {
   AppendEventInput,
   CreateSessionInput,
-  CreateSessionResult,
   DomainEventInput,
   PearClientContext,
   StepActionInput,
@@ -28,6 +34,20 @@ export type PearClientOptions = {
   fetch?: typeof fetch;
 };
 
+export type CreateSessionResult = {
+  sessionId: string;
+  session: ExecutionSession;
+  plan: ExecutionPlan;
+  stepStates: StepStates;
+};
+
+const createSessionResultSchema = z.object({
+  sessionId: z.string().min(1),
+  session: executionSessionSchema,
+  plan: executionPlanSchema(z.unknown()),
+  stepStates: stepStatesSchema,
+});
+
 function joinUrl(baseUrl: string, path: string): string {
   const base = baseUrl.replace(/\/+$/, "");
   const suffix = path.startsWith("/") ? path : `/${path}`;
@@ -43,17 +63,25 @@ function newId(prefix: string): string {
 
 /**
  * Typed HTTP client for the PEAR Worker API (`createPearApp` / `createPearWorker`).
- * Does not open WebSockets; realtime is handled by hooks + `agents/react`.
+ * Does not open WebSockets; realtime is handled by hooks + `agents/client`.
  */
 export class PearClient {
   readonly baseUrl: string;
-  private readonly getContext: PearClientOptions["getContext"];
+  private getContext: PearClientOptions["getContext"];
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: PearClientOptions) {
     this.baseUrl = options.baseUrl;
     this.getContext = options.getContext;
     this.fetchImpl = options.fetch ?? globalThis.fetch.bind(globalThis);
+  }
+
+  /**
+   * Replace the context resolver without constructing a new client.
+   * Used by {@link PearProvider} so inline `getContext` props stay stable.
+   */
+  setGetContext(getContext: PearClientOptions["getContext"]): void {
+    this.getContext = getContext;
   }
 
   async health(): Promise<{ ok: true }> {
@@ -65,11 +93,11 @@ export class PearClient {
   }
 
   async createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
-    const body = await this.requestJson<CreateSessionResult>("/sessions", {
+    const body = await this.requestJson<unknown>("/sessions", {
       method: "POST",
       body: input,
     });
-    return body;
+    return createSessionResultSchema.parse(body);
   }
 
   async getSession(sessionId: string): Promise<MaterializedExecutionState> {

@@ -1,7 +1,8 @@
-export { PearClient, type PearClientOptions } from "./client.js";
+export { PearClient, type CreateSessionResult, type PearClientOptions } from "./client.js";
 export { PearClientError } from "./errors.js";
 export {
   DEFAULT_AGENT_NAME,
+  PEAR_CONTEXT_QUERY_KEY,
   PearProvider,
   usePearContext,
   type PearContextValue,
@@ -19,7 +20,6 @@ export type {
   AsyncStatus,
   ConnectionStatus,
   CreateSessionInput,
-  CreateSessionResult,
   DomainEventInput,
   ExecutionContinuationStub,
   ExecutionSessionSyncState,

@@ -13,7 +13,13 @@ export {
   EXECUTION_SESSION_AGENT_NAME,
   type ExecutionSessionSyncState,
 } from "./agent/sync-state.js";
-export { createPearWorker, type PearWorker } from "./worker.js";
+export {
+  createPearWorker,
+  PEAR_CONTEXT_QUERY_KEY,
+  resolveAgentConnectContext,
+  sessionIdFromAgentRequest,
+  type PearWorker,
+} from "./worker.js";
 export {
   allowAllAuthorize,
   AuthorizationError,

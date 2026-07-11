@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RuntimeSnapshot } from "@pear-agent/core";
 
-import { parseSyncState } from "./parse.js";
 import { usePearContext } from "./provider.js";
+import { acquireSessionChannel, type SessionChannelSnapshot } from "./session-channel.js";
 import type { ConnectionStatus, ExecutionContinuationStub } from "./types.js";
 
 export type UseRuntimeSnapshotOptions = {
@@ -26,14 +26,13 @@ export type UseRuntimeSnapshotResult = {
   clearError: () => void;
 };
 
-function hostFromBaseUrl(baseUrl: string): string {
-  try {
-    const url = new URL(baseUrl);
-    return url.host;
-  } catch {
-    return baseUrl.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  }
-}
+const IDLE_SNAPSHOT: SessionChannelSnapshot = {
+  snapshot: null,
+  continuation: null,
+  revision: 0,
+  status: "idle",
+  error: null,
+};
 
 /**
  * Subscribe to a session's Runtime Snapshot.
@@ -42,6 +41,7 @@ function hostFromBaseUrl(baseUrl: string): string {
  * - When realtime is on, also opens an Agents SDK WebSocket (`agents/client`)
  *   and applies state broadcasts. On reconnect, re-fetches HTTP so the client
  *   converges to the latest durable snapshot.
+ * - Multiple hooks for the same session share one channel (see `session-channel`).
  */
 export function useRuntimeSnapshot(
   sessionId: string | null | undefined,
@@ -50,182 +50,86 @@ export function useRuntimeSnapshot(
   const pear = usePearContext();
   const realtime = options.realtime ?? pear.realtime;
 
-  const [snapshot, setSnapshot] = useState<RuntimeSnapshot | null>(null);
-  const [continuation, setContinuation] = useState<ExecutionContinuationStub | null>(null);
-  const [revision, setRevision] = useState(0);
-  const [status, setStatus] = useState<ConnectionStatus>(sessionId ? "loading" : "idle");
-  const [error, setError] = useState<Error | null>(null);
+  const channelOptions = useMemo(
+    () => ({
+      realtime,
+      agentName: pear.agentName,
+      agentSecure: pear.agentSecure,
+      baseUrl: pear.baseUrl,
+      getContext: pear.getContext,
+      ...(options.recentEventLimit === undefined
+        ? {}
+        : { recentEventLimit: options.recentEventLimit }),
+    }),
+    [
+      realtime,
+      pear.agentName,
+      pear.agentSecure,
+      pear.baseUrl,
+      pear.getContext,
+      options.recentEventLimit,
+    ],
+  );
 
-  const lastRevisionRef = useRef(0);
-  const sessionIdRef = useRef(sessionId);
-  sessionIdRef.current = sessionId;
+  const [state, setState] = useState<SessionChannelSnapshot>(IDLE_SNAPSHOT);
+  const [errorCleared, setErrorCleared] = useState(false);
+  const [channelVersion, setChannelVersion] = useState(0);
 
-  const applySync = useCallback((raw: unknown) => {
-    try {
-      const parsed = parseSyncState(raw);
-      if (parsed.revision < lastRevisionRef.current) {
-        return;
-      }
-      lastRevisionRef.current = parsed.revision;
-      setRevision(parsed.revision);
-      setSnapshot(parsed.snapshot);
-      setContinuation(parsed.continuation);
-      setStatus("connected");
-      setError(null);
-    } catch (caught) {
-      const next = caught instanceof Error ? caught : new Error(String(caught));
-      setError(next);
-      setStatus("error");
+  useEffect(() => {
+    setErrorCleared(false);
+
+    if (!sessionId) {
+      setState(IDLE_SNAPSHOT);
+      return;
     }
-  }, []);
+
+    // Reset local view immediately so session switches do not keep prior revision/snapshot.
+    setState({
+      snapshot: null,
+      continuation: null,
+      revision: 0,
+      status: "loading",
+      error: null,
+    });
+
+    const { channel, release } = acquireSessionChannel(sessionId, pear.client, channelOptions);
+    setState(channel.getSnapshot());
+    setChannelVersion((v) => v + 1);
+
+    const unsubscribe = channel.subscribe(() => {
+      setErrorCleared(false);
+      setState(channel.getSnapshot());
+    });
+
+    return () => {
+      unsubscribe();
+      release();
+    };
+  }, [sessionId, pear.client, channelOptions]);
 
   const refetch = useCallback(async () => {
-    const id = sessionIdRef.current;
-    if (!id) {
-      setSnapshot(null);
-      setContinuation(null);
-      setRevision(0);
-      lastRevisionRef.current = 0;
-      setStatus("idle");
-      return;
-    }
-
+    if (!sessionId) return;
+    setErrorCleared(false);
+    // Re-acquire path: channel is retained by the effect; find via temporary retain.
+    const { channel, release } = acquireSessionChannel(sessionId, pear.client, channelOptions);
     try {
-      const next = await pear.client.getSnapshot(
-        id,
-        options.recentEventLimit === undefined
-          ? undefined
-          : { recentEventLimit: options.recentEventLimit },
-      );
-      setSnapshot(next);
-      setError(null);
-      setStatus("connected");
-    } catch (caught) {
-      const nextErr = caught instanceof Error ? caught : new Error(String(caught));
-      setError(nextErr);
-      setStatus("error");
+      await channel.refetch();
+      setState(channel.getSnapshot());
+    } finally {
+      release();
     }
-  }, [pear.client, options.recentEventLimit]);
+  }, [sessionId, pear.client, channelOptions]);
 
-  // Initial + sessionId-change HTTP hydrate
-  useEffect(() => {
-    if (!sessionId) {
-      setSnapshot(null);
-      setContinuation(null);
-      setRevision(0);
-      lastRevisionRef.current = 0;
-      setStatus("idle");
-      setError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setStatus("loading");
-    void (async () => {
-      try {
-        const next = await pear.client.getSnapshot(
-          sessionId,
-          options.recentEventLimit === undefined
-            ? undefined
-            : { recentEventLimit: options.recentEventLimit },
-        );
-        if (cancelled) return;
-        setSnapshot(next);
-        setError(null);
-        setStatus("connected");
-      } catch (caught) {
-        if (cancelled) return;
-        const nextErr = caught instanceof Error ? caught : new Error(String(caught));
-        setError(nextErr);
-        setStatus("error");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionId, pear.client, options.recentEventLimit]);
-
-  // Agents realtime subscription (dynamic import so HTTP-only tests skip the peer)
-  useEffect(() => {
-    if (!realtime || !sessionId) {
-      return;
-    }
-
-    let closed = false;
-    let socket: { close: () => void } | null = null;
-    const agentHost = hostFromBaseUrl(pear.baseUrl);
-
-    void import("agents/client")
-      .then(({ AgentClient }) => {
-        if (closed) return;
-
-        const client = new AgentClient({
-          agent: pear.agentName,
-          name: sessionId,
-          host: agentHost,
-          onStateUpdate: (state: unknown) => {
-            if (closed) return;
-            applySync(state);
-          },
-          onConnectionError: (connectionError: Error) => {
-            if (closed) return;
-            setError(connectionError);
-            setStatus("error");
-          },
-        });
-
-        const onOpen = () => {
-          if (closed) return;
-          setStatus("connected");
-          // Converge to durable snapshot after (re)connect.
-          void refetch();
-        };
-        const onClose = () => {
-          if (closed) return;
-          setStatus("reconnecting");
-        };
-        const onError = () => {
-          if (closed) return;
-          setStatus("reconnecting");
-        };
-
-        client.addEventListener("open", onOpen);
-        client.addEventListener("close", onClose);
-        client.addEventListener("error", onError);
-
-        socket = {
-          close: () => {
-            client.removeEventListener("open", onOpen);
-            client.removeEventListener("close", onClose);
-            client.removeEventListener("error", onError);
-            client.close();
-          },
-        };
-      })
-      .catch((caught: unknown) => {
-        if (closed) return;
-        const nextErr =
-          caught instanceof Error
-            ? caught
-            : new Error("Failed to load agents/client for realtime sync");
-        setError(nextErr);
-        setStatus("error");
-      });
-
-    return () => {
-      closed = true;
-      socket?.close();
-    };
-  }, [realtime, sessionId, pear.baseUrl, pear.agentName, applySync, refetch]);
+  // channelVersion keeps refetch/stable identity tied to the active effect channel.
+  void channelVersion;
 
   return {
-    snapshot,
-    continuation,
-    revision,
-    status,
-    error,
+    snapshot: state.snapshot,
+    continuation: state.continuation,
+    revision: state.revision,
+    status: sessionId ? state.status : "idle",
+    error: errorCleared ? null : state.error,
     refetch,
-    clearError: () => setError(null),
+    clearError: () => setErrorCleared(true),
   };
 }

@@ -21,7 +21,7 @@ Workspace:
 
 ## Host Worker
 
-Use `createPearWorker` from `@pear-agent/cloudflare` so `/agents/execution-session-agent/:sessionId` is routed for WebSockets.
+Use `createPearWorker` from `@pear-agent/cloudflare` so `/agents/execution-session-agent/:sessionId` is routed and authorized for WebSockets (`session.read` via `?pearContext=`).
 
 ## Usage
 
@@ -37,6 +37,7 @@ function App() {
   return (
     <PearProvider
       baseUrl="https://my-worker.example.workers.dev"
+      // Inline getContext is fine — the provider keeps PearClient stable.
       getContext={() => ({
         actorId: "user-1",
         roles: ["owner"],
@@ -49,21 +50,31 @@ function App() {
 }
 
 function SessionPanel() {
+  // Unbound: omit the argument (or pass null). Do not pass null if you meant controlled mode.
   const session = useExecutionSession();
-  const { snapshot, status, error, refetch } = useRuntimeSnapshot(session.sessionId);
-  const continuation = useContinuation(session.sessionId);
+  // Snapshot + continuation share one session channel (one WS / HTTP hydrate).
+  const { snapshot, continuation, status, error, refetch } = useRuntimeSnapshot(session.sessionId);
+  // Optional alias if you only need continuation fields:
+  // const cont = useContinuation(session.sessionId);
 
-  // no UI components forced — render however you like
+  void snapshot;
+  void continuation;
+  void status;
+  void error;
+  void refetch;
   return null;
 }
 ```
 
 ### Hooks
 
-| Hook                  | Role                                                        |
-| --------------------- | ----------------------------------------------------------- |
-| `useExecutionSession` | Create/bind session; type-safe step/timer/event actions     |
-| `useRuntimeSnapshot`  | HTTP hydrate + Agent realtime sync; loading/error/reconnect |
-| `useContinuation`     | Thin stub (`null` / `status: "none"` until Issue #7)        |
+| Hook                  | Role                                                                               |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                            |
+| `useRuntimeSnapshot`  | HTTP hydrate + Agent realtime sync; loading/error/reconnect                        |
+| `useContinuation`     | Thin stub (`null` / `status: "none"` until Issue #7); shares channel with snapshot |
 
-Auth: host supplies `getContext()` → sent as `x-pear-context` on HTTP.
+### Auth
+
+- HTTP: `getContext()` → `x-pear-context`
+- Agent WebSocket: same context as `?pearContext=` (JSON), authorized as `session.read` on the Worker

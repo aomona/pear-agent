@@ -52,6 +52,7 @@ describe("PearClient", () => {
     });
 
     expect(result.sessionId).toBe("s1");
+    expect(result.session.createdAt).toBeInstanceOf(Date);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -115,5 +116,34 @@ describe("PearClient", () => {
       status: 404,
       message: "Session not found",
     } satisfies Partial<PearClientError>);
+  });
+
+  it("setGetContext updates the resolver without a new client instance", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(JSON.parse(headers.get("x-pear-context")!).actorId).toBe("new");
+      return jsonResponse(
+        {
+          sessionId: "s1",
+          session: sampleSnapshot.session,
+          plan: sampleSnapshot.plan,
+          stepStates: sampleSnapshot.stepStates,
+        },
+        201,
+      );
+    });
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "old" }),
+      fetch: fetchMock as typeof fetch,
+    });
+    client.setGetContext(() => ({ actorId: "new", roles: ["r"] }));
+    await client.createSession({
+      domainId: "outing",
+      actorIds: ["traveler"],
+      goal: sampleSnapshot.plan.goal,
+      normalizedInput: {},
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

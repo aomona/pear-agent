@@ -18,8 +18,9 @@ export type UseContinuationResult = {
 /**
  * Thin Continuation read model (Issue #5 stub).
  *
- * Subscribes to the same snapshot/sync channel as {@link useRuntimeSnapshot}
- * and surfaces `continuation`. Full suspend / wake / atomic resume ships in #7.
+ * Shares the same {@link useRuntimeSnapshot} session channel (one HTTP hydrate
+ * and one Agent WebSocket per session in the tree). Full suspend / wake /
+ * atomic resume ships in Issue #7.
  */
 export function useContinuation(
   sessionId: string | null | undefined,

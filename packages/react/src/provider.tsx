@@ -1,10 +1,13 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
 
-import { PearClient, type PearClientOptions } from "./client.js";
+import { PearClient } from "./client.js";
 import type { PearClientContext } from "./types.js";
 
 /** Default kebab-case name for `ExecutionSessionAgent`. */
 export const DEFAULT_AGENT_NAME = "execution-session-agent";
+
+/** Query key used for Agent WebSocket auth (mirrors HTTP x-pear-context). */
+export const PEAR_CONTEXT_QUERY_KEY = "pearContext";
 
 export type PearProviderProps = {
   /** Worker origin for HTTP API and Agent WebSocket host. */
@@ -19,6 +22,11 @@ export type PearProviderProps = {
   realtime?: boolean;
   /** Agent class path segment; default `execution-session-agent`. */
   agentName?: string;
+  /**
+   * Force `wss` (true) or `ws` (false). Defaults from `baseUrl` protocol
+   * (`https` → secure, `http` → insecure).
+   */
+  agentSecure?: boolean;
   fetch?: typeof fetch;
   /** Inject a prebuilt client (tests). When set, baseUrl/getContext still used for agent host. */
   client?: PearClient;
@@ -30,9 +38,21 @@ export type PearContextValue = {
   getContext: () => PearClientContext | Promise<PearClientContext>;
   realtime: boolean;
   agentName: string;
+  /** Whether Agent WebSockets use TLS (`wss`). */
+  agentSecure: boolean;
 };
 
 const PearReactContext = createContext<PearContextValue | null>(null);
+
+function deriveAgentSecure(baseUrl: string, override?: boolean): boolean {
+  if (override !== undefined) return override;
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:";
+  } catch {
+    return !baseUrl.startsWith("http://");
+  }
+}
 
 export function PearProvider(props: PearProviderProps) {
   const {
@@ -41,24 +61,45 @@ export function PearProvider(props: PearProviderProps) {
     children,
     realtime = true,
     agentName = DEFAULT_AGENT_NAME,
+    agentSecure: agentSecureProp,
     fetch: fetchImpl,
     client: injectedClient,
   } = props;
 
-  const value = useMemo<PearContextValue>(() => {
-    const clientOptions: PearClientOptions = {
+  // Always call the latest getContext without recreating PearClient.
+  const getContextRef = useRef(getContext);
+  getContextRef.current = getContext;
+  const stableGetContext = useMemo(() => () => getContextRef.current(), []);
+
+  const ownedClient = useMemo(() => {
+    if (injectedClient) return null;
+    return new PearClient({
       baseUrl,
-      getContext,
+      getContext: stableGetContext,
       ...(fetchImpl === undefined ? {} : { fetch: fetchImpl }),
-    };
-    return {
-      client: injectedClient ?? new PearClient(clientOptions),
+    });
+  }, [baseUrl, fetchImpl, injectedClient, stableGetContext]);
+
+  // Injected clients may have been built with a different resolver; point them at
+  // the stable wrapper so inline getContext props still work.
+  if (injectedClient) {
+    injectedClient.setGetContext(stableGetContext);
+  }
+
+  const agentSecure = deriveAgentSecure(baseUrl, agentSecureProp);
+  const client = injectedClient ?? ownedClient!;
+
+  const value = useMemo<PearContextValue>(
+    () => ({
+      client,
       baseUrl,
-      getContext,
+      getContext: stableGetContext,
       realtime,
       agentName,
-    };
-  }, [baseUrl, getContext, realtime, agentName, fetchImpl, injectedClient]);
+      agentSecure,
+    }),
+    [client, baseUrl, stableGetContext, realtime, agentName, agentSecure],
+  );
 
   return <PearReactContext.Provider value={value}>{children}</PearReactContext.Provider>;
 }
