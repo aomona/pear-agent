@@ -142,4 +142,47 @@ describe("execution plan schemas", () => {
 
     expect(result.success).toBe(true);
   });
+
+  it("rejects non-JSON-safe domain data even when the domain schema is unknown", () => {
+    const schema = executionStepSchema(z.unknown());
+    const common = {
+      id: "prepare",
+      executor: { type: "human" as const },
+      after: [],
+      requirements: [],
+      estimatedDurationSeconds: 60,
+      timers: [],
+    };
+    class DomainData {
+      readonly room = "entryway";
+    }
+
+    for (const domainData of [() => "not cloneable", Symbol("not cloneable"), new DomainData()]) {
+      expect(schema.safeParse({ ...common, domainData }).success).toBe(false);
+    }
+  });
+
+  it("rejects non-JSON-safe domain data in execution plans", () => {
+    const schema = executionPlanSchema(z.unknown());
+    const step = {
+      id: "prepare",
+      executor: { type: "human" as const },
+      after: [],
+      requirements: [],
+      estimatedDurationSeconds: 60,
+      timers: [],
+    };
+    const plan = {
+      id: "morning",
+      version: 1,
+      goal,
+      steps: [step],
+    };
+
+    for (const domainData of [() => "not cloneable", Symbol("not cloneable")]) {
+      expect(schema.safeParse({ ...plan, steps: [{ ...step, domainData }] }).success).toBe(
+        false,
+      );
+    }
+  });
 });

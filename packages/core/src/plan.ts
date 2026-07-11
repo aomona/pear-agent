@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { executionGoalSchema, type ExecutionGoal } from "./goal.js";
+import { jsonValueSchema } from "./world-state.js";
 
 export const wakeConditionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("manual") }),
@@ -35,6 +36,25 @@ export type ExecutionPlan<TStepData = unknown> = {
   steps: ExecutionStep<TStepData>[];
 };
 
+/**
+ * Adds the persistence boundary's JSON-safe constraint without changing the
+ * inferred output type of a domain schema. Repository state is defensively
+ * cloned with `structuredClone`, so arbitrary unknown values (for example
+ * functions, symbols, and class instances) cannot be accepted as step data.
+ */
+function jsonSafeDomainDataSchema<TStepDataSchema extends z.ZodType>(
+  domainDataSchema: TStepDataSchema,
+): z.ZodType<z.output<TStepDataSchema>, z.input<TStepDataSchema>> {
+  return domainDataSchema.superRefine((value, context) => {
+    if (!jsonValueSchema.safeParse(value).success) {
+      context.addIssue({
+        code: "custom",
+        message: "domainData must be JSON-safe",
+      });
+    }
+  }) as z.ZodType<z.output<TStepDataSchema>, z.input<TStepDataSchema>>;
+}
+
 export function executionStepSchema<TStepDataSchema extends z.ZodType>(
   domainDataSchema: TStepDataSchema,
 ): z.ZodType<ExecutionStep<z.output<TStepDataSchema>>> {
@@ -45,7 +65,7 @@ export function executionStepSchema<TStepDataSchema extends z.ZodType>(
     requirements: z.array(z.string().min(1)),
     estimatedDurationSeconds: z.number().nonnegative(),
     timers: z.array(z.unknown()),
-    domainData: domainDataSchema,
+    domainData: jsonSafeDomainDataSchema(domainDataSchema),
   }) as unknown as z.ZodType<ExecutionStep<z.output<TStepDataSchema>>>;
 }
 
