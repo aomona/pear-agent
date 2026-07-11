@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { outingDomain } from "./domain.js";
+import { executionPlanSchema, worldStateSchema } from "@pear-agent/core";
+
+import { initialOutingWorldState, outingDomain, outingGoal, outingPlan } from "./domain.js";
 
 describe("outingDomain", () => {
   it("normalizes departure time, belongings, and charge state", async () => {
@@ -26,5 +28,16 @@ describe("outingDomain", () => {
       type: "delay",
       minutes: 15,
     });
+  });
+
+  it("provides a valid execution goal, parallel plan, and initial world state", () => {
+    expect(executionPlanSchema(outingDomain.schemas.stepData).parse(outingPlan).goal).toEqual(
+      outingGoal,
+    );
+    expect(outingPlan.steps.map(({ after, id }) => ({ after, id }))).toEqual([
+      { id: "pack", after: [] },
+      { id: "charge", after: [] },
+    ]);
+    expect(worldStateSchema.parse(initialOutingWorldState)).toEqual(initialOutingWorldState);
   });
 });

@@ -1,0 +1,69 @@
+import { describe, expect, it } from "vitest";
+
+import { runtimeEventSchema } from "./event.js";
+
+describe("runtimeEventSchema", () => {
+  const event = {
+    id: "event-1",
+    sessionId: "session-1",
+    idempotencyKey: "step-1-complete",
+    actorId: "human-1",
+    origin: "user",
+    type: "step_completed",
+    payload: { stepId: "pack" },
+    occurredAt: new Date(),
+  };
+
+  it("accepts a core step-completed event", () => {
+    expect(runtimeEventSchema.safeParse(event).success).toBe(true);
+  });
+
+  it("accepts a domain event with a JSON-safe payload", () => {
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "domain_event",
+        domainType: "packing_item_added",
+        payload: { itemId: "passport", packed: true },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects an event without an idempotency key", () => {
+    expect(runtimeEventSchema.safeParse({ ...event, idempotencyKey: "" }).success).toBe(false);
+  });
+
+  it("rejects an unknown event type", () => {
+    expect(runtimeEventSchema.safeParse({ ...event, type: "unknown_event" }).success).toBe(false);
+  });
+
+  it("rejects null and arbitrary core payloads", () => {
+    expect(runtimeEventSchema.safeParse({ ...event, payload: null }).success).toBe(false);
+    expect(runtimeEventSchema.safeParse({ ...event, payload: { arbitrary: true } }).success).toBe(
+      false,
+    );
+    expect(
+      runtimeEventSchema.safeParse({ ...event, type: "timer_paused", payload: {} }).success,
+    ).toBe(false);
+    expect(
+      runtimeEventSchema.safeParse({ ...event, type: "goal_evaluated", payload: {} }).success,
+    ).toBe(false);
+  });
+
+  it("accepts session and timer cancel events", () => {
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "session_cancelled",
+        payload: {},
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "timer_cancelled",
+        payload: { timerId: "tea" },
+      }).success,
+    ).toBe(true);
+  });
+});

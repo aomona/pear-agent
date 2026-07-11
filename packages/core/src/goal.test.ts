@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateGoalCompletion, executionGoalSchema } from "./goal.js";
+import {
+  criterionEvaluationSchema,
+  evaluateGoalCompletion,
+  executionGoalSchema,
+  latestCriterionEvaluations,
+} from "./goal.js";
 
 describe("evaluateGoalCompletion", () => {
   const goal = executionGoalSchema.parse({
@@ -77,6 +82,41 @@ describe("evaluateGoalCompletion", () => {
         { criterionId: "unknown", status: "satisfied", evidence: [], evaluatedAt: now },
       ]),
     ).toBe("incomplete");
+  });
+
+  it("projects only expected criteria for completion decisions", () => {
+    const now = new Date();
+    const projected = latestCriterionEvaluations(goal, {
+      packed: { criterionId: "packed", status: "satisfied", evidence: [], evaluatedAt: now },
+      charged: { criterionId: "charged", status: "satisfied", evidence: [], evaluatedAt: now },
+      unknown: { criterionId: "unknown", status: "satisfied", evidence: [], evaluatedAt: now },
+    });
+    expect(projected.map(({ criterionId }) => criterionId)).toEqual(["packed", "charged"]);
+    expect(evaluateGoalCompletion(goal, projected)).toBe("satisfied");
+  });
+});
+
+describe("criterionEvaluationSchema", () => {
+  it("rejects non-JSON-safe evidence", () => {
+    expect(
+      criterionEvaluationSchema.safeParse({
+        criterionId: "packed",
+        status: "satisfied",
+        evidence: [() => true],
+        evaluatedAt: new Date(),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts JSON-safe evidence", () => {
+    expect(
+      criterionEvaluationSchema.safeParse({
+        criterionId: "packed",
+        status: "satisfied",
+        evidence: ["note", { count: 1 }, null],
+        evaluatedAt: new Date(),
+      }).success,
+    ).toBe(true);
   });
 });
 
