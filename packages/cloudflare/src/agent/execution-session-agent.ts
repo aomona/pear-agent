@@ -16,12 +16,31 @@ import type { PearEnv } from "../env.js";
  *
  * DO name is the session id. Methods use typed DO RPC (structured values);
  * JSON string boundaries live only at D1 text columns.
+ *
+ * Mutations share an in-isolate write queue so concurrent RPC cannot interleave
+ * D1 read-modify-write (lost step updates). DO input gates help, but miniflare
+ * and concurrent Worker→DO RPC still need an explicit chain.
  */
 export class ExecutionSessionAgent extends Agent<PearEnv, Record<string, never>> {
   override initialState: Record<string, never> = {};
 
+  /** Chains session mutations so only one D1 RMW runs at a time in this isolate. */
+  private writeChain: Promise<void> = Promise.resolve();
+
   private repository(): D1ExecutionStateRepository {
     return new D1ExecutionStateRepository(this.env.DB);
+  }
+
+  /**
+   * Run `fn` after prior mutations finish. Failures do not block later writers.
+   */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.writeChain.then(fn, fn);
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   /**
@@ -40,36 +59,47 @@ export class ExecutionSessionAgent extends Agent<PearEnv, Record<string, never>>
       );
     }
 
-    await this.repository().createWithDomain(input.initialState, {
-      domainId: input.domainId,
-      ...(input.normalizedInput === undefined ? {} : { normalizedInput: input.normalizedInput }),
+    return this.runExclusive(async () => {
+      await this.repository().createWithDomain(input.initialState, {
+        domainId: input.domainId,
+        ...(input.normalizedInput === undefined ? {} : { normalizedInput: input.normalizedInput }),
+      });
+      return { ok: true as const };
     });
-    return { ok: true };
   }
 
   async getState(): Promise<MaterializedExecutionState | null> {
-    const state = await this.repository().get(this.sessionId());
-    return state ?? null;
+    // Wait for in-flight writes so concurrent readers never observe a partial RMW.
+    return this.runExclusive(async () => {
+      const state = await this.repository().get(this.sessionId());
+      return state ?? null;
+    });
   }
 
   async appendEvent(event: RuntimeEvent): Promise<AppendEventResult> {
     this.assertSession(event.sessionId);
-    return this.repository().appendEvent(event);
+    return this.runExclusive(() => this.repository().appendEvent(event));
   }
 
   async getSnapshot(options?: GetSnapshotOptions): Promise<RuntimeSnapshot | null> {
-    const snapshot = await this.repository().getSnapshot(this.sessionId(), options);
-    return snapshot ?? null;
+    return this.runExclusive(async () => {
+      const snapshot = await this.repository().getSnapshot(this.sessionId(), options);
+      return snapshot ?? null;
+    });
   }
 
   async putNormalizedInput(payload: unknown): Promise<{ ok: true }> {
-    await this.repository().putNormalizedInput(this.sessionId(), payload);
-    return { ok: true };
+    return this.runExclusive(async () => {
+      await this.repository().putNormalizedInput(this.sessionId(), payload);
+      return { ok: true as const };
+    });
   }
 
   async getNormalizedInput(): Promise<unknown | null> {
-    const payload = await this.repository().getNormalizedInput(this.sessionId());
-    return payload === undefined ? null : payload;
+    return this.runExclusive(async () => {
+      const payload = await this.repository().getNormalizedInput(this.sessionId());
+      return payload === undefined ? null : payload;
+    });
   }
 
   private sessionId(): string {
