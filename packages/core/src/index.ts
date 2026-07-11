@@ -8,3 +8,5 @@ export * from "./world-state.js";
 export * from "./event.js";
 export * from "./timer.js";
 export * from "./execution-state.js";
+export * from "./snapshot.js";
+export * from "./repository.js";
