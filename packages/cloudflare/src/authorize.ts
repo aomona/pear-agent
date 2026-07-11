@@ -7,7 +7,13 @@ export type PearOperation =
   | { type: "rawInput.put"; sessionId: string }
   | { type: "rawInput.read"; sessionId: string; inputId: string }
   | { type: "normalizedInput.write"; sessionId: string }
-  | { type: "normalizedInput.read"; sessionId: string };
+  | { type: "normalizedInput.read"; sessionId: string }
+  | { type: "voice.lease.acquire"; sessionId: string }
+  | { type: "voice.lease.release"; sessionId: string }
+  | { type: "voice.lease.read"; sessionId: string }
+  | { type: "voice.token"; sessionId: string }
+  | { type: "voice.tool"; sessionId: string; toolName: string }
+  | { type: "voice.resumeHandle.write"; sessionId: string };
 
 /**
  * Host-supplied authorization hook. Throw {@link AuthorizationError} (or any

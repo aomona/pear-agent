@@ -2,10 +2,12 @@ import {
   materializedExecutionStateSchema,
   runtimeEventSchema,
   runtimeSnapshotSchema,
+  voiceLeaseSchema,
   type AppendEventResult,
   type MaterializedExecutionState,
   type RuntimeEvent,
   type RuntimeSnapshot,
+  type VoiceLease,
 } from "@pear-agent/core";
 import { z } from "zod";
 
@@ -64,4 +66,13 @@ export function parseSyncState(value: unknown): ParsedSyncPulse {
     lastEventId: raw.lastEventId,
     continuation: raw.continuation as ExecutionContinuationStub | null,
   };
+}
+
+export function parseVoiceLease(value: unknown): VoiceLease {
+  return voiceLeaseSchema.parse(value);
+}
+
+export function parseVoiceLeaseOrNull(value: unknown): VoiceLease | null {
+  if (value === null || value === undefined) return null;
+  return voiceLeaseSchema.parse(value);
 }

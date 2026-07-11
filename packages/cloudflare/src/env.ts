@@ -4,4 +4,9 @@ export type PearEnv = {
   RAW_INPUTS: R2Bucket;
   // Typed loosely so hosts can export ExecutionSessionAgent without circular imports.
   ExecutionSessionAgent: DurableObjectNamespace;
+  /**
+   * Server-only Gemini API key for Live ephemeral token minting (Issue #6).
+   * Never send to clients. Optional so non-voice tests can omit it.
+   */
+  GEMINI_API_KEY?: string;
 };

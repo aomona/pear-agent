@@ -4,11 +4,14 @@ import type {
   MaterializedExecutionState,
   RuntimeEvent,
   RuntimeSnapshot,
+  VoiceLease,
 } from "@pear-agent/core";
 import { Agent, type Connection, type ConnectionContext } from "agents";
 
 import { D1ExecutionStateRepository } from "../d1/repository.js";
 import type { PearEnv } from "../env.js";
+import { createVoiceLeaseStore } from "../voice/lease-store.js";
+import type { VoiceLeaseResult } from "../voice/results.js";
 import { EMPTY_SYNC_STATE, type ExecutionSessionSyncState } from "./sync-state.js";
 
 /**
@@ -139,6 +142,49 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   /** Current invalidation pulse (for tests and diagnostics). */
   async getSyncState(): Promise<ExecutionSessionSyncState> {
     return this.state;
+  }
+
+  // --- Voice Lease (Issue #6); does not mutate Execution Session status ---
+  // Returns Result objects so DO RPC does not strip typed HTTP errors.
+
+  async acquireVoiceLease(input: {
+    actorId: string;
+    leaseId?: string;
+    ttlMs?: number;
+  }): Promise<VoiceLeaseResult> {
+    return this.runExclusive(async () => {
+      const store = createVoiceLeaseStore(this.env.DB);
+      return store.acquire({
+        sessionId: this.sessionId(),
+        actorId: input.actorId,
+        ...(input.leaseId === undefined ? {} : { leaseId: input.leaseId }),
+        ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
+      });
+    });
+  }
+
+  async releaseVoiceLease(input: { actorId: string }): Promise<VoiceLeaseResult> {
+    return this.runExclusive(async () => {
+      const store = createVoiceLeaseStore(this.env.DB);
+      return store.release(this.sessionId(), input.actorId);
+    });
+  }
+
+  async getVoiceLease(): Promise<VoiceLease | null> {
+    return this.runExclusive(async () => {
+      const store = createVoiceLeaseStore(this.env.DB);
+      return store.getActive(this.sessionId());
+    });
+  }
+
+  async setVoiceResumeHandle(input: {
+    actorId: string;
+    handle: string | null;
+  }): Promise<VoiceLeaseResult> {
+    return this.runExclusive(async () => {
+      const store = createVoiceLeaseStore(this.env.DB);
+      return store.setResumeHandle(this.sessionId(), input.actorId, input.handle);
+    });
   }
 
   /**

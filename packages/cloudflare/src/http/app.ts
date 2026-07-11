@@ -22,11 +22,20 @@ import {
   EventIdentityConflictError,
   SessionConflictError,
   SessionNotFoundError,
+  VoiceLeaseConflictError,
+  VoiceLeaseNotFoundError,
+  VoiceTokenUnavailableError,
 } from "../errors.js";
 import type { PlanGenerator } from "../planner.js";
 import { DEFAULT_MAX_RAW_INPUT_BYTES, R2RawInputStore } from "../r2/raw-input-store.js";
 import { parseRuntimeEventValue, toJsonValue } from "../serialize.js";
 import { buildInitialExecutionState } from "../session/build-initial-state.js";
+import { registerVoiceRoutes } from "../voice/routes.js";
+import {
+  createGoogleGenaiTokenMinter,
+  stubVoiceTokenMinter,
+  type VoiceTokenMinter,
+} from "../voice/token.js";
 
 export type PearAppVariables = {
   pearContext: PearRequestContext;
@@ -42,6 +51,12 @@ export type CreatePearAppOptions = {
   resolveContext?: (request: Request) => PearRequestContext | Promise<PearRequestContext>;
   /** Max raw upload size in bytes (default 10 MiB). */
   maxRawInputBytes?: number;
+  /** Override Gemini Live model id for token minting. */
+  geminiLiveModel?: string;
+  /**
+   * Inject token minter (tests). Default: Google GenAI when key present.
+   */
+  voiceTokenMinter?: VoiceTokenMinter;
 };
 
 /** Raw JSON body — Domain `normalizedInput` is left un-revived. */
@@ -62,6 +77,7 @@ export type PearApp = Hono<{ Bindings: PearEnv; Variables: PearAppVariables }>;
 export function createPearApp(options: CreatePearAppOptions): PearApp {
   const resolveContext = options.resolveContext ?? resolvePearContextFromHeader;
   const maxRawInputBytes = options.maxRawInputBytes ?? DEFAULT_MAX_RAW_INPUT_BYTES;
+  const voiceTokenMinter = options.voiceTokenMinter ?? createGoogleGenaiTokenMinter();
   const app = new Hono<{ Bindings: PearEnv; Variables: PearAppVariables }>();
 
   app.onError((error, c) => {
@@ -70,7 +86,10 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       error instanceof PearContextError ||
       error instanceof SessionNotFoundError ||
       error instanceof SessionConflictError ||
-      error instanceof EventIdentityConflictError
+      error instanceof EventIdentityConflictError ||
+      error instanceof VoiceLeaseConflictError ||
+      error instanceof VoiceLeaseNotFoundError ||
+      error instanceof VoiceTokenUnavailableError
     ) {
       return c.json({ error: error.message }, error.status);
     }
@@ -259,8 +278,17 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     return c.json({ normalizedInput: payload });
   });
 
+  registerVoiceRoutes(app, {
+    authorize: options.authorize,
+    voiceTokenMinter,
+    ...(options.geminiLiveModel === undefined ? {} : { geminiLiveModel: options.geminiLiveModel }),
+  });
+
   return app;
 }
+
+// Re-export for hosts that inject the stub minter in tests.
+export { stubVoiceTokenMinter };
 
 // Keep PearOperation exported usage visible for hosts reading route shapes.
 export type { PearOperation };

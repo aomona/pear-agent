@@ -75,11 +75,28 @@ function SessionPanel() {
 
 ### Hooks
 
-| Hook                  | Role                                                                               |
-| --------------------- | ---------------------------------------------------------------------------------- |
-| `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                            |
-| `useRuntimeSnapshot`  | HTTP hydrate + Agent pulse invalidation; loading/error/reconnect                   |
-| `useContinuation`     | Thin stub (`null` / `status: "none"` until Issue #7); shares channel with snapshot |
+| Hook                  | Role                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------ |
+| `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                              |
+| `useRuntimeSnapshot`  | HTTP hydrate + Agent pulse invalidation; loading/error/reconnect                     |
+| `useContinuation`     | Thin stub (`null` / `status: "none"` until Issue #7); shares channel with snapshot   |
+| `useVoiceSession`     | Voice Lease + ephemeral token + Live connect; tool bridge; disconnect ≠ session stop |
+
+```tsx
+import { useVoiceSession, FakeVoiceProvider } from "@pear-agent/react";
+
+function VoicePanel({ sessionId }: { sessionId: string }) {
+  const voice = useVoiceSession(sessionId);
+  // Tests: useVoiceSession(sessionId, { provider: new FakeVoiceProvider() })
+  return (
+    <button type="button" onClick={() => void voice.connect()}>
+      Connect voice ({voice.status})
+    </button>
+  );
+}
+```
+
+Optional peer: `@google/genai` for `GeminiLiveVoiceProvider` (default when no `provider` override).
 
 ### Auth
 

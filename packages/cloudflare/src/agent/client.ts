@@ -5,15 +5,20 @@ import type {
   MaterializedExecutionState,
   RuntimeEvent,
   RuntimeSnapshot,
+  VoiceLease,
 } from "@pear-agent/core";
 
 import type { PearEnv } from "../env.js";
+import type { VoiceLeaseResult } from "../voice/results.js";
 import type { ExecutionSessionSyncState } from "./sync-state.js";
 
 /**
  * Typed Worker→Agent RPC surface.
  * Avoid `DurableObjectStub<ExecutionSessionAgent>` — Zod-inferred Core unions
  * make stub type instantiation excessively deep under tsgo.
+ *
+ * Voice lease mutations return {@link VoiceLeaseResult} (not thrown errors) so
+ * DO RPC does not strip custom Error subclasses.
  */
 export type ExecutionSessionAgentRpc = {
   createSession(input: {
@@ -27,6 +32,17 @@ export type ExecutionSessionAgentRpc = {
   putNormalizedInput(payload: unknown): Promise<{ ok: true }>;
   getNormalizedInput(): Promise<unknown | null>;
   getSyncState(): Promise<ExecutionSessionSyncState>;
+  acquireVoiceLease(input: {
+    actorId: string;
+    leaseId?: string;
+    ttlMs?: number;
+  }): Promise<VoiceLeaseResult>;
+  releaseVoiceLease(input: { actorId: string }): Promise<VoiceLeaseResult>;
+  getVoiceLease(): Promise<VoiceLease | null>;
+  setVoiceResumeHandle(input: {
+    actorId: string;
+    handle: string | null;
+  }): Promise<VoiceLeaseResult>;
 };
 
 export async function getExecutionSessionAgent(
@@ -98,4 +114,39 @@ export async function agentGetNormalizedInput(
   const agent = await getExecutionSessionAgent(env, sessionId);
   const payload = await agent.getNormalizedInput();
   return payload === null ? undefined : payload;
+}
+
+export async function agentAcquireVoiceLease(
+  env: PearEnv,
+  sessionId: string,
+  input: { actorId: string; leaseId?: string; ttlMs?: number },
+): Promise<VoiceLeaseResult> {
+  const agent = await getExecutionSessionAgent(env, sessionId);
+  return agent.acquireVoiceLease(input);
+}
+
+export async function agentReleaseVoiceLease(
+  env: PearEnv,
+  sessionId: string,
+  input: { actorId: string },
+): Promise<VoiceLeaseResult> {
+  const agent = await getExecutionSessionAgent(env, sessionId);
+  return agent.releaseVoiceLease(input);
+}
+
+export async function agentGetVoiceLease(
+  env: PearEnv,
+  sessionId: string,
+): Promise<VoiceLease | null> {
+  const agent = await getExecutionSessionAgent(env, sessionId);
+  return agent.getVoiceLease();
+}
+
+export async function agentSetVoiceResumeHandle(
+  env: PearEnv,
+  sessionId: string,
+  input: { actorId: string; handle: string | null },
+): Promise<VoiceLeaseResult> {
+  const agent = await getExecutionSessionAgent(env, sessionId);
+  return agent.setVoiceResumeHandle(input);
 }
