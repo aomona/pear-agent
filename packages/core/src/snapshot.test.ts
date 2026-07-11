@@ -117,6 +117,41 @@ describe("createRuntimeSnapshot", () => {
     expect(snapshot.blockedStepIds).not.toContain("stale");
   });
 
+  it("rejects plans or states with inconsistent identity/version metadata", () => {
+    expect(() =>
+      createRuntimeSnapshot({
+        plan: { ...plan, id: "other-plan" },
+        state,
+        recentEvents: [],
+      }),
+    ).toThrow("Plan identity/version");
+    expect(() =>
+      createRuntimeSnapshot({
+        plan,
+        state: { ...state, plan: { ...state.plan, version: 2 } },
+        recentEvents: [],
+      }),
+    ).toThrow("Plan identity/version");
+  });
+
+  it("rejects malformed materialized state and non-running active timers", () => {
+    expect(() =>
+      createRuntimeSnapshot({
+        plan,
+        state: { ...state, plan: { ...state.plan, steps: "invalid" } } as never,
+        recentEvents: [],
+      }),
+    ).toThrow();
+
+    const snapshot = createRuntimeSnapshot({ plan, state, recentEvents: [] });
+    expect(
+      runtimeSnapshotSchema.safeParse({
+        ...snapshot,
+        activeTimers: [state.timers.paused],
+      }).success,
+    ).toBe(false);
+  });
+
   it("validates the public snapshot shape", () => {
     const snapshot: RuntimeSnapshot = createRuntimeSnapshot({ plan, state, recentEvents: [] });
     expect(runtimeSnapshotSchema.safeParse(snapshot).success).toBe(true);

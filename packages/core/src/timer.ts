@@ -13,4 +13,9 @@ export const executionTimerSchema = z.object({
   endsAt: z.date().optional(),
 });
 
+/** Timer shape exposed by runtime snapshots: only currently running timers. */
+export const runningExecutionTimerSchema = executionTimerSchema.extend({
+  status: z.literal("running"),
+});
+
 export type ExecutionTimer = z.infer<typeof executionTimerSchema>;

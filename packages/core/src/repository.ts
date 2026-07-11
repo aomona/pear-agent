@@ -6,6 +6,10 @@ import {
 import { runtimeEventSchema, type RuntimeEvent } from "./event.js";
 import { createRuntimeSnapshot, type RuntimeSnapshot } from "./snapshot.js";
 
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
 export type AppendEventResult =
   | {
       kind: "applied";
@@ -46,41 +50,44 @@ export class InMemoryExecutionStateRepository implements ExecutionStateRepositor
     if (this.states.has(sessionId)) {
       throw new Error(`Execution session already exists: ${sessionId}`);
     }
-    this.states.set(sessionId, parsed);
+    this.states.set(sessionId, clone(parsed));
     this.events.set(sessionId, []);
   }
 
   get(sessionId: string): MaterializedExecutionState | undefined {
-    return this.states.get(sessionId);
+    const state = this.states.get(sessionId);
+    return state ? clone(state) : undefined;
   }
 
   appendEvent(event: RuntimeEvent): AppendEventResult {
-    const parsedEvent = runtimeEventSchema.parse(event);
+    const parsedEvent = clone(runtimeEventSchema.parse(event));
     const current = this.states.get(parsedEvent.sessionId);
     if (!current) throw new Error(`Unknown execution session: ${parsedEvent.sessionId}`);
 
     const duplicate =
       current.appliedEventIds.includes(parsedEvent.id) ||
       current.appliedIdempotencyKeys.includes(parsedEvent.idempotencyKey);
-    if (duplicate) return { kind: "duplicate", event: parsedEvent, state: current };
+    if (duplicate) {
+      return { kind: "duplicate", event: clone(parsedEvent), state: clone(current) };
+    }
 
     // applyRuntimeEvent is pure; no repository collections are touched until
     // this call succeeds, preserving transaction semantics on errors.
     const next = applyRuntimeEvent(current, parsedEvent);
     const sessionEvents = this.events.get(parsedEvent.sessionId);
     if (!sessionEvents) throw new Error(`Unknown execution session: ${parsedEvent.sessionId}`);
-    sessionEvents.push(parsedEvent);
+    sessionEvents.push(clone(parsedEvent));
     this.states.set(parsedEvent.sessionId, next);
-    return { kind: "applied", event: parsedEvent, state: next };
+    return { kind: "applied", event: clone(parsedEvent), state: clone(next) };
   }
 
   getSnapshot(sessionId: string): RuntimeSnapshot | undefined {
     const state = this.states.get(sessionId);
     if (!state) return undefined;
-    return createRuntimeSnapshot({
+    return clone(createRuntimeSnapshot({
       plan: state.plan,
       state,
       recentEvents: this.events.get(sessionId) ?? [],
-    });
+    }));
   }
 }

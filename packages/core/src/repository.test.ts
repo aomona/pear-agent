@@ -71,6 +71,31 @@ describe("InMemoryExecutionStateRepository", () => {
     expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
   });
 
+  it("defensively clones state and event values at every repository boundary", () => {
+    const repository = new InMemoryExecutionStateRepository();
+    repository.create(state);
+
+    const read = repository.get("session-1")!;
+    read.stepStates.pack = { status: "completed" };
+    read.worldState.facts.changed = true;
+    expect(repository.get("session-1")?.stepStates.pack).toEqual({ status: "active" });
+    expect(repository.get("session-1")?.worldState.facts).toEqual({});
+
+    const result = repository.appendEvent(event);
+    result.state.stepStates.pack = { status: "active" };
+    if (result.event.type === "step_completed") {
+      (result.event.payload as { stepId: string }).stepId = "other";
+    }
+    expect(repository.get("session-1")?.stepStates.pack).toEqual({ status: "completed" });
+    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+
+    const snapshot = repository.getSnapshot("session-1")!;
+    snapshot.worldState.facts.changedAgain = true;
+    snapshot.recentEvents[0]!.payload = { stepId: "other" };
+    expect(repository.getSnapshot("session-1")?.worldState.facts).toEqual({});
+    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+  });
+
   it("does not apply the same idempotency key twice within one session", () => {
     const repository = new InMemoryExecutionStateRepository([state]);
     const first = repository.appendEvent(event);
@@ -79,6 +104,13 @@ describe("InMemoryExecutionStateRepository", () => {
     expect(first.kind).toBe("applied");
     expect(second.kind).toBe("duplicate");
     expect(repository.get("session-1")?.appliedEventIds).toEqual(["event-1"]);
+    expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
+
+    second.state.stepStates.pack = { status: "active" };
+    if (second.event.type === "step_completed") {
+      (second.event.payload as { stepId: string }).stepId = "other";
+    }
+    expect(repository.get("session-1")?.stepStates.pack).toEqual({ status: "completed" });
     expect(repository.getSnapshot("session-1")?.recentEvents).toEqual([event]);
   });
 

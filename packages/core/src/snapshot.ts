@@ -7,7 +7,7 @@ import {
   type MaterializedExecutionState,
 } from "./execution-state.js";
 import { executionSessionSchema } from "./session.js";
-import { executionTimerSchema } from "./timer.js";
+import { runningExecutionTimerSchema } from "./timer.js";
 import { stepStatesSchema } from "./step-state.js";
 import { worldStateSchema } from "./world-state.js";
 
@@ -17,7 +17,7 @@ export const runtimeSnapshotSchema = z.object({
   session: executionSessionSchema,
   worldState: worldStateSchema,
   stepStates: stepStatesSchema,
-  activeTimers: z.array(executionTimerSchema),
+  activeTimers: z.array(runningExecutionTimerSchema),
   recentEvents: z.array(runtimeEventSchema),
   readyStepIds: z.array(z.string().min(1)),
   activeStepIds: z.array(z.string().min(1)),
@@ -45,11 +45,22 @@ export function createRuntimeSnapshot<TStepData = unknown>({
   recentEvents,
   generatedAt = new Date(),
 }: CreateRuntimeSnapshotInput<TStepData>): RuntimeSnapshot {
-  const planStepIds = new Set(plan.steps.map(({ id }) => id));
+  const parsedPlan = executionPlanSchema(z.unknown()).parse(plan);
+  const parsedState = materializedExecutionStateSchema.parse(state);
+  if (
+    parsedPlan.id !== parsedState.session.planId ||
+    parsedPlan.version !== parsedState.session.planVersion ||
+    parsedState.plan.id !== parsedPlan.id ||
+    parsedState.plan.version !== parsedPlan.version
+  ) {
+    throw new Error("Plan identity/version does not match execution state session");
+  }
+
+  const planStepIds = new Set(parsedPlan.steps.map(({ id }) => id));
   const stepStates = Object.fromEntries(
-    plan.steps
-      .filter(({ id }) => state.stepStates[id] !== undefined)
-      .map(({ id }) => [id, state.stepStates[id]!]),
+    parsedPlan.steps
+      .filter(({ id }) => parsedState.stepStates[id] !== undefined)
+      .map(({ id }) => [id, parsedState.stepStates[id]!]),
   );
 
   const readyStepIds: string[] = [];
@@ -63,11 +74,11 @@ export function createRuntimeSnapshot<TStepData = unknown>({
   }
 
   return runtimeSnapshotSchema.parse({
-    plan,
-    session: state.session,
-    worldState: state.worldState,
+    plan: parsedPlan,
+    session: parsedState.session,
+    worldState: parsedState.worldState,
     stepStates,
-    activeTimers: Object.values(state.timers).filter(({ status }) => status === "running"),
+    activeTimers: Object.values(parsedState.timers).filter(({ status }) => status === "running"),
     recentEvents: [...recentEvents],
     readyStepIds,
     activeStepIds,
