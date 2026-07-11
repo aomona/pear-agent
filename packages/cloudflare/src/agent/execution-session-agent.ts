@@ -48,9 +48,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionAgentS
       throw new Error("ExecutionSessionAgent has no session name");
     }
     if (state.session.id !== agentName) {
-      throw new Error(
-        `Session id ${state.session.id} does not match agent name ${agentName}`,
-      );
+      throw new Error(`Session id ${state.session.id} does not match agent name ${agentName}`);
     }
 
     const normalizedInput =
@@ -81,9 +79,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionAgentS
 
   async getSnapshot(optionsJson?: string): Promise<string | null> {
     const sessionId = this.requireSessionId();
-    const options = optionsJson
-      ? (JSON.parse(optionsJson) as GetSnapshotOptions)
-      : undefined;
+    const options = optionsJson ? (JSON.parse(optionsJson) as GetSnapshotOptions) : undefined;
     const snapshot = await this.repository().getSnapshot(sessionId, options);
     return snapshot ? serializeRuntimeSnapshot(snapshot) : null;
   }
@@ -139,9 +135,4 @@ export function parseAppendEventResult(json: string): AppendEventResult {
   };
 }
 
-export type {
-  AppendEventResult,
-  MaterializedExecutionState,
-  RuntimeEvent,
-  RuntimeSnapshot,
-};
+export type { AppendEventResult, MaterializedExecutionState, RuntimeEvent, RuntimeSnapshot };

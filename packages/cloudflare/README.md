@@ -42,16 +42,16 @@ Bind `DB` (D1), `RAW_INPUTS` (R2), and `ExecutionSessionAgent` (Durable Object w
 
 ## HTTP API
 
-| Method | Path | Notes |
-| --- | --- | --- |
-| `GET` | `/health` | No auth |
-| `POST` | `/sessions` | JSON: domainId, actorIds, goal, normalizedInput → PlanGenerator → create |
-| `GET` | `/sessions/:id` | Materialized state |
-| `GET` | `/sessions/:id/snapshot` | Runtime snapshot |
-| `POST` | `/sessions/:id/events` | Append runtime event |
-| `POST` | `/sessions/:id/raw-inputs` | `multipart/form-data` field `file` or `raw` (default max 10 MiB) |
-| `GET` | `/sessions/:id/raw-inputs/:inputId` | Raw input metadata |
-| `PUT` | `/sessions/:id/normalized-input` | Replace normalized input |
-| `GET` | `/sessions/:id/normalized-input` | Read normalized input |
+| Method | Path                                | Notes                                                                    |
+| ------ | ----------------------------------- | ------------------------------------------------------------------------ |
+| `GET`  | `/health`                           | No auth                                                                  |
+| `POST` | `/sessions`                         | JSON: domainId, actorIds, goal, normalizedInput → PlanGenerator → create |
+| `GET`  | `/sessions/:id`                     | Materialized state                                                       |
+| `GET`  | `/sessions/:id/snapshot`            | Runtime snapshot                                                         |
+| `POST` | `/sessions/:id/events`              | Append runtime event                                                     |
+| `POST` | `/sessions/:id/raw-inputs`          | `multipart/form-data` field `file` or `raw` (default max 10 MiB)         |
+| `GET`  | `/sessions/:id/raw-inputs/:inputId` | Raw input metadata                                                       |
+| `PUT`  | `/sessions/:id/normalized-input`    | Replace normalized input                                                 |
+| `GET`  | `/sessions/:id/normalized-input`    | Read normalized input                                                    |
 
 Default auth context: `x-pear-context: {"actorId":"...","roles":[],"claims":{}}`.

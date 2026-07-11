@@ -34,8 +34,7 @@ export class R2RawInputStore {
     }
 
     const id = input.inputId ?? crypto.randomUUID();
-    const bytes =
-      input.body instanceof Uint8Array ? input.body : new Uint8Array(input.body);
+    const bytes = input.body instanceof Uint8Array ? input.body : new Uint8Array(input.body);
     const checksumSha256 = await sha256Hex(bytes);
     const objectKey = `raw/${input.sessionId}/${id}`;
     const contentType = input.contentType ?? null;

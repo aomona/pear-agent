@@ -143,7 +143,10 @@ describe("cloudflare runtime integration", () => {
     expect((await createSession(sessionId)).status).toBe(201);
 
     const form = new FormData();
-    form.set("file", new File([JSON.stringify({ note: "raw" })], "input.json", { type: "application/json" }));
+    form.set(
+      "file",
+      new File([JSON.stringify({ note: "raw" })], "input.json", { type: "application/json" }),
+    );
 
     const rawRes = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/raw-inputs`, {

@@ -110,8 +110,7 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
     const appliedEventIds = new Set(current.appliedEventIds);
     const appliedIdempotencyKeys = new Set(current.appliedIdempotencyKeys);
     const duplicate =
-      appliedEventIds.has(parsedEvent.id) ||
-      appliedIdempotencyKeys.has(parsedEvent.idempotencyKey);
+      appliedEventIds.has(parsedEvent.id) || appliedIdempotencyKeys.has(parsedEvent.idempotencyKey);
     if (duplicate) {
       return { kind: "duplicate", event: parsedEvent, state: current };
     }
@@ -302,9 +301,5 @@ function isPearDatabase(value: PearDatabase | D1Database): value is PearDatabase
 /** Detect SQLite/D1 unique violations only — not FK / NOT NULL / generic errors. */
 export function isUniqueConstraintError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes("UNIQUE constraint failed") ||
-    /D1_ERROR:.*UNIQUE/i.test(message)
-  );
+  return message.includes("UNIQUE constraint failed") || /D1_ERROR:.*UNIQUE/i.test(message);
 }
-

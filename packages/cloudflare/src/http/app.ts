@@ -105,7 +105,11 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     const goal = executionGoalSchema.parse(reviveJsonDates(raw.goal));
     const body = { ...raw, goal };
 
-    await authorize(options.authorize, { type: "session.create", domainId: body.domainId }, context);
+    await authorize(
+      options.authorize,
+      { type: "session.create", domainId: body.domainId },
+      context,
+    );
 
     const sessionId = body.sessionId ?? crypto.randomUUID();
     const plan = await options.planGenerator.generatePlan({
@@ -150,7 +154,8 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     const context = c.get("pearContext");
     await authorize(options.authorize, { type: "session.read", sessionId }, context);
     const state = await agentGetState(c.env, sessionId);
-    if (!state) throw new HTTPException(404, { message: `Unknown execution session: ${sessionId}` });
+    if (!state)
+      throw new HTTPException(404, { message: `Unknown execution session: ${sessionId}` });
     return c.json({ state: JSON.parse(serializeJson(state)) });
   });
 

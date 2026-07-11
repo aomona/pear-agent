@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  parseExecutionState,
-  reviveJsonDates,
-  serializeExecutionState,
-} from "./serialize.js";
+import { parseExecutionState, reviveJsonDates, serializeExecutionState } from "./serialize.js";
 import { buildInitialExecutionState } from "./session/build-initial-state.js";
 
 const plan = {

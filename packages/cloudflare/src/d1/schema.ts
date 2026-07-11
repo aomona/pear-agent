@@ -36,10 +36,7 @@ export const runtimeEvents = sqliteTable(
     occurredAt: text("occurred_at").notNull(),
   },
   (table) => [
-    uniqueIndex("runtime_events_session_idempotency").on(
-      table.sessionId,
-      table.idempotencyKey,
-    ),
+    uniqueIndex("runtime_events_session_idempotency").on(table.sessionId, table.idempotencyKey),
     index("runtime_events_session_occurred").on(table.sessionId, table.occurredAt),
   ],
 );

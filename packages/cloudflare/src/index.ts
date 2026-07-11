@@ -66,4 +66,7 @@ export {
   serializeRuntimeEvent,
   serializeRuntimeSnapshot,
 } from "./serialize.js";
-export { buildInitialExecutionState, type BuildInitialExecutionStateInput } from "./session/build-initial-state.js";
+export {
+  buildInitialExecutionState,
+  type BuildInitialExecutionStateInput,
+} from "./session/build-initial-state.js";

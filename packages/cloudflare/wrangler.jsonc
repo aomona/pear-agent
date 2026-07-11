@@ -8,28 +8,28 @@
     "bindings": [
       {
         "name": "ExecutionSessionAgent",
-        "class_name": "ExecutionSessionAgent"
-      }
-    ]
+        "class_name": "ExecutionSessionAgent",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ExecutionSessionAgent"]
-    }
+      "new_sqlite_classes": ["ExecutionSessionAgent"],
+    },
   ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "pear-execution",
       "database_id": "local-pear-execution",
-      "migrations_dir": "migrations"
-    }
+      "migrations_dir": "migrations",
+    },
   ],
   "r2_buckets": [
     {
       "binding": "RAW_INPUTS",
-      "bucket_name": "pear-raw-inputs"
-    }
-  ]
+      "bucket_name": "pear-raw-inputs",
+    },
+  ],
 }

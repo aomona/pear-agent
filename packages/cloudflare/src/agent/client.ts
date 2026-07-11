@@ -13,20 +13,14 @@ import {
   serializeExecutionState,
   serializeRuntimeEvent,
 } from "../serialize.js";
-import {
-  ExecutionSessionAgent,
-  parseAppendEventResult,
-} from "./execution-session-agent.js";
+import { ExecutionSessionAgent, parseAppendEventResult } from "./execution-session-agent.js";
 
 export async function getExecutionSessionAgent(
   env: PearEnv,
   sessionId: string,
 ): Promise<DurableObjectStub<ExecutionSessionAgent>> {
   // getAgentByName is typed against a generic Agent; cast to our RPC surface.
-  const stub = await getAgentByName(
-    env.ExecutionSessionAgent as never,
-    sessionId,
-  );
+  const stub = await getAgentByName(env.ExecutionSessionAgent as never, sessionId);
   return stub as unknown as DurableObjectStub<ExecutionSessionAgent>;
 }
 
