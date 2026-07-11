@@ -12,12 +12,12 @@ AIが計画を生成するだけでなく、人間の実行を支援し、実行
 
 ## PEAR LoopとPDCA
 
-| PDCA | PEAR Loop |
-| --- | --- |
-| Plan | Plan |
-| Do | Execute |
-| Check | Assess |
-| Act | Replan |
+| PDCA  | PEAR Loop |
+| ----- | --------- |
+| Plan  | Plan      |
+| Do    | Execute   |
+| Check | Assess    |
+| Act   | Replan    |
 
 PEAR Loopは、作業が終わってから振り返るのではなく、実行中に短いサイクルを繰り返します。
 

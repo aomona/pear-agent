@@ -40,6 +40,7 @@ docs/requirements.md                      #3実装済み範囲の記録
 ### Task 1: Session、WorldState、Runtime EventのSchema
 
 **Files:**
+
 - Create: `packages/core/src/session.ts`
 - Create: `packages/core/src/session.test.ts`
 - Create: `packages/core/src/world-state.ts`
@@ -49,34 +50,47 @@ docs/requirements.md                      #3実装済み範囲の記録
 - Modify: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Produces: `ExecutionSession`、`ExecutionSessionStatus`、`WorldState`、`RuntimeEvent`、`CoreRuntimeEvent`
 
 - [ ] **Step 1: failing testsを書く**
 
 ```ts
-expect(executionSessionSchema.safeParse({
-  id: 'session-1',
-  planId: 'plan-1',
-  planVersion: 1,
-  goalId: 'goal-1',
-  status: 'active',
-  actorIds: ['human-1'],
-  createdAt: new Date(),
-  updatedAt: new Date(),
-}).success).toBe(true);
+expect(
+  executionSessionSchema.safeParse({
+    id: "session-1",
+    planId: "plan-1",
+    planVersion: 1,
+    goalId: "goal-1",
+    status: "active",
+    actorIds: ["human-1"],
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }).success,
+).toBe(true);
 
-expect(worldStateSchema.safeParse({ facts: {}, resources: [], observations: [], activeConstraints: [], updatedAt: new Date() }).success).toBe(true);
+expect(
+  worldStateSchema.safeParse({
+    facts: {},
+    resources: [],
+    observations: [],
+    activeConstraints: [],
+    updatedAt: new Date(),
+  }).success,
+).toBe(true);
 
-expect(runtimeEventSchema.safeParse({
-  id: 'event-1',
-  sessionId: 'session-1',
-  idempotencyKey: 'step-1-complete',
-  actorId: 'human-1',
-  origin: 'user',
-  type: 'step_completed',
-  payload: { stepId: 'pack' },
-  occurredAt: new Date(),
-}).success).toBe(true);
+expect(
+  runtimeEventSchema.safeParse({
+    id: "event-1",
+    sessionId: "session-1",
+    idempotencyKey: "step-1-complete",
+    actorId: "human-1",
+    origin: "user",
+    type: "step_completed",
+    payload: { stepId: "pack" },
+    occurredAt: new Date(),
+  }).success,
+).toBe(true);
 ```
 
 - [ ] **Step 2: failing testを確認する**
@@ -107,6 +121,7 @@ git commit -m "feat(core): add execution session state schemas"
 ### Task 2: TimerとMaterialized Execution State
 
 **Files:**
+
 - Create: `packages/core/src/timer.ts`
 - Create: `packages/core/src/timer.test.ts`
 - Create: `packages/core/src/execution-state.ts`
@@ -114,6 +129,7 @@ git commit -m "feat(core): add execution session state schemas"
 - Modify: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `ExecutionSession`、`WorldState`、`RuntimeEvent`、`StepStates`
 - Produces: `ExecutionTimer`、`MaterializedExecutionState`、`applyRuntimeEvent()`
 
@@ -121,18 +137,18 @@ git commit -m "feat(core): add execution session state schemas"
 
 ```ts
 const next = applyRuntimeEvent(initialState, {
-  id: 'event-1',
-  sessionId: 'session-1',
-  idempotencyKey: 'pack-complete',
-  actorId: 'human-1',
-  origin: 'user',
-  type: 'step_completed',
-  payload: { stepId: 'pack' },
+  id: "event-1",
+  sessionId: "session-1",
+  idempotencyKey: "pack-complete",
+  actorId: "human-1",
+  origin: "user",
+  type: "step_completed",
+  payload: { stepId: "pack" },
   occurredAt: now,
 });
 
-expect(next.stepStates.pack).toEqual({ status: 'completed' });
-expect(next.appliedEventIds).toContain('event-1');
+expect(next.stepStates.pack).toEqual({ status: "completed" });
+expect(next.appliedEventIds).toContain("event-1");
 ```
 
 - [ ] **Step 2: failing testを確認する**
@@ -167,6 +183,7 @@ git commit -m "feat(core): add materialized execution state"
 ### Task 3: SnapshotとRepository Transaction Port
 
 **Files:**
+
 - Create: `packages/core/src/snapshot.ts`
 - Create: `packages/core/src/snapshot.test.ts`
 - Create: `packages/core/src/repository.ts`
@@ -174,6 +191,7 @@ git commit -m "feat(core): add materialized execution state"
 - Modify: `packages/core/src/index.ts`
 
 **Interfaces:**
+
 - Consumes: `ExecutionPlan`、`MaterializedExecutionState`、`RuntimeEvent`
 - Produces: `RuntimeSnapshot`、`createRuntimeSnapshot()`、`ExecutionStateRepository`、`InMemoryExecutionStateRepository`
 
@@ -181,14 +199,14 @@ git commit -m "feat(core): add materialized execution state"
 
 ```ts
 const snapshot = createRuntimeSnapshot({ plan, state, recentEvents: [event] });
-expect(snapshot.session.id).toBe('session-1');
-expect(snapshot.plan.id).toBe('plan-1');
-expect(snapshot.readyStepIds).toContain('charge');
+expect(snapshot.session.id).toBe("session-1");
+expect(snapshot.plan.id).toBe("plan-1");
+expect(snapshot.readyStepIds).toContain("charge");
 
 const first = await repository.appendEvent(event);
-const second = await repository.appendEvent({ ...event, id: 'event-2' });
-expect(first.kind).toBe('applied');
-expect(second.kind).toBe('duplicate');
+const second = await repository.appendEvent({ ...event, id: "event-2" });
+expect(first.kind).toBe("applied");
+expect(second.kind).toBe("duplicate");
 ```
 
 - [ ] **Step 2: failing testsを確認する**
@@ -221,6 +239,7 @@ git commit -m "feat(core): add runtime snapshots and repository port"
 ### Task 4: Outing fixture、Documentation、Contract verification
 
 **Files:**
+
 - Modify: `examples/outing-domain/src/domain.ts`
 - Modify: `examples/outing-domain/src/domain.test.ts`
 - Modify: `packages/core/README.md`
@@ -229,6 +248,7 @@ git commit -m "feat(core): add runtime snapshots and repository port"
 - Create: `packages/core/src/execution-state.integration.test.ts`
 
 **Interfaces:**
+
 - Consumes: Tasks 1-3 public APIs
 - Produces: Outing Domainの実行状態fixtureとCore end-to-end contract test
 

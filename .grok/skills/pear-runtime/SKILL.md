@@ -25,13 +25,13 @@ description: >
 
 ## Package map
 
-| Package | Role |
-| --- | --- |
-| `@pear-agent/core` | Environment-free models, reducers, Ports, Zod schemas |
-| `@pear-agent/cloudflare` | Workers, Agents, D1, R2, auth hooks, HTTP |
-| `@pear-agent/react` | Hooks (later) |
-| `create-pear-agent` | CLI sample scaffold (later) |
-| `examples/outing-domain` | First vertical sample Domain |
+| Package                  | Role                                                  |
+| ------------------------ | ----------------------------------------------------- |
+| `@pear-agent/core`       | Environment-free models, reducers, Ports, Zod schemas |
+| `@pear-agent/cloudflare` | Workers, Agents, D1, R2, auth hooks, HTTP             |
+| `@pear-agent/react`      | Hooks (later)                                         |
+| `create-pear-agent`      | CLI sample scaffold (later)                           |
+| `examples/outing-domain` | First vertical sample Domain                          |
 
 ## Non-negotiables
 

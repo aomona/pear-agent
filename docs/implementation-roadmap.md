@@ -19,14 +19,14 @@
 
 ## マイルストーン
 
-| 日付 | 完成状態 |
-| --- | --- |
-| 7月17日 | FoundationとDomain Contract |
+| 日付    | 完成状態                            |
+| ------- | ----------------------------------- |
+| 7月17日 | FoundationとDomain Contract         |
 | 7月24日 | Execution StateとCloudflare Runtime |
-| 7月31日 | React ClientとGemini Voice |
-| 8月7日 | Continuationの中断・Wake・再開 |
-| 8月13日 | 部分再計画と外出準備サンプル |
-| 8月17日 | CLI、Devtools、E2E |
-| 8月20日 | デモ安定化、文書、動画撮影可能状態 |
+| 7月31日 | React ClientとGemini Voice          |
+| 8月7日  | Continuationの中断・Wake・再開      |
+| 8月13日 | 部分再計画と外出準備サンプル        |
+| 8月17日 | CLI、Devtools、E2E                  |
+| 8月20日 | デモ安定化、文書、動画撮影可能状態  |
 
 最初に実行する詳細計画は[PEAR Runtime Foundation Implementation Plan](./superpowers/plans/2026-07-11-pear-runtime-foundation.md)です。

@@ -6,23 +6,23 @@ cook-agentをそのまま移植せず、既存実装から検証済みの概念�
 
 ## 引き継ぐ概念
 
-| cook-agent | PEAR Runtime | 方針 |
-| --- | --- | --- |
-| `PlanDocument` | `ExecutionPlan<TDomainData>` | 料理固有フィールドを分離 |
-| `PlanStep` | `ExecutionStep<TStepData>` | Executorと汎用Resourceを追加 |
-| `timeline` | Schedule / Duration | Coreへ継承 |
-| `after` | Dependencies | DAGとして継承 |
-| `req` | Resource Requirements | 型を一般化 |
-| `PlanTimer` | `TimerDefinition` | Coreへ継承 |
-| `PlanVersion` | `PlanVersion` | 継承 |
-| `PlanPatch` | `PlanPatch` | 実際の部分再計画へ発展 |
-| `CookingSession` | `ExecutionSession` | 複数Actor・並行Step対応 |
-| `CookSessionSnapshot` | `RuntimeSnapshot` | WorldStateとContinuationを追加 |
-| `SessionEvent` | Core Event + Domain Event | 固定Unionを分離 |
-| `SessionTimer` | `ExecutionTimer` | Coreへ継承 |
-| Runtime Tool Call | Capability Runtime | Policyと認可を追加 |
-| Runtime Replan | Assess + Partial Replan | Affected Subgraphだけ更新 |
-| Gemini Live hook | Gemini Voice Provider | Execution Sessionから分離 |
+| cook-agent            | PEAR Runtime                 | 方針                           |
+| --------------------- | ---------------------------- | ------------------------------ |
+| `PlanDocument`        | `ExecutionPlan<TDomainData>` | 料理固有フィールドを分離       |
+| `PlanStep`            | `ExecutionStep<TStepData>`   | Executorと汎用Resourceを追加   |
+| `timeline`            | Schedule / Duration          | Coreへ継承                     |
+| `after`               | Dependencies                 | DAGとして継承                  |
+| `req`                 | Resource Requirements        | 型を一般化                     |
+| `PlanTimer`           | `TimerDefinition`            | Coreへ継承                     |
+| `PlanVersion`         | `PlanVersion`                | 継承                           |
+| `PlanPatch`           | `PlanPatch`                  | 実際の部分再計画へ発展         |
+| `CookingSession`      | `ExecutionSession`           | 複数Actor・並行Step対応        |
+| `CookSessionSnapshot` | `RuntimeSnapshot`            | WorldStateとContinuationを追加 |
+| `SessionEvent`        | Core Event + Domain Event    | 固定Unionを分離                |
+| `SessionTimer`        | `ExecutionTimer`             | Coreへ継承                     |
+| Runtime Tool Call     | Capability Runtime           | Policyと認可を追加             |
+| Runtime Replan        | Assess + Partial Replan      | Affected Subgraphだけ更新      |
+| Gemini Live hook      | Gemini Voice Provider        | Execution Sessionから分離      |
 
 ## Cooking Domainへ残すもの
 
@@ -80,4 +80,3 @@ Provider resume handleや接続状態をReactだけに保持しません。Execu
 - Cloudflare Workersで利用できないNode固有処理をCoreへ持ち込まない
 - 既存コードをコピーする場合も、PEARのSchemaと境界に合わせて再検証する
 - cook-agentの挙動を回帰テストケースとして活用する
-

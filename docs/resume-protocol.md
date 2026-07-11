@@ -18,14 +18,14 @@ AIまたはユーザーが中断を要求したら、Runtimeは同一トラン�
 
 ```ts
 type WakeCondition =
-  | { type: 'manual' }
-  | { type: 'time'; wakeAt: string }
-  | { type: 'event'; eventType: string };
+  | { type: "manual" }
+  | { type: "time"; wakeAt: string }
+  | { type: "event"; eventType: string };
 
 type ExecutionContinuation = {
   id: string;
   sessionId: string;
-  status: 'suspended' | 'wake_pending' | 'resuming' | 'completed' | 'expired';
+  status: "suspended" | "wake_pending" | "resuming" | "completed" | "expired";
   wakeCondition: WakeCondition;
   suspendedReason: string;
   resumeDirective: string;

@@ -35,12 +35,12 @@ pnpm format:check
 
 ## What each gate covers
 
-| Command | Tool | Scope |
-| --- | --- | --- |
-| `pnpm typecheck` | tsgo | all workspace packages with `typecheck` script |
-| `pnpm lint` | Oxlint | repo root |
-| `pnpm format:check` | Oxfmt | packages, examples, root config files |
-| `pnpm test` | Vitest | Node (core + examples); then `@pear-agent/cloudflare` Workers pool when present |
+| Command             | Tool   | Scope                                                                           |
+| ------------------- | ------ | ------------------------------------------------------------------------------- |
+| `pnpm typecheck`    | tsgo   | all workspace packages with `typecheck` script                                  |
+| `pnpm lint`         | Oxlint | repo root                                                                       |
+| `pnpm format:check` | Oxfmt  | packages, examples, root config files                                           |
+| `pnpm test`         | Vitest | Node (core + examples); then `@pear-agent/cloudflare` Workers pool when present |
 
 ## Cloudflare package only
 

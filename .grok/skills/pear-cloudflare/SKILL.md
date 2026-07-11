@@ -20,13 +20,13 @@ HTTP (Hono)
   → R2 for Raw Input bytes only
 ```
 
-| Concern | Location |
-| --- | --- |
-| Durable state + event log + normalized input | **D1 + Drizzle** (`src/d1/`) |
-| Mutation serialization | **ExecutionSessionAgent** (`src/agent/`) |
-| Raw blobs | **R2** (`src/r2/`) |
-| Authn context + authz hook | Host injects into `createPearApp` |
-| Plan generation | Host `PlanGenerator` (AI SDK later; static in tests) |
+| Concern                                      | Location                                             |
+| -------------------------------------------- | ---------------------------------------------------- |
+| Durable state + event log + normalized input | **D1 + Drizzle** (`src/d1/`)                         |
+| Mutation serialization                       | **ExecutionSessionAgent** (`src/agent/`)             |
+| Raw blobs                                    | **R2** (`src/r2/`)                                   |
+| Authn context + authz hook                   | Host injects into `createPearApp`                    |
+| Plan generation                              | Host `PlanGenerator` (AI SDK later; static in tests) |
 
 ## Key files
 
@@ -53,16 +53,16 @@ HTTP (Hono)
 
 ## HTTP surface (minimal)
 
-| Method | Path |
-| --- | --- |
-| GET | `/health` |
-| POST | `/sessions` |
-| GET | `/sessions/:id` |
-| GET | `/sessions/:id/snapshot` |
-| POST | `/sessions/:id/events` |
-| POST | `/sessions/:id/raw-inputs` |
-| GET | `/sessions/:id/raw-inputs/:inputId` |
-| PUT/GET | `/sessions/:id/normalized-input` |
+| Method  | Path                                |
+| ------- | ----------------------------------- |
+| GET     | `/health`                           |
+| POST    | `/sessions`                         |
+| GET     | `/sessions/:id`                     |
+| GET     | `/sessions/:id/snapshot`            |
+| POST    | `/sessions/:id/events`              |
+| POST    | `/sessions/:id/raw-inputs`          |
+| GET     | `/sessions/:id/raw-inputs/:inputId` |
+| PUT/GET | `/sessions/:id/normalized-input`    |
 
 Default context header: `x-pear-context: {"actorId":"…","roles":[],"claims":{}}`.
 
