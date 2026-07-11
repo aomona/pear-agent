@@ -1,4 +1,5 @@
 export * from "./actor.js";
+export * from "./date.js";
 export * from "./domain.js";
 export * from "./goal.js";
 export * from "./plan.js";
