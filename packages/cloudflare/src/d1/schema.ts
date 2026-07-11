@@ -66,10 +66,28 @@ export const normalizedInputs = sqliteTable("normalized_inputs", {
   updatedAt: text("updated_at").notNull(),
 });
 
+/**
+ * One row per session (PK = session_id). Exclusive Voice Lease (Issue #6).
+ * Re-acquire overwrites the row; status tracks active / released / expired.
+ */
+export const voiceLeases = sqliteTable("voice_leases", {
+  sessionId: text("session_id")
+    .primaryKey()
+    .references(() => executionSessions.id),
+  id: text("id").notNull(),
+  actorId: text("actor_id").notNull(),
+  status: text("status").notNull(),
+  acquiredAt: text("acquired_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  providerResumeHandle: text("provider_resume_handle"),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const pearSchema = {
   executionSessions,
   materializedStates,
   runtimeEvents,
   rawInputs,
   normalizedInputs,
+  voiceLeases,
 };

@@ -19,6 +19,13 @@ export {
   type UseRuntimeSnapshotResult,
 } from "./use-runtime-snapshot.js";
 export { useContinuation, type UseContinuationResult } from "./use-continuation.js";
+export {
+  useVoiceSession,
+  FakeVoiceProvider,
+  GeminiLiveVoiceProvider,
+  type UseVoiceSessionOptions,
+  type UseVoiceSessionResult,
+} from "./use-voice-session.js";
 export type {
   AppendEventInput,
   AsyncStatus,
@@ -39,4 +46,6 @@ export {
   parseRuntimeEvent,
   parseRuntimeSnapshot,
   parseSyncState,
+  parseVoiceLease,
+  parseVoiceLeaseOrNull,
 } from "./parse.js";

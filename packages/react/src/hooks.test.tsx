@@ -2,6 +2,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { FakeVoiceProvider } from "@pear-agent/core";
+
 import { PearClient } from "./client.js";
 import { PearProvider } from "./provider.js";
 import { __resetSessionChannelsForTests } from "./session-channel.js";
@@ -9,6 +11,7 @@ import { sampleMaterializedState, sampleSnapshot } from "./test-fixtures.js";
 import { useContinuation } from "./use-continuation.js";
 import { useExecutionSession } from "./use-execution-session.js";
 import { useRuntimeSnapshot } from "./use-runtime-snapshot.js";
+import { useVoiceSession } from "./use-voice-session.js";
 
 function createWrapper(client: PearClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -278,5 +281,140 @@ describe("react hooks", () => {
     expect(() => {
       renderHook(() => useExecutionSession());
     }).toThrow(/PearProvider/);
+  });
+
+  it("useVoiceSession connects via Fake provider and bridges tools without cancelling session", async () => {
+    const provider = new FakeVoiceProvider();
+    const sessionEvents: string[] = [];
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url.endsWith("/voice/lease") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/token") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            token: "ephemeral",
+            model: "fake-model",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/tools") && method === "POST") {
+        const body = JSON.parse(String(init?.body));
+        sessionEvents.push(body.toolName);
+        return new Response(
+          JSON.stringify({
+            callId: body.callId,
+            toolName: body.toolName,
+            ok: true,
+            result: { kind: "applied", eventType: "step_completed", sessionStatus: "active" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/lease") && method === "DELETE") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "released",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/voice/resume-handle") && method === "PUT") {
+        const body = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: body.handle,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result } = renderHook(() => useVoiceSession("s1", { provider }), {
+      wrapper: createWrapper(client),
+    });
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    expect(result.current.status).toBe("connected");
+    expect(result.current.lease?.id).toBe("lease-1");
+    expect(result.current.error).toBeNull();
+
+    const fakeConn = provider.connections[0]!;
+    await act(async () => {
+      fakeConn.emitToolCalls([{ id: "c1", name: "complete_step", args: { stepId: "pack" } }]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(sessionEvents).toContain("complete_step");
+    });
+    expect(fakeConn.toolResponses.length).toBeGreaterThan(0);
+
+    await act(async () => {
+      fakeConn.emitResumeHandle("handle-xyz");
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.lease?.providerResumeHandle).toBe("handle-xyz");
+    });
+
+    await act(async () => {
+      await result.current.disconnect();
+    });
+
+    expect(result.current.status).toBe("disconnected");
+    expect(result.current.lease?.status).toBe("released");
+    // Disconnect must not POST session_cancelled / session_paused.
+    const cancelled = fetchMock.mock.calls.some((call) => {
+      const url = String(call[0]);
+      return url.includes("/events");
+    });
+    expect(cancelled).toBe(false);
   });
 });

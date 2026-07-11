@@ -325,4 +325,173 @@ describe("cloudflare runtime integration", () => {
     expect(((await first.json()) as { kind: string }).kind).toBe("applied");
     expect(((await second.json()) as { kind: string }).kind).toBe("duplicate");
   });
+
+  it("enforces exclusive voice lease and keeps session active after release", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+
+    await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/events`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          id: `${sessionId}-evt-start-voice`,
+          sessionId,
+          idempotencyKey: "session-start-voice",
+          actorId: "traveler",
+          origin: "user",
+          type: "session_started",
+          payload: {},
+          occurredAt: "2026-07-11T00:00:00.000Z",
+        }),
+      }),
+    );
+
+    const leaseRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(leaseRes.status).toBe(201);
+    const leaseBody = (await leaseRes.json()) as {
+      lease: { id: string; actorId: string; status: string };
+    };
+    expect(leaseBody.lease.status).toBe("active");
+    expect(leaseBody.lease.actorId).toBe("traveler");
+
+    const conflict = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-pear-context": JSON.stringify({
+            actorId: "other-user",
+            roles: [],
+            claims: {},
+          }),
+        },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(conflict.status).toBe(409);
+
+    const handleRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/resume-handle`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({ handle: "gemini-handle-1" }),
+      }),
+    );
+    expect(handleRes.status).toBe(200);
+    const handleBody = (await handleRes.json()) as {
+      lease: { providerResumeHandle: string | null };
+    };
+    expect(handleBody.lease.providerResumeHandle).toBe("gemini-handle-1");
+
+    const tokenRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({}),
+      }),
+    );
+    expect(tokenRes.status).toBe(200);
+    const tokenBody = (await tokenRes.json()) as {
+      token: string;
+      model: string;
+      config?: unknown;
+    };
+    expect(tokenBody.token).toContain("test-token");
+    expect(tokenBody.model).toBe("test-model");
+    // Live config stays locked server-side; must not be returned to clients.
+    expect(tokenBody.config).toBeUndefined();
+
+    const startStep = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          toolName: "start_step",
+          args: { stepId: "pack" },
+          callId: "call-0",
+        }),
+      }),
+    );
+    expect(startStep.status).toBe(200);
+    expect(((await startStep.json()) as { ok: boolean }).ok).toBe(true);
+
+    const toolRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          toolName: "complete_step",
+          args: { stepId: "pack" },
+          callId: "call-1",
+        }),
+      }),
+    );
+    expect(toolRes.status).toBe(200);
+    const toolBody = (await toolRes.json()) as { ok: boolean; result: { eventType: string } };
+    expect(toolBody.ok).toBe(true);
+    expect(toolBody.result.eventType).toBe("step_completed");
+
+    const releaseRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
+        method: "DELETE",
+        headers: contextHeaders(),
+      }),
+    );
+    expect(releaseRes.status).toBe(200);
+
+    const stateRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}`, {
+        headers: contextHeaders(),
+      }),
+    );
+    const stateBody = (await stateRes.json()) as {
+      state: { session: { status: string }; stepStates: Record<string, { status: string }> };
+    };
+    // Voice release must not stop the Execution Session.
+    expect(stateBody.state.session.status).toBe("active");
+    expect(stateBody.state.stepStates.pack?.status).toBe("completed");
+  });
+
+  it("rejects unauthorized voice tools without mutating state", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+
+    await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({}),
+      }),
+    );
+
+    const denied = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...contextHeaders({ "x-pear-deny": "1" }),
+        },
+        body: JSON.stringify({
+          toolName: "start_session",
+          args: {},
+        }),
+      }),
+    );
+    expect(denied.status).toBe(403);
+
+    const stateRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}`, {
+        headers: contextHeaders(),
+      }),
+    );
+    const stateBody = (await stateRes.json()) as { state: { session: { status: string } } };
+    expect(stateBody.state.session.status).toBe("not_started");
+  });
 });

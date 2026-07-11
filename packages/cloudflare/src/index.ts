@@ -1,11 +1,15 @@
 export { ExecutionSessionAgent } from "./agent/execution-session-agent.js";
 export {
+  agentAcquireVoiceLease,
   agentAppendEvent,
   agentCreateSession,
   agentGetNormalizedInput,
   agentGetSnapshot,
   agentGetState,
+  agentGetVoiceLease,
   agentPutNormalizedInput,
+  agentReleaseVoiceLease,
+  agentSetVoiceResumeHandle,
   getExecutionSessionAgent,
 } from "./agent/client.js";
 export {
@@ -51,14 +55,47 @@ export {
   pearSchema,
   rawInputs,
   runtimeEvents,
+  voiceLeases,
 } from "./d1/schema.js";
 export type { PearEnv } from "./env.js";
 export {
   EventIdentityConflictError,
   SessionConflictError,
   SessionNotFoundError,
+  VoiceLeaseConflictError,
+  VoiceLeaseNotFoundError,
+  VoiceTokenUnavailableError,
 } from "./errors.js";
-export { createPearApp, type CreatePearAppOptions, type PearApp } from "./http/app.js";
+export {
+  createPearApp,
+  stubVoiceTokenMinter,
+  type CreatePearAppOptions,
+  type PearApp,
+} from "./http/app.js";
+export {
+  createVoiceLeaseStore,
+  type AcquireVoiceLeaseInput,
+  type VoiceLeaseStore,
+} from "./voice/lease-store.js";
+export type { VoiceLeaseErr, VoiceLeaseOk, VoiceLeaseResult } from "./voice/results.js";
+export {
+  buildVoiceLiveConfig,
+  createGoogleGenaiTokenMinter,
+  DEFAULT_GEMINI_LIVE_MODEL,
+  type MintVoiceTokenInput,
+  type VoiceEphemeralTokenResult,
+  type VoiceTokenMinter,
+} from "./voice/token.js";
+export {
+  BUILTIN_VOICE_TOOL_NAMES,
+  executeVoiceTool,
+  listVoiceToolDeclarations,
+  summarizeSnapshotForVoice,
+  type BuiltinVoiceToolName,
+  type VoiceToolDeclaration,
+  type VoiceToolRegistry,
+  type VoiceToolResult,
+} from "./voice/tools.js";
 export {
   createStaticPlanGenerator,
   type PlanGenerator,

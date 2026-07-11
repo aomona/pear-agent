@@ -10,12 +10,19 @@ import {
   type RuntimeEvent,
   type RuntimeSnapshot,
   type StepStates,
+  type VoiceLease,
 } from "@pear-agent/core";
 import { z } from "zod";
 
 import { PEAR_CONTEXT_HEADER, serializePearClientContext } from "./context-wire.js";
 import { PearClientError } from "./errors.js";
-import { parseAppendEventResult, parseMaterializedState, parseRuntimeSnapshot } from "./parse.js";
+import {
+  parseAppendEventResult,
+  parseMaterializedState,
+  parseRuntimeSnapshot,
+  parseVoiceLease,
+  parseVoiceLeaseOrNull,
+} from "./parse.js";
 import type {
   AppendEventInput,
   CreateSessionInput,
@@ -210,6 +217,72 @@ export class PearClient {
         payload: input.payload,
       }),
     );
+  }
+
+  // --- Voice Lease / token / tool bridge (Issue #6) ---
+
+  async acquireVoiceLease(
+    sessionId: string,
+    input: { ttlMs?: number; leaseId?: string } = {},
+  ): Promise<VoiceLease> {
+    const body = await this.requestJson<{ lease: unknown }>(`/sessions/${sessionId}/voice/lease`, {
+      method: "POST",
+      body: input,
+    });
+    return parseVoiceLease(body.lease);
+  }
+
+  async getVoiceLease(sessionId: string): Promise<VoiceLease | null> {
+    const body = await this.requestJson<{ lease: unknown }>(`/sessions/${sessionId}/voice/lease`);
+    return parseVoiceLeaseOrNull(body.lease);
+  }
+
+  async releaseVoiceLease(sessionId: string): Promise<VoiceLease> {
+    const body = await this.requestJson<{ lease: unknown }>(`/sessions/${sessionId}/voice/lease`, {
+      method: "DELETE",
+    });
+    return parseVoiceLease(body.lease);
+  }
+
+  async setVoiceResumeHandle(sessionId: string, handle: string | null): Promise<VoiceLease> {
+    const body = await this.requestJson<{ lease: unknown }>(
+      `/sessions/${sessionId}/voice/resume-handle`,
+      {
+        method: "PUT",
+        body: { handle },
+      },
+    );
+    return parseVoiceLease(body.lease);
+  }
+
+  async mintVoiceToken(sessionId: string): Promise<{ token: string; model: string }> {
+    return this.requestJson(`/sessions/${sessionId}/voice/token`, {
+      method: "POST",
+      body: {},
+    });
+  }
+
+  async executeVoiceTool(
+    sessionId: string,
+    input: { toolName: string; args?: Record<string, unknown>; callId?: string },
+  ): Promise<
+    | { callId: string | null; toolName: string; ok: true; result: unknown }
+    | {
+        callId: string | null;
+        toolName: string;
+        ok: false;
+        error: true;
+        message: string;
+      }
+  > {
+    return this.requestJson(`/sessions/${sessionId}/voice/tools`, {
+      method: "POST",
+      body: {
+        toolName: input.toolName,
+        args: input.args ?? {},
+        ...(input.callId === undefined ? {} : { callId: input.callId }),
+      },
+    });
   }
 
   private async appendBuiltEvent(

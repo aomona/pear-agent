@@ -25,6 +25,11 @@ const authorize: AuthorizeFn = async (operation, context) => {
 const worker = createPearWorker({
   authorize,
   planGenerator: createStaticPlanGenerator(outingPlan),
+  // Integration tests mint tokens without calling Google.
+  voiceTokenMinter: async (input) => ({
+    token: `test-token-${input.lease.id}`,
+    model: "test-model",
+  }),
   resolveContext: (request) => {
     const raw = request.headers.get("x-pear-context");
     if (!raw) {

@@ -20,8 +20,17 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.4",
     "@cloudflare/workers-types": "^5.20260711.1",
+    "@google/genai": "^2.11.0",
     "drizzle-kit": "^0.31.10",
     "vitest": "^4.1.6",
     "wrangler": "^4.110.0"
+  },
+  "peerDependencies": {
+    "@google/genai": "^1.0.0 || ^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@google/genai": {
+      "optional": true
+    }
   }
 }
