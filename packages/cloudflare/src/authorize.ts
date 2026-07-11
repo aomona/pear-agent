@@ -13,7 +13,12 @@ export type PearOperation =
   | { type: "voice.lease.read"; sessionId: string }
   | { type: "voice.token"; sessionId: string }
   | { type: "voice.tool"; sessionId: string; toolName: string }
-  | { type: "voice.resumeHandle.write"; sessionId: string };
+  | { type: "voice.resumeHandle.write"; sessionId: string }
+  | { type: "continuation.suspend"; sessionId: string }
+  | { type: "continuation.read"; sessionId: string }
+  | { type: "continuation.resume"; sessionId: string; continuationId: string }
+  | { type: "continuation.complete"; sessionId: string; continuationId: string }
+  | { type: "continuation.failResume"; sessionId: string; continuationId: string };
 
 /**
  * Host-supplied authorization hook. Throw {@link AuthorizationError} (or any

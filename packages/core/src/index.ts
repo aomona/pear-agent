@@ -12,3 +12,4 @@ export * from "./execution-state.js";
 export * from "./snapshot.js";
 export * from "./repository.js";
 export * from "./voice.js";
+export * from "./continuation.js";

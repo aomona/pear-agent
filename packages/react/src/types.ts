@@ -14,24 +14,8 @@ export type PearClientContext = {
 /** Connection lifecycle for realtime snapshot subscriptions. */
 export type ConnectionStatus = "idle" | "loading" | "connected" | "reconnecting" | "error";
 
-/**
- * Stub Continuation until Issue #7. Always null from the server today.
- * Shape mirrors docs/resume-protocol.md for forward-compatible hooks.
- */
-export type ExecutionContinuationStub = {
-  id: string;
-  sessionId: string;
-  status: "suspended" | "wake_pending" | "resuming" | "completed" | "expired";
-  wakeCondition:
-    | { type: "manual" }
-    | { type: "time"; wakeAt: string }
-    | { type: "event"; eventType: string };
-  suspendedReason: string;
-  resumeDirective: string;
-  checkpointPlanVersionId: string;
-  checkpointLastEventId: string | null;
-  providerResumeHandle: string | null;
-};
+/** @deprecated Use ExecutionContinuation from @pear-agent/core. */
+export type ExecutionContinuationStub = import("@pear-agent/core").ExecutionContinuation;
 
 /**
  * Agent DO invalidation pulse (JSON wire).

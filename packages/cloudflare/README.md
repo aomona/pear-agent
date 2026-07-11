@@ -44,23 +44,28 @@ Bind `DB` (D1), `RAW_INPUTS` (R2), and `ExecutionSessionAgent` (Durable Object w
 
 ## HTTP API
 
-| Method   | Path                                | Notes                                                                    |
-| -------- | ----------------------------------- | ------------------------------------------------------------------------ |
-| `GET`    | `/health`                           | No auth                                                                  |
-| `POST`   | `/sessions`                         | JSON: domainId, actorIds, goal, normalizedInput → PlanGenerator → create |
-| `GET`    | `/sessions/:id`                     | Materialized state                                                       |
-| `GET`    | `/sessions/:id/snapshot`            | Runtime snapshot                                                         |
-| `POST`   | `/sessions/:id/events`              | Append runtime event                                                     |
-| `POST`   | `/sessions/:id/raw-inputs`          | `multipart/form-data` field `file` or `raw` (default max 10 MiB)         |
-| `GET`    | `/sessions/:id/raw-inputs/:inputId` | Raw input metadata                                                       |
-| `PUT`    | `/sessions/:id/normalized-input`    | Replace normalized input                                                 |
-| `GET`    | `/sessions/:id/normalized-input`    | Read normalized input                                                    |
-| `POST`   | `/sessions/:id/voice/lease`         | Acquire exclusive Voice Lease (Issue #6)                                 |
-| `GET`    | `/sessions/:id/voice/lease`         | Active lease or null                                                     |
-| `DELETE` | `/sessions/:id/voice/lease`         | Release lease (does **not** stop Execution Session)                      |
-| `PUT`    | `/sessions/:id/voice/resume-handle` | Persist Gemini resume handle on the lease                                |
-| `POST`   | `/sessions/:id/voice/token`         | Mint Live ephemeral token (server `GEMINI_API_KEY`)                      |
-| `POST`   | `/sessions/:id/voice/tools`         | Tool bridge (authorize + built-in / capability tools → appendEvent)      |
+| Method   | Path                                                        | Notes                                                                    |
+| -------- | ----------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `GET`    | `/health`                                                   | No auth                                                                  |
+| `POST`   | `/sessions`                                                 | JSON: domainId, actorIds, goal, normalizedInput → PlanGenerator → create |
+| `GET`    | `/sessions/:id`                                             | Materialized state                                                       |
+| `GET`    | `/sessions/:id/snapshot`                                    | Runtime snapshot                                                         |
+| `POST`   | `/sessions/:id/events`                                      | Append runtime event                                                     |
+| `POST`   | `/sessions/:id/raw-inputs`                                  | `multipart/form-data` field `file` or `raw` (default max 10 MiB)         |
+| `GET`    | `/sessions/:id/raw-inputs/:inputId`                         | Raw input metadata                                                       |
+| `PUT`    | `/sessions/:id/normalized-input`                            | Replace normalized input                                                 |
+| `GET`    | `/sessions/:id/normalized-input`                            | Read normalized input                                                    |
+| `POST`   | `/sessions/:id/continuations`                               | Suspend and persist a Continuation checkpoint                            |
+| `GET`    | `/sessions/:id/continuation`                                | Read the active Continuation                                             |
+| `POST`   | `/sessions/:id/continuations/:continuationId/resume`        | Atomically claim resume                                                  |
+| `POST`   | `/sessions/:id/continuations/:continuationId/complete`      | Complete a connected resume                                              |
+| `POST`   | `/sessions/:id/continuations/:continuationId/resume-failed` | Return a failed resume to `wake_pending`                                 |
+| `POST`   | `/sessions/:id/voice/lease`                                 | Acquire exclusive Voice Lease (Issue #6)                                 |
+| `GET`    | `/sessions/:id/voice/lease`                                 | Active lease or null                                                     |
+| `DELETE` | `/sessions/:id/voice/lease`                                 | Release lease (does **not** stop Execution Session)                      |
+| `PUT`    | `/sessions/:id/voice/resume-handle`                         | Persist Gemini resume handle on the lease                                |
+| `POST`   | `/sessions/:id/voice/token`                                 | Mint Live ephemeral token (server `GEMINI_API_KEY`)                      |
+| `POST`   | `/sessions/:id/voice/tools`                                 | Tool bridge (authorize + built-in / capability tools → appendEvent)      |
 
 Default auth context: `x-pear-context: {"actorId":"...","roles":[],"claims":{}}`.
 

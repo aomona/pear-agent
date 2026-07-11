@@ -6,6 +6,8 @@ import {
   type VoiceSessionStatus,
   type VoiceToolCall,
   type VoiceTranscriptEntry,
+  type ContinuationWakeCondition,
+  type ExecutionContinuation,
 } from "@pear-agent/core";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -26,7 +28,14 @@ export type UseVoiceSessionResult = {
   error: Error | null;
   transcript: VoiceTranscriptEntry[];
   /** Acquire lease, mint token, open Voice connection. Does not start Execution Session. */
-  connect: () => Promise<void>;
+  connect: (input?: { continuationId?: string }) => Promise<void>;
+  /** Persist a Continuation checkpoint, then close Voice while Execution continues. */
+  suspend: (input: {
+    id?: string;
+    wakeCondition: ContinuationWakeCondition;
+    suspendedReason: string;
+    resumeDirective: string;
+  }) => Promise<ExecutionContinuation>;
   /**
    * Close Voice connection and release lease.
    * Never cancels or pauses the Execution Session.
@@ -239,101 +248,143 @@ export function useVoiceSession(
     }
   }, [appendTranscript, clearSubscriptions, isCurrent]);
 
-  const connect = useCallback(async () => {
-    const sid = sessionIdRef.current;
-    if (!sid) {
-      throw new Error("sessionId is required to connect voice");
-    }
-
-    // Mid-connect retarget: abort current generation and release prior bound lease.
-    if (connectingRef.current) {
-      if (boundSessionIdRef.current === sid) {
-        return;
+  const connect = useCallback(
+    async (input: { continuationId?: string } = {}) => {
+      const sid = sessionIdRef.current;
+      if (!sid) {
+        throw new Error("sessionId is required to connect voice");
       }
-      epochRef.current += 1;
-      connectingRef.current = false;
-      await disconnect();
-    } else if (boundSessionIdRef.current && boundSessionIdRef.current !== sid) {
-      await disconnect();
-    }
 
-    const epoch = epochRef.current;
-    connectingRef.current = true;
-
-    if (isCurrent(epoch)) {
-      setError(null);
-      setStatus("connecting");
-      appendTranscript({ role: "status", text: "Connecting voice…" });
-    }
-
-    try {
-      const acquired = await clientRef.current.acquireVoiceLease(sid);
-      if (!isCurrent(epoch)) {
-        // Superseded: drop lease we just acquired for this stale attempt.
-        try {
-          await clientRef.current.releaseVoiceLease(sid);
-        } catch {
-          // ignore
+      // Mid-connect retarget: abort current generation and release prior bound lease.
+      if (connectingRef.current) {
+        if (boundSessionIdRef.current === sid) {
+          return;
         }
-        return;
-      }
-      setLease(acquired);
-      // Pin lease owner before WS open so cleanup can release on failure paths.
-      boundSessionIdRef.current = sid;
-
-      const minted = await clientRef.current.mintVoiceToken(sid);
-      if (!isCurrent(epoch)) {
-        try {
-          await clientRef.current.releaseVoiceLease(sid);
-        } catch {
-          // ignore
-        }
-        boundSessionIdRef.current = null;
-        return;
-      }
-
-      const conn = await providerRef.current.connect({
-        credentials: { token: minted.token, model: minted.model },
-        resumeHandle: acquired.providerResumeHandle,
-      });
-      if (!isCurrent(epoch)) {
-        await conn.disconnect();
-        try {
-          await clientRef.current.releaseVoiceLease(sid);
-        } catch {
-          // ignore
-        }
-        boundSessionIdRef.current = null;
-        return;
-      }
-
-      bindConnection(sid, conn, epoch);
-      appendTranscript({ role: "status", text: "Voice connected." });
-    } catch (caught) {
-      const next = caught instanceof Error ? caught : new Error(String(caught));
-      const bound = boundSessionIdRef.current;
-      if (bound) {
-        try {
-          await clientRef.current.releaseVoiceLease(bound);
-        } catch {
-          // ignore
-        }
-        if (boundSessionIdRef.current === bound) {
-          boundSessionIdRef.current = null;
-        }
-      }
-      if (isCurrent(epoch)) {
-        setError(next);
-        setStatus("error");
-        setLease(null);
-      }
-      throw next;
-    } finally {
-      if (isCurrent(epoch)) {
+        epochRef.current += 1;
         connectingRef.current = false;
+        await disconnect();
+      } else if (boundSessionIdRef.current && boundSessionIdRef.current !== sid) {
+        await disconnect();
       }
-    }
-  }, [appendTranscript, bindConnection, disconnect, isCurrent]);
+
+      const epoch = epochRef.current;
+      connectingRef.current = true;
+
+      if (isCurrent(epoch)) {
+        setError(null);
+        setStatus("connecting");
+        appendTranscript({ role: "status", text: "Connecting voice…" });
+      }
+
+      let claimedContinuationId: string | null = null;
+      let claimedAttemptId: string | null = null;
+      try {
+        const acquired = await clientRef.current.acquireVoiceLease(sid);
+        if (!isCurrent(epoch)) {
+          // Superseded: drop lease we just acquired for this stale attempt.
+          try {
+            await clientRef.current.releaseVoiceLease(sid);
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        setLease(acquired);
+        // Pin lease owner before WS open so cleanup can release on failure paths.
+        boundSessionIdRef.current = sid;
+
+        const resume = input.continuationId
+          ? await clientRef.current.claimContinuationResume(sid, input.continuationId)
+          : null;
+        claimedContinuationId = resume?.continuation.id ?? null;
+        claimedAttemptId = resume?.continuation.resumeAttemptId ?? null;
+        if (!isCurrent(epoch)) throw new Error("Voice connection superseded");
+
+        let minted = await clientRef.current.mintVoiceToken(sid);
+        if (!isCurrent(epoch)) {
+          throw new Error("Voice connection superseded");
+        }
+
+        const resumeHandle =
+          resume?.continuation.providerResumeHandle ?? acquired.providerResumeHandle;
+        let conn: VoiceConnection;
+        try {
+          conn = await providerRef.current.connect({
+            credentials: { token: minted.token, model: minted.model },
+            resumeHandle,
+          });
+        } catch (caught) {
+          if (!resumeHandle) throw caught;
+          // Provider handles are advisory. Clear the stale handle, mint a token
+          // without resumption constraints, and reconnect as a new Voice Session.
+          const cleared = await clientRef.current.setVoiceResumeHandle(sid, null);
+          if (isCurrent(epoch)) setLease(cleared);
+          minted = await clientRef.current.mintVoiceToken(sid);
+          conn = await providerRef.current.connect({
+            credentials: { token: minted.token, model: minted.model },
+            resumeHandle: null,
+          });
+        }
+        if (!isCurrent(epoch)) {
+          await conn.disconnect();
+          throw new Error("Voice connection superseded");
+        }
+
+        if (resume) {
+          try {
+            const attemptId = resume.continuation.resumeAttemptId;
+            if (!attemptId) throw new Error("Claimed continuation has no resume attempt id");
+            await clientRef.current.completeContinuation(sid, resume.continuation.id, attemptId);
+            claimedContinuationId = null;
+            claimedAttemptId = null;
+          } catch (caught) {
+            await conn.disconnect();
+            throw caught;
+          }
+        }
+        bindConnection(sid, conn, epoch);
+        appendTranscript({ role: "status", text: "Voice connected." });
+      } catch (caught) {
+        const next = caught instanceof Error ? caught : new Error(String(caught));
+        if (claimedContinuationId) {
+          try {
+            if (claimedAttemptId) {
+              await clientRef.current.failContinuationResume(
+                sid,
+                claimedContinuationId,
+                claimedAttemptId,
+              );
+            }
+          } catch {
+            // Preserve the original connection error. Durable state can still
+            // be recovered by a later server-side stale-claim policy.
+          }
+        }
+        const bound = boundSessionIdRef.current;
+        if (bound) {
+          try {
+            await clientRef.current.releaseVoiceLease(bound);
+          } catch {
+            // ignore
+          }
+          if (boundSessionIdRef.current === bound) {
+            boundSessionIdRef.current = null;
+          }
+        }
+        if (isCurrent(epoch)) {
+          setError(next);
+          setStatus("error");
+          setLease(null);
+        }
+        throw next;
+      } finally {
+        if (isCurrent(epoch)) {
+          connectingRef.current = false;
+        }
+      }
+    },
+    [appendTranscript, bindConnection, disconnect, isCurrent],
+  );
 
   const refetchLease = useCallback(async () => {
     const sid = sessionIdRef.current;
@@ -347,6 +398,22 @@ export function useVoiceSession(
       setLease(next);
     }
   }, [isCurrent]);
+
+  const suspend = useCallback(
+    async (input: {
+      id?: string;
+      wakeCondition: ContinuationWakeCondition;
+      suspendedReason: string;
+      resumeDirective: string;
+    }): Promise<ExecutionContinuation> => {
+      const sid = sessionIdRef.current;
+      if (!sid) throw new Error("sessionId is required to suspend voice");
+      const continuation = await clientRef.current.suspendContinuation(sid, input);
+      await disconnect();
+      return continuation;
+    },
+    [disconnect],
+  );
 
   const mute = useCallback(() => {
     connectionRef.current?.mute();
@@ -377,6 +444,7 @@ export function useVoiceSession(
     error,
     transcript,
     connect,
+    suspend,
     disconnect,
     mute,
     unmute,

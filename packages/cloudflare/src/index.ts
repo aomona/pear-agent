@@ -10,6 +10,11 @@ export {
   agentPutNormalizedInput,
   agentReleaseVoiceLease,
   agentSetVoiceResumeHandle,
+  agentSuspendContinuation,
+  agentGetContinuation,
+  agentClaimContinuationResume,
+  agentCompleteContinuation,
+  agentFailContinuationResume,
   getExecutionSessionAgent,
 } from "./agent/client.js";
 export {
@@ -56,9 +61,12 @@ export {
   rawInputs,
   runtimeEvents,
   voiceLeases,
+  executionContinuations,
 } from "./d1/schema.js";
 export type { PearEnv } from "./env.js";
 export {
+  ContinuationConflictError,
+  ContinuationNotFoundError,
   EventIdentityConflictError,
   SessionConflictError,
   SessionNotFoundError,
@@ -66,6 +74,7 @@ export {
   VoiceLeaseNotFoundError,
   VoiceTokenUnavailableError,
 } from "./errors.js";
+export { D1ContinuationStore } from "./continuation/store.js";
 export {
   createPearApp,
   stubVoiceTokenMinter,

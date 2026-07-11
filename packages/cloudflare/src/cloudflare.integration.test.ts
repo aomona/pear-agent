@@ -494,4 +494,231 @@ describe("cloudflare runtime integration", () => {
     const stateBody = (await stateRes.json()) as { state: { session: { status: string } } };
     expect(stateBody.state.session.status).toBe("not_started");
   });
+
+  it("persists Continuation, wakes on event, and allows only one resume claim", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+
+    const suspended = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/continuations`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          id: `${sessionId}-cont`,
+          wakeCondition: { type: "event", eventType: "session_started" },
+          suspendedReason: "Wait until execution starts",
+          resumeDirective: "Confirm the current plan before continuing",
+        }),
+      }),
+    );
+    expect(suspended.status).toBe(201);
+    const suspendedBody = (await suspended.json()) as {
+      continuation: { id: string; status: string };
+    };
+    expect(suspendedBody.continuation.status).toBe("suspended");
+
+    // A fresh HTTP read proves D1 hydration rather than hook-local state.
+    const persisted = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/continuation`, {
+        headers: contextHeaders(),
+      }),
+    );
+    expect(persisted.status).toBe(200);
+    expect(((await persisted.json()) as { continuation: { id: string } }).continuation.id).toBe(
+      suspendedBody.continuation.id,
+    );
+
+    const started = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/events`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          id: `${sessionId}-start-for-wake`,
+          sessionId,
+          idempotencyKey: "start-for-wake",
+          actorId: "traveler",
+          origin: "user",
+          type: "session_started",
+          payload: {},
+          occurredAt: new Date().toISOString(),
+        }),
+      }),
+    );
+    expect(started.status).toBe(200);
+
+    const { getExecutionSessionAgent } = await import("./agent/client.js");
+    const agent = await getExecutionSessionAgent(pearEnv, sessionId);
+    expect((await agent.getSyncState()).continuation?.status).toBe("wake_pending");
+
+    const resumeUrl = `http://example.com/sessions/${sessionId}/continuations/${suspendedBody.continuation.id}/resume`;
+    const [first, second] = await Promise.all(
+      [0, 1].map(() =>
+        exports.default.fetch(
+          new Request(resumeUrl, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...contextHeaders() },
+            body: "{}",
+          }),
+        ),
+      ),
+    );
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+
+    const winner = first.status === 200 ? first : second;
+    const claimed = (await winner.json()) as {
+      continuation: { status: string; resumeAttemptId: string };
+      snapshot: {
+        session: { id: string };
+        recentEvents: Array<{ id: string }>;
+        continuation: { status: string };
+      };
+    };
+    expect(claimed.continuation.status).toBe("resuming");
+    expect(claimed.snapshot.session.id).toBe(sessionId);
+    expect(
+      claimed.snapshot.recentEvents.some((event) => event.id === `${sessionId}-start-for-wake`),
+    ).toBe(true);
+    expect(claimed.snapshot.continuation.status).toBe("resuming");
+
+    const failed = await exports.default.fetch(
+      new Request(
+        `http://example.com/sessions/${sessionId}/continuations/${suspendedBody.continuation.id}/resume-failed`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...contextHeaders() },
+          body: JSON.stringify({ attemptId: claimed.continuation.resumeAttemptId }),
+        },
+      ),
+    );
+    expect(failed.status).toBe(200);
+    expect(
+      ((await failed.json()) as { continuation: { status: string } }).continuation.status,
+    ).toBe("wake_pending");
+    const retried = await exports.default.fetch(
+      new Request(resumeUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: "{}",
+      }),
+    );
+    expect(retried.status).toBe(200);
+    const retriedBody = (await retried.json()) as {
+      continuation: { resumeAttemptId: string };
+    };
+    expect(retriedBody.continuation.resumeAttemptId).not.toBe(claimed.continuation.resumeAttemptId);
+
+    const wrongActor = await exports.default.fetch(
+      new Request(
+        `http://example.com/sessions/${sessionId}/continuations/${suspendedBody.continuation.id}/resume-failed`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-pear-context": JSON.stringify({ actorId: "other-user", roles: [], claims: {} }),
+          },
+          body: JSON.stringify({ attemptId: retriedBody.continuation.resumeAttemptId }),
+        },
+      ),
+    );
+    expect(wrongActor.status).toBe(409);
+
+    await agent.recoverStaleContinuationResume({
+      continuationId: suspendedBody.continuation.id,
+      attemptId: retriedBody.continuation.resumeAttemptId,
+    });
+    expect((await agent.getSyncState()).continuation?.status).toBe("wake_pending");
+
+    const audit = await pearEnv.DB.prepare(
+      `SELECT COUNT(*) AS count, COUNT(DISTINCT id) AS distinct_count
+       FROM runtime_events
+       WHERE session_id = ? AND event_json LIKE '%continuation_resum%'`,
+    )
+      .bind(sessionId)
+      .first<{ count: number; distinct_count: number }>();
+    expect(audit?.count).toBe(4);
+    expect(audit?.distinct_count).toBe(4);
+  });
+
+  it("does not wake an event Continuation from a duplicate event retry", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+    const event = {
+      id: `${sessionId}-old-start`,
+      sessionId,
+      idempotencyKey: "old-start",
+      actorId: "traveler",
+      origin: "user",
+      type: "session_started",
+      payload: {},
+      occurredAt: new Date().toISOString(),
+    };
+    const append = () =>
+      exports.default.fetch(
+        new Request(`http://example.com/sessions/${sessionId}/events`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...contextHeaders() },
+          body: JSON.stringify(event),
+        }),
+      );
+    expect((await append()).status).toBe(200);
+    expect(
+      (
+        await exports.default.fetch(
+          new Request(`http://example.com/sessions/${sessionId}/continuations`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...contextHeaders() },
+            body: JSON.stringify({
+              wakeCondition: { type: "event", eventType: "session_started" },
+              suspendedReason: "Wait for a new start event",
+              resumeDirective: "Check current state",
+            }),
+          }),
+        )
+      ).status,
+    ).toBe(201);
+
+    const duplicate = await append();
+    expect(((await duplicate.json()) as { kind: string }).kind).toBe("duplicate");
+    const continuation = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/continuation`, {
+        headers: contextHeaders(),
+      }),
+    );
+    expect(
+      ((await continuation.json()) as { continuation: { status: string } }).continuation.status,
+    ).toBe("suspended");
+  });
+
+  it("registers a time Wake and publishes wake_pending when the scheduler fires", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+    const continuationId = `${sessionId}-time-cont`;
+
+    const response = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/continuations`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          id: continuationId,
+          wakeCondition: {
+            type: "time",
+            wakeAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+          suspendedReason: "Wait one minute",
+          resumeDirective: "Recheck the latest snapshot",
+        }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      continuation: { status: string; schedulerId: string | null };
+    };
+    expect(body.continuation.status).toBe("suspended");
+    expect(body.continuation.schedulerId).not.toBeNull();
+
+    const { getExecutionSessionAgent } = await import("./agent/client.js");
+    const agent = await getExecutionSessionAgent(pearEnv, sessionId);
+    await agent.wakeContinuation({ continuationId });
+    expect((await agent.getSyncState()).continuation?.status).toBe("wake_pending");
+  });
 });

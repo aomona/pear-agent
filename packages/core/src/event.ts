@@ -26,6 +26,7 @@ const worldStateFactsPatchedPayloadSchema = z
   .object({ facts: z.record(z.string(), jsonValueSchema) })
   .strict();
 const planUpdatedPayloadSchema = z.object({ plan: executionPlanSchema(z.unknown()) }).strict();
+const continuationPayloadSchema = z.object({ continuationId: z.string().min(1) }).strict();
 
 function coreEventSchema<TType extends string, TPayload extends z.ZodType>(
   type: TType,
@@ -57,6 +58,30 @@ const goalCompletionConfirmedEventSchema = coreEventSchema(
   "goal_completion_confirmed",
   goalCompletionConfirmedPayloadSchema,
 );
+const continuationSuspendedEventSchema = coreEventSchema(
+  "continuation_suspended",
+  continuationPayloadSchema,
+);
+const continuationWakePendingEventSchema = coreEventSchema(
+  "continuation_wake_pending",
+  continuationPayloadSchema,
+);
+const continuationResumingEventSchema = coreEventSchema(
+  "continuation_resuming",
+  continuationPayloadSchema,
+);
+const continuationCompletedEventSchema = coreEventSchema(
+  "continuation_completed",
+  continuationPayloadSchema,
+);
+const continuationResumeFailedEventSchema = coreEventSchema(
+  "continuation_resume_failed",
+  continuationPayloadSchema,
+);
+const continuationExpiredEventSchema = coreEventSchema(
+  "continuation_expired",
+  continuationPayloadSchema,
+);
 
 const coreEventSchemas = [
   sessionStartedEventSchema,
@@ -76,6 +101,12 @@ const coreEventSchemas = [
   planUpdatedEventSchema,
   goalEvaluatedEventSchema,
   goalCompletionConfirmedEventSchema,
+  continuationSuspendedEventSchema,
+  continuationWakePendingEventSchema,
+  continuationResumingEventSchema,
+  continuationCompletedEventSchema,
+  continuationResumeFailedEventSchema,
+  continuationExpiredEventSchema,
 ] as const;
 
 export const coreRuntimeEventSchema = z.discriminatedUnion("type", coreEventSchemas);

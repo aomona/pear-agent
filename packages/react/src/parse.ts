@@ -3,6 +3,7 @@ import {
   runtimeEventSchema,
   runtimeSnapshotSchema,
   voiceLeaseSchema,
+  executionContinuationSchema,
   type AppendEventResult,
   type MaterializedExecutionState,
   type RuntimeEvent,
@@ -19,23 +20,7 @@ const appendEventResponseSchema = z.object({
   state: materializedExecutionStateSchema,
 });
 
-const continuationStubSchema = z
-  .object({
-    id: z.string().min(1),
-    sessionId: z.string().min(1),
-    status: z.enum(["suspended", "wake_pending", "resuming", "completed", "expired"]),
-    wakeCondition: z.union([
-      z.object({ type: z.literal("manual") }),
-      z.object({ type: z.literal("time"), wakeAt: z.string() }),
-      z.object({ type: z.literal("event"), eventType: z.string() }),
-    ]),
-    suspendedReason: z.string(),
-    resumeDirective: z.string(),
-    checkpointPlanVersionId: z.string(),
-    checkpointLastEventId: z.string().nullable(),
-    providerResumeHandle: z.string().nullable(),
-  })
-  .nullable();
+const continuationStubSchema = executionContinuationSchema.nullable();
 
 const syncStateSchema = z.object({
   revision: z.number().int().nonnegative(),
@@ -75,4 +60,8 @@ export function parseVoiceLease(value: unknown): VoiceLease {
 export function parseVoiceLeaseOrNull(value: unknown): VoiceLease | null {
   if (value === null || value === undefined) return null;
   return voiceLeaseSchema.parse(value);
+}
+
+export function parseExecutionContinuation(value: unknown): ExecutionContinuationStub {
+  return executionContinuationSchema.parse(value);
 }

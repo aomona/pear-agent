@@ -6,6 +6,8 @@ import {
   type AppendEventResult,
   type ExecutionPlan,
   type ExecutionSession,
+  type ExecutionContinuation,
+  type ContinuationWakeCondition,
   type MaterializedExecutionState,
   type RuntimeEvent,
   type RuntimeSnapshot,
@@ -22,6 +24,7 @@ import {
   parseRuntimeSnapshot,
   parseVoiceLease,
   parseVoiceLeaseOrNull,
+  parseExecutionContinuation,
 } from "./parse.js";
 import type {
   AppendEventInput,
@@ -283,6 +286,69 @@ export class PearClient {
         ...(input.callId === undefined ? {} : { callId: input.callId }),
       },
     });
+  }
+
+  // --- Continuation Runtime (Issue #7) ---
+
+  async suspendContinuation(
+    sessionId: string,
+    input: {
+      id?: string;
+      wakeCondition: ContinuationWakeCondition;
+      suspendedReason: string;
+      resumeDirective: string;
+    },
+  ): Promise<ExecutionContinuation> {
+    const body = await this.requestJson<{ continuation: unknown }>(
+      `/sessions/${sessionId}/continuations`,
+      { method: "POST", body: input },
+    );
+    return parseExecutionContinuation(body.continuation);
+  }
+
+  async getContinuation(sessionId: string): Promise<ExecutionContinuation | null> {
+    const body = await this.requestJson<{ continuation: unknown | null }>(
+      `/sessions/${sessionId}/continuation`,
+    );
+    return body.continuation === null ? null : parseExecutionContinuation(body.continuation);
+  }
+
+  async claimContinuationResume(
+    sessionId: string,
+    continuationId: string,
+  ): Promise<{ continuation: ExecutionContinuation; snapshot: RuntimeSnapshot }> {
+    const body = await this.requestJson<{ continuation: unknown; snapshot: unknown }>(
+      `/sessions/${sessionId}/continuations/${continuationId}/resume`,
+      { method: "POST", body: {} },
+    );
+    return {
+      continuation: parseExecutionContinuation(body.continuation),
+      snapshot: parseRuntimeSnapshot(body.snapshot),
+    };
+  }
+
+  async completeContinuation(
+    sessionId: string,
+    continuationId: string,
+    attemptId: string,
+  ): Promise<ExecutionContinuation> {
+    const body = await this.requestJson<{ continuation: unknown }>(
+      `/sessions/${sessionId}/continuations/${continuationId}/complete`,
+      { method: "POST", body: { attemptId } },
+    );
+    return parseExecutionContinuation(body.continuation);
+  }
+
+  async failContinuationResume(
+    sessionId: string,
+    continuationId: string,
+    attemptId: string,
+  ): Promise<ExecutionContinuation> {
+    const body = await this.requestJson<{ continuation: unknown }>(
+      `/sessions/${sessionId}/continuations/${continuationId}/resume-failed`,
+      { method: "POST", body: { attemptId } },
+    );
+    return parseExecutionContinuation(body.continuation);
   }
 
   private async appendBuiltEvent(

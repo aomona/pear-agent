@@ -42,6 +42,7 @@ export type {
 } from "./types.js";
 export {
   parseAppendEventResult,
+  parseExecutionContinuation,
   parseMaterializedState,
   parseRuntimeEvent,
   parseRuntimeSnapshot,

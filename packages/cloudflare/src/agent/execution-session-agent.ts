@@ -5,14 +5,19 @@ import type {
   RuntimeEvent,
   RuntimeSnapshot,
   VoiceLease,
+  ContinuationWakeCondition,
+  ExecutionContinuation,
 } from "@pear-agent/core";
 import { Agent, type Connection, type ConnectionContext } from "agents";
 
 import { D1ExecutionStateRepository } from "../d1/repository.js";
 import type { PearEnv } from "../env.js";
 import { createVoiceLeaseStore } from "../voice/lease-store.js";
+import { D1ContinuationStore, type ContinuationClaimResult } from "../continuation/store.js";
 import type { VoiceLeaseResult } from "../voice/results.js";
 import { EMPTY_SYNC_STATE, type ExecutionSessionSyncState } from "./sync-state.js";
+
+const RESUME_CLAIM_TIMEOUT_SECONDS = 120;
 
 /**
  * Per-session Durable Agent. Serializes mutations for one Execution Session
@@ -110,7 +115,11 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     this.assertSession(event.sessionId);
     return this.runExclusive(async () => {
       const result = await this.repository().appendEvent(event);
-      this.bumpPulse(result.event.id);
+      const continuation =
+        result.kind === "applied"
+          ? await new D1ContinuationStore(this.env.DB).wakeForEvent(result.event)
+          : null;
+      this.bumpPulse(result.event.id, continuation ?? undefined);
       return result;
     });
   }
@@ -118,7 +127,9 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   async getSnapshot(options?: GetSnapshotOptions): Promise<RuntimeSnapshot | null> {
     return this.runExclusive(async () => {
       const snapshot = await this.repository().getSnapshot(this.sessionId(), options);
-      return snapshot ?? null;
+      if (!snapshot) return null;
+      const continuation = await new D1ContinuationStore(this.env.DB).getActive(this.sessionId());
+      return { ...snapshot, continuation };
     });
   }
 
@@ -187,16 +198,157 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     });
   }
 
+  // --- Continuation Runtime (Issue #7) ---
+
+  async suspendContinuation(input: {
+    id?: string;
+    actorId: string;
+    wakeCondition: ContinuationWakeCondition;
+    suspendedReason: string;
+    resumeDirective: string;
+  }): Promise<ExecutionContinuation> {
+    return this.runExclusive(async () => {
+      const lease = await createVoiceLeaseStore(this.env.DB).getActive(this.sessionId());
+      const store = new D1ContinuationStore(this.env.DB);
+      const continuation = await store.suspend(this.sessionId(), {
+        ...input,
+        providerResumeHandle: lease?.providerResumeHandle ?? null,
+      });
+
+      if (continuation.wakeCondition.type === "time") {
+        try {
+          const schedule = await this.schedule(
+            continuation.wakeCondition.wakeAt,
+            "wakeContinuation",
+            { continuationId: continuation.id },
+            { idempotent: true },
+          );
+          await store.setSchedulerId(continuation.id, schedule.id);
+          const scheduled = await store.get(this.sessionId(), continuation.id);
+          this.bumpPulse(null, scheduled ?? continuation);
+          return scheduled ?? continuation;
+        } catch (error) {
+          await store.expire(this.sessionId(), continuation.id);
+          this.bumpPulse(null, null);
+          throw error;
+        }
+      }
+
+      this.bumpPulse(null, continuation);
+      return continuation;
+    });
+  }
+
+  /** Agents Scheduler callback for a time-based Wake. */
+  async wakeContinuation(payload: { continuationId: string }): Promise<void> {
+    await this.runExclusive(async () => {
+      const store = new D1ContinuationStore(this.env.DB);
+      const continuation = await store.wake(this.sessionId(), payload.continuationId);
+      if (continuation) this.bumpPulse(null, continuation);
+    });
+  }
+
+  async getContinuation(): Promise<ExecutionContinuation | null> {
+    return this.runExclusive(() =>
+      new D1ContinuationStore(this.env.DB).getActive(this.sessionId()),
+    );
+  }
+
+  async claimContinuationResume(input: {
+    continuationId: string;
+    actorId: string;
+  }): Promise<ContinuationClaimResult> {
+    return this.runExclusive(async () => {
+      const result = await new D1ContinuationStore(this.env.DB).claimResume(
+        this.sessionId(),
+        input.continuationId,
+        input.actorId,
+      );
+      if (result.ok) {
+        const attemptId = result.continuation.resumeAttemptId;
+        if (!attemptId) throw new Error("Claimed continuation has no resume attempt id");
+        try {
+          await this.schedule(
+            RESUME_CLAIM_TIMEOUT_SECONDS,
+            "recoverStaleContinuationResume",
+            { continuationId: input.continuationId, attemptId },
+            { idempotent: true },
+          );
+        } catch (error) {
+          await new D1ContinuationStore(this.env.DB).failResume(
+            this.sessionId(),
+            input.continuationId,
+            "system",
+            attemptId,
+          );
+          throw error;
+        }
+        this.bumpPulse(null, result.continuation);
+      }
+      return result;
+    });
+  }
+
+  async completeContinuation(input: {
+    continuationId: string;
+    actorId: string;
+    attemptId: string;
+  }): Promise<ExecutionContinuation | null> {
+    return this.runExclusive(async () => {
+      const continuation = await new D1ContinuationStore(this.env.DB).complete(
+        this.sessionId(),
+        input.continuationId,
+        input.actorId,
+        input.attemptId,
+      );
+      if (continuation) this.bumpPulse(null, null);
+      return continuation;
+    });
+  }
+
+  async failContinuationResume(input: {
+    continuationId: string;
+    actorId: string;
+    attemptId: string;
+  }): Promise<ExecutionContinuation | null> {
+    return this.runExclusive(async () => {
+      const continuation = await new D1ContinuationStore(this.env.DB).failResume(
+        this.sessionId(),
+        input.continuationId,
+        input.actorId,
+        input.attemptId,
+      );
+      if (continuation) this.bumpPulse(null, continuation);
+      return continuation;
+    });
+  }
+
+  /** Scheduler recovery for clients that disappear after claiming resume. */
+  async recoverStaleContinuationResume(payload: {
+    continuationId: string;
+    attemptId: string;
+  }): Promise<void> {
+    await this.runExclusive(async () => {
+      const continuation = await new D1ContinuationStore(this.env.DB).failResume(
+        this.sessionId(),
+        payload.continuationId,
+        "system",
+        payload.attemptId,
+      );
+      if (continuation) this.bumpPulse(null, continuation);
+    });
+  }
+
   /**
    * Advance the client invalidation pulse. Cheap: no D1 snapshot load.
    * Must be called under {@link runExclusive} when concurrent with other writers.
    */
-  private bumpPulse(lastEventId: string | null): void {
+  private bumpPulse(lastEventId: string | null, continuation?: ExecutionContinuation | null): void {
     const previous = this.state ?? EMPTY_SYNC_STATE;
     this.setState({
       revision: previous.revision + 1,
       lastEventId,
-      continuation: null,
+      continuation: continuation === undefined ? previous.continuation : continuation,
     });
   }
 
@@ -217,7 +369,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     this.setState({
       revision: 1,
       lastEventId: last?.id ?? null,
-      continuation: null,
+      continuation: await new D1ContinuationStore(this.env.DB).getActive(this.sessionId()),
     });
   }
 
