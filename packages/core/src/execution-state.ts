@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { criterionEvaluationSchema, evaluateGoalCompletion } from "./goal.js";
-import { type ExecutionPlan } from "./plan.js";
+import { executionPlanSchema } from "./plan.js";
 import { type RuntimeEvent } from "./event.js";
 import { executionSessionSchema } from "./session.js";
 import { stepStatesSchema, transitionStep } from "./step-state.js";
@@ -10,12 +10,11 @@ import { executionTimerSchema } from "./timer.js";
 
 export const materializedExecutionStateSchema = z.object({
   session: executionSessionSchema,
-  plan: z.unknown() as z.ZodType<ExecutionPlan>,
+  plan: executionPlanSchema(z.unknown()),
   worldState: worldStateSchema,
   stepStates: stepStatesSchema,
   timers: z.record(z.string(), executionTimerSchema),
-  criterionEvaluations: z.record(z.string(), criterionEvaluationSchema),
-  goalEvaluationCounts: z.record(z.string(), z.number().int().nonnegative()),
+  criterionEvaluations: z.array(criterionEvaluationSchema),
   lastAppliedEventAt: z.date().optional(),
   appliedEventIds: z.array(z.string().min(1)),
   appliedIdempotencyKeys: z.array(z.string().min(1)),
@@ -55,7 +54,6 @@ export function applyRuntimeEvent(
   let stepStates = state.stepStates;
   let timers = state.timers;
   let criterionEvaluations = state.criterionEvaluations;
-  let goalEvaluationCounts = state.goalEvaluationCounts;
   let worldState = state.worldState;
   let session = state.session;
   if (
@@ -155,25 +153,14 @@ export function applyRuntimeEvent(
 
   if (event.type === "goal_evaluated") {
     const payload = goalEvaluatedPayloadSchema.parse(event.payload);
-    criterionEvaluations = {
+    criterionEvaluations = [
       ...state.criterionEvaluations,
-      [payload.criterionId]: criterionEvaluationSchema.parse({
+      criterionEvaluationSchema.parse({
         ...payload,
         evaluatedAt: event.occurredAt,
       }),
-    };
-    goalEvaluationCounts = {
-      ...state.goalEvaluationCounts,
-      [payload.criterionId]: (state.goalEvaluationCounts[payload.criterionId] ?? 0) + 1,
-    };
-    const expectedCriterionIds = state.plan.goal.successCriteria.map(({ id }) => id);
-    const hasExactlyOneEvaluationPerCriterion =
-      Object.keys(goalEvaluationCounts).length === expectedCriterionIds.length &&
-      expectedCriterionIds.every((id) => goalEvaluationCounts[id] === 1);
-    if (
-      hasExactlyOneEvaluationPerCriterion &&
-      evaluateGoalCompletion(state.plan.goal, Object.values(criterionEvaluations)) === "satisfied"
-    ) {
+    ];
+    if (evaluateGoalCompletion(state.plan.goal, criterionEvaluations) === "satisfied") {
       session = { ...state.session, status: "completed", updatedAt: event.occurredAt };
     }
   }
@@ -185,7 +172,6 @@ export function applyRuntimeEvent(
     stepStates,
     timers,
     criterionEvaluations,
-    goalEvaluationCounts,
     lastAppliedEventAt: event.occurredAt,
     appliedEventIds: [...state.appliedEventIds, event.id],
     appliedIdempotencyKeys: [...state.appliedIdempotencyKeys, event.idempotencyKey],

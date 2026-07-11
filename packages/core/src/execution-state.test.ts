@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { applyRuntimeEvent, type MaterializedExecutionState } from "./execution-state.js";
+import {
+  applyRuntimeEvent,
+  materializedExecutionStateSchema,
+  type MaterializedExecutionState,
+} from "./execution-state.js";
 import type { RuntimeEvent } from "./event.js";
 
 const now = new Date("2026-07-11T00:00:00.000Z");
@@ -32,14 +36,22 @@ const initialState: MaterializedExecutionState = {
   worldState: { facts: {}, resources: [], observations: [], activeConstraints: [], updatedAt: now },
   stepStates: { pack: { status: "active" } },
   timers: {},
-  criterionEvaluations: {},
-  goalEvaluationCounts: {},
+  criterionEvaluations: [],
   lastAppliedEventAt: undefined,
   appliedEventIds: [],
   appliedIdempotencyKeys: [],
 };
 
 describe("applyRuntimeEvent", () => {
+  it("rejects an invalid plan when materializing execution state", () => {
+    const invalidPlan = {
+      ...initialState,
+      plan: { ...initialState.plan, version: 0 },
+    };
+
+    expect(materializedExecutionStateSchema.safeParse(invalidPlan).success).toBe(false);
+  });
+
   it("completes a step without mutating the input state", () => {
     const next = applyRuntimeEvent(initialState, {
       id: "event-1",
@@ -116,12 +128,12 @@ describe("applyRuntimeEvent", () => {
     ).toThrow("Unknown timer");
   });
 
-  it("completes the session only when every known criterion is satisfied exactly once", () => {
+  it("completes the session only when every criterion is satisfied exactly once", () => {
     const evaluated = applyRuntimeEvent(initialState, goalEvent("packed", "satisfied"));
     expect(evaluated.session.status).toBe("completed");
   });
 
-  it("does not complete the session when evaluations are missing, duplicate, or unknown", () => {
+  it("keeps evaluation history so missing, duplicate, and unknown evaluations are incomplete", () => {
     const twoCriterionState: MaterializedExecutionState = {
       ...initialState,
       plan: {
@@ -146,6 +158,34 @@ describe("applyRuntimeEvent", () => {
     expect(missing.session.status).toBe("active");
     expect(duplicate.session.status).toBe("active");
     expect(unknown.session.status).toBe("active");
+    expect(duplicate.criterionEvaluations).toHaveLength(2);
+    expect(unknown.criterionEvaluations).toHaveLength(1);
+  });
+
+  it("completes a multi-criterion goal once its complete evaluation history is satisfied", () => {
+    const state: MaterializedExecutionState = {
+      ...initialState,
+      plan: {
+        ...initialState.plan,
+        goal: {
+          ...initialState.plan.goal,
+          successCriteria: [
+            ...initialState.plan.goal.successCriteria,
+            {
+              id: "ready",
+              description: "Ready to leave",
+              evaluator: { type: "human_confirmation" },
+            },
+          ],
+        },
+      },
+    };
+
+    const partlyEvaluated = applyRuntimeEvent(state, goalEvent("packed", "satisfied"));
+    const completed = applyRuntimeEvent(partlyEvaluated, goalEvent("ready", "satisfied", 1));
+
+    expect(partlyEvaluated.session.status).toBe("active");
+    expect(completed.session.status).toBe("completed");
   });
 });
 
