@@ -1,0 +1,18 @@
+{
+  "name": "pear-agent",
+  "private": true,
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run --passWithNoTests",
+    "lint": "oxlint .",
+    "format": "oxfmt ."
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260702.3",
+    "oxfmt": "^0.49.0",
+    "oxlint": "^1.64.0",
+    "vite": "^8.0.12",
+    "vitest": "^4.1.6"
+  },
+  "packageManager": "pnpm@10.27.0"
+}
