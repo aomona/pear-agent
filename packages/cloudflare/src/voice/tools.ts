@@ -6,7 +6,7 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
-/** Built-in PEAR voice tools (v0.1). Domain capabilities are deferred. */
+/** Built-in PEAR voice tools (v0.1). */
 export const BUILTIN_VOICE_TOOL_NAMES = [
   "get_runtime_snapshot",
   "start_session",
@@ -35,12 +35,6 @@ export type VoiceToolDeclaration = {
   };
 };
 
-/** Optional host extension point reserved for later Domain capabilities. */
-export type VoiceToolRegistry = {
-  /** @deprecated Prefer built-ins in v0.1; reserved for Issue follow-ups. */
-  capabilities?: readonly never[];
-};
-
 export type VoiceToolExecuteContext = {
   sessionId: string;
   actorId: string;
@@ -54,6 +48,12 @@ export type VoiceToolExecuteContext = {
 export type VoiceToolResult =
   | { ok: true; result: unknown }
   | { ok: false; error: true; message: string };
+
+/**
+ * Core RuntimeEvent.type used for authorize({ type: "session.appendEvent", eventType }).
+ * Null for read-only tools that do not append events.
+ */
+export type VoiceToolAuthorizeEventType = string | null;
 
 const emptyArgsSchema = z.object({}).passthrough();
 const stepArgsSchema = z.object({ stepId: z.string().min(1) });
@@ -71,6 +71,8 @@ type ToolDef = {
   description: string;
   parameters: VoiceToolDeclaration["parameters"];
   args: z.ZodType;
+  /** Core event type for policy checks; null = read-only. */
+  authorizeEventType: VoiceToolAuthorizeEventType;
   run: (args: unknown, ctx: VoiceToolExecuteContext) => Promise<VoiceToolResult>;
 };
 
@@ -89,7 +91,6 @@ function envelope(
   origin: string;
   occurredAt: Date;
 } {
-  // Prefer stable callId so model retries / double-fires collapse via Core idempotency.
   const key = ctx.callId ?? newId("voice-idem");
   return {
     id: ctx.callId ? `voice-${ctx.callId}` : newId("voice-evt"),
@@ -140,8 +141,9 @@ function stepTool(
     description,
     parameters: stepParams,
     args: stepArgsSchema,
+    authorizeEventType: eventType,
     run: (args, ctx) => {
-      const { stepId } = stepArgsSchema.parse(args);
+      const { stepId } = args as z.infer<typeof stepArgsSchema>;
       return appendCore(ctx, eventType, { stepId }, ctx.now ?? new Date());
     },
   };
@@ -155,8 +157,9 @@ function timerTool(
     description,
     parameters: timerIdParams,
     args: timerArgsSchema,
+    authorizeEventType: eventType,
     run: (args, ctx) => {
-      const { timerId } = timerArgsSchema.parse(args);
+      const { timerId } = args as z.infer<typeof timerArgsSchema>;
       return appendCore(ctx, eventType, { timerId }, ctx.now ?? new Date());
     },
   };
@@ -167,6 +170,7 @@ const BUILTIN_TOOLS = {
     description: "Load the latest PEAR Runtime Snapshot (source of truth).",
     parameters: { type: "object" as const, properties: {} },
     args: emptyArgsSchema,
+    authorizeEventType: null,
     run: async (_args, ctx) => {
       const snapshot = await ctx.getSnapshot();
       return { ok: true as const, result: summarizeSnapshotForVoice(snapshot) };
@@ -176,12 +180,14 @@ const BUILTIN_TOOLS = {
     description: "Start the Execution Session (not_started → active).",
     parameters: { type: "object" as const, properties: {} },
     args: emptyArgsSchema,
+    authorizeEventType: "session_started",
     run: (_args, ctx) => appendCore(ctx, "session_started", {}, ctx.now ?? new Date()),
   },
   pause_session: {
     description: "Pause the Execution Session. Does not release the voice lease.",
     parameters: { type: "object" as const, properties: {} },
     args: emptyArgsSchema,
+    authorizeEventType: "session_paused",
     run: (_args, ctx) => appendCore(ctx, "session_paused", {}, ctx.now ?? new Date()),
   },
   start_step: stepTool("Mark a plan step as started.", "step_started"),
@@ -200,8 +206,9 @@ const BUILTIN_TOOLS = {
       required: ["timerId"],
     },
     args: timerStartArgsSchema,
+    authorizeEventType: "timer_started",
     run: (args, ctx) => {
-      const parsed = timerStartArgsSchema.parse(args);
+      const parsed = args as z.infer<typeof timerStartArgsSchema>;
       const payload: { timerId: string; durationSeconds?: number } = { timerId: parsed.timerId };
       if (parsed.durationSeconds !== undefined) {
         payload.durationSeconds = parsed.durationSeconds;
@@ -223,8 +230,9 @@ const BUILTIN_TOOLS = {
       required: ["domainType"],
     },
     args: domainEventArgsSchema,
+    authorizeEventType: "domain_event",
     run: async (args, ctx) => {
-      const parsed = domainEventArgsSchema.parse(args);
+      const parsed = args as z.infer<typeof domainEventArgsSchema>;
       const now = ctx.now ?? new Date();
       const env = envelope(ctx, now);
       const event = runtimeEventSchema.parse({
@@ -246,13 +254,21 @@ const BUILTIN_TOOLS = {
   },
 } as const satisfies Record<string, ToolDef>;
 
-export function listVoiceToolDeclarations(_registry?: VoiceToolRegistry): VoiceToolDeclaration[] {
-  void _registry;
+export function listVoiceToolDeclarations(): VoiceToolDeclaration[] {
   return Object.entries(BUILTIN_TOOLS).map(([name, def]) => ({
     name,
     description: def.description,
     parameters: def.parameters,
   }));
+}
+
+/** Core event type for authorize, or null if the tool is read-only. */
+export function voiceToolAuthorizeEventType(
+  toolName: string,
+): VoiceToolAuthorizeEventType | undefined {
+  const tool = BUILTIN_TOOLS[toolName as BuiltinVoiceToolName];
+  if (!tool) return undefined;
+  return tool.authorizeEventType;
 }
 
 export function summarizeSnapshotForVoice(snapshot: RuntimeSnapshot): Record<string, unknown> {
@@ -278,15 +294,14 @@ export async function executeVoiceTool(
   toolName: string,
   args: Record<string, unknown>,
   context: VoiceToolExecuteContext,
-  _registry?: VoiceToolRegistry,
 ): Promise<VoiceToolResult> {
-  void _registry;
   const tool = BUILTIN_TOOLS[toolName as BuiltinVoiceToolName];
   if (!tool) {
     return { ok: false, error: true, message: `Unknown voice tool: ${toolName}` };
   }
 
   try {
+    // Parse once at the edge; run handlers receive already-validated args.
     const parsed = tool.args.parse(args);
     return await tool.run(parsed, {
       ...context,

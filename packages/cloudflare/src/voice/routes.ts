@@ -21,7 +21,7 @@ import {
 import { toJsonValue } from "../serialize.js";
 import type { VoiceLeaseResult } from "./results.js";
 import type { VoiceTokenMinter } from "./token.js";
-import { executeVoiceTool, type VoiceToolRegistry } from "./tools.js";
+import { executeVoiceTool, voiceToolAuthorizeEventType } from "./tools.js";
 
 type VoiceHono = Hono<{
   Bindings: PearEnv;
@@ -31,7 +31,6 @@ type VoiceHono = Hono<{
 export type RegisterVoiceRoutesOptions = {
   authorize: AuthorizeFn;
   voiceTokenMinter: VoiceTokenMinter;
-  voiceTools?: VoiceToolRegistry;
   geminiLiveModel?: string;
 };
 
@@ -125,7 +124,6 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         snapshot,
         lease,
         ...(options.geminiLiveModel === undefined ? {} : { model: options.geminiLiveModel }),
-        ...(options.voiceTools === undefined ? {} : { registry: options.voiceTools }),
       });
       return c.json({ token: minted.token, model: minted.model });
     } catch (caught) {
@@ -153,29 +151,35 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
       throw new VoiceLeaseNotFoundError(sessionId);
     }
 
-    if (body.toolName !== "get_runtime_snapshot") {
-      await authorize(
-        { type: "session.appendEvent", sessionId, eventType: body.toolName },
-        context,
+    // Same vocabulary as HTTP events: Core RuntimeEvent.type (not tool name).
+    const eventType = voiceToolAuthorizeEventType(body.toolName);
+    if (eventType === undefined) {
+      return c.json(
+        {
+          callId: body.callId ?? null,
+          toolName: body.toolName,
+          ok: false,
+          error: true,
+          message: `Unknown voice tool: ${body.toolName}`,
+        },
+        400,
       );
     }
+    if (eventType !== null) {
+      await authorize({ type: "session.appendEvent", sessionId, eventType }, context);
+    }
 
-    const toolResult = await executeVoiceTool(
-      body.toolName,
-      body.args,
-      {
-        sessionId,
-        actorId: context.actorId,
-        ...(body.callId === undefined ? {} : { callId: body.callId }),
-        getSnapshot: async () => {
-          const snapshot = await agentGetSnapshot(c.env, sessionId);
-          if (!snapshot) throw new SessionNotFoundError(sessionId);
-          return snapshot;
-        },
-        appendEvent: (event) => agentAppendEvent(c.env, event),
+    const toolResult = await executeVoiceTool(body.toolName, body.args, {
+      sessionId,
+      actorId: context.actorId,
+      ...(body.callId === undefined ? {} : { callId: body.callId }),
+      getSnapshot: async () => {
+        const snapshot = await agentGetSnapshot(c.env, sessionId);
+        if (!snapshot) throw new SessionNotFoundError(sessionId);
+        return snapshot;
       },
-      options.voiceTools,
-    );
+      appendEvent: (event) => agentAppendEvent(c.env, event),
+    });
 
     return c.json({
       callId: body.callId ?? null,

@@ -1,11 +1,7 @@
 import type { RuntimeSnapshot, VoiceLease } from "@pear-agent/core";
 
 import { VoiceTokenUnavailableError } from "../errors.js";
-import {
-  listVoiceToolDeclarations,
-  summarizeSnapshotForVoice,
-  type VoiceToolRegistry,
-} from "./tools.js";
+import { listVoiceToolDeclarations, summarizeSnapshotForVoice } from "./tools.js";
 
 export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
 
@@ -20,7 +16,6 @@ export type MintVoiceTokenInput = {
   snapshot: RuntimeSnapshot;
   lease: VoiceLease;
   model?: string;
-  registry?: VoiceToolRegistry;
 };
 
 /**
@@ -33,10 +28,9 @@ export type VoiceTokenMinter = (input: MintVoiceTokenInput) => Promise<VoiceEphe
 export function buildVoiceLiveConfig(input: {
   snapshot: RuntimeSnapshot;
   lease: VoiceLease;
-  registry?: VoiceToolRegistry;
 }): Record<string, unknown> {
   const summary = summarizeSnapshotForVoice(input.snapshot);
-  const tools = listVoiceToolDeclarations(input.registry);
+  const tools = listVoiceToolDeclarations();
   const systemInstruction = [
     "You are a PEAR Runtime voice assistant helping the user execute a real-world plan.",
     "Prefer short, concrete guidance.",

@@ -60,8 +60,16 @@ export function useVoiceSession(
 
   const clientRef = useRef(client);
   clientRef.current = client;
+
+  /** Prop-facing session id (for connect / refetch). */
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+
+  /**
+   * Session that currently owns the voice connection / lease.
+   * Must not track the latest prop — cleanup must release the bound session.
+   */
+  const boundSessionIdRef = useRef<string | null>(null);
 
   const [status, setStatus] = useState<VoiceSessionStatus | "idle">("idle");
   const [lease, setLease] = useState<VoiceLease | null>(null);
@@ -137,6 +145,7 @@ export function useVoiceSession(
     (sid: string, conn: VoiceConnection) => {
       clearSubscriptions();
       connectionRef.current = conn;
+      boundSessionIdRef.current = sid;
       setConnection(conn);
       setStatus(conn.status);
 
@@ -174,7 +183,8 @@ export function useVoiceSession(
   const disconnect = useCallback(async () => {
     if (disconnectingRef.current) return;
     disconnectingRef.current = true;
-    const sid = sessionIdRef.current;
+    // Always release the session that holds the connection, not the latest prop.
+    const sid = boundSessionIdRef.current;
     try {
       clearSubscriptions();
       const conn = connectionRef.current;
@@ -193,6 +203,7 @@ export function useVoiceSession(
       } else {
         setLease(null);
       }
+      boundSessionIdRef.current = null;
       setStatus("disconnected");
       connectingRef.current = false;
       appendTranscript({ role: "status", text: "Voice disconnected (session continues)." });
@@ -207,6 +218,10 @@ export function useVoiceSession(
       throw new Error("sessionId is required to connect voice");
     }
     if (connectingRef.current) return;
+    // Switch sessions: release previous bound lease first.
+    if (boundSessionIdRef.current && boundSessionIdRef.current !== sid) {
+      await disconnect();
+    }
     connectingRef.current = true;
 
     setError(null);
@@ -216,6 +231,8 @@ export function useVoiceSession(
     try {
       const acquired = await clientRef.current.acquireVoiceLease(sid);
       setLease(acquired);
+      // Pin lease owner before WS open so cleanup can release on failure paths.
+      boundSessionIdRef.current = sid;
 
       const minted = await clientRef.current.mintVoiceToken(sid);
       const conn = await providerRef.current.connect({
@@ -228,17 +245,21 @@ export function useVoiceSession(
       const next = caught instanceof Error ? caught : new Error(String(caught));
       setError(next);
       setStatus("error");
-      try {
-        await clientRef.current.releaseVoiceLease(sid);
-      } catch {
-        // ignore
+      const bound = boundSessionIdRef.current;
+      if (bound) {
+        try {
+          await clientRef.current.releaseVoiceLease(bound);
+        } catch {
+          // ignore
+        }
+        boundSessionIdRef.current = null;
       }
       setLease(null);
       throw next;
     } finally {
       connectingRef.current = false;
     }
-  }, [appendTranscript, bindConnection]);
+  }, [appendTranscript, bindConnection, disconnect]);
 
   const refetchLease = useCallback(async () => {
     const sid = sessionIdRef.current;

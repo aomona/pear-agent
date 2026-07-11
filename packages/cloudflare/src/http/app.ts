@@ -36,7 +36,6 @@ import {
   stubVoiceTokenMinter,
   type VoiceTokenMinter,
 } from "../voice/token.js";
-import type { VoiceToolRegistry } from "../voice/tools.js";
 
 export type PearAppVariables = {
   pearContext: PearRequestContext;
@@ -52,8 +51,6 @@ export type CreatePearAppOptions = {
   resolveContext?: (request: Request) => PearRequestContext | Promise<PearRequestContext>;
   /** Max raw upload size in bytes (default 10 MiB). */
   maxRawInputBytes?: number;
-  /** Reserved for future Domain capability tools on the voice bridge. */
-  voiceTools?: VoiceToolRegistry;
   /** Override Gemini Live model id for token minting. */
   geminiLiveModel?: string;
   /**
@@ -284,7 +281,6 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   registerVoiceRoutes(app, {
     authorize: options.authorize,
     voiceTokenMinter,
-    ...(options.voiceTools === undefined ? {} : { voiceTools: options.voiceTools }),
     ...(options.geminiLiveModel === undefined ? {} : { geminiLiveModel: options.geminiLiveModel }),
   });
 

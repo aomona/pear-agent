@@ -10,8 +10,8 @@ import {
 import { eq } from "drizzle-orm";
 
 import { createPearDatabase } from "../d1/client.js";
-import { voiceLeases } from "../d1/schema.js";
 import { sessionExists } from "../d1/repository.js";
+import { voiceLeases } from "../d1/schema.js";
 import type { VoiceLeaseResult } from "./results.js";
 
 function rowToLease(row: {
@@ -55,7 +55,7 @@ export type VoiceLeaseStore = {
 
 /**
  * D1-backed exclusive lease: one row per session_id (PRIMARY KEY).
- * Concurrent acquires serialize on the unique session row via Agent runExclusive + upsert.
+ * Concurrent acquires serialize via Agent runExclusive + upsert.
  */
 export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
   const db = createPearDatabase(d1);
@@ -95,6 +95,30 @@ export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
       });
   }
 
+  async function requireActiveHolder(
+    sessionId: string,
+    actorId: string,
+    now: Date,
+  ): Promise<VoiceLeaseResult> {
+    const current = await loadRow(sessionId);
+    if (!current || !isVoiceLeaseActive(current, now)) {
+      return {
+        ok: false,
+        code: "not_found",
+        message: `No active voice lease for session ${sessionId}`,
+      };
+    }
+    if (current.actorId !== actorId) {
+      return {
+        ok: false,
+        code: "conflict",
+        holderActorId: current.actorId,
+        message: `Voice lease already active for session ${sessionId} (held by ${current.actorId})`,
+      };
+    }
+    return { ok: true, lease: current };
+  }
+
   return {
     async acquire(input) {
       const exists = await sessionExists(d1, input.sessionId);
@@ -114,7 +138,13 @@ export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
 
         if (live.status === "active") {
           if (live.actorId === input.actorId) {
-            return { ok: true, lease: live };
+            // Same actor re-acquire: keep lease id/handle, refresh TTL from now.
+            const extended: VoiceLease = {
+              ...live,
+              expiresAt: new Date(now.getTime() + (input.ttlMs ?? DEFAULT_VOICE_LEASE_TTL_MS)),
+            };
+            await upsert(extended, now);
+            return { ok: true, lease: extended };
           }
           return {
             ok: false,
@@ -124,7 +154,6 @@ export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
           };
         }
 
-        // Persist lazy expire before re-acquire overwrite.
         if (live.status === "expired" && current.status === "active") {
           await upsert(live, now);
         }
@@ -136,7 +165,6 @@ export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
         actorId: input.actorId,
         acquiredAt: now,
         ttlMs: input.ttlMs ?? DEFAULT_VOICE_LEASE_TTL_MS,
-        // Preserve resume handle across re-acquire when prior row exists.
         providerResumeHandle: current?.providerResumeHandle ?? null,
       });
 
@@ -146,24 +174,10 @@ export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
 
     async release(sessionId, actorId) {
       const now = new Date();
-      const current = await loadRow(sessionId);
-      if (!current || !isVoiceLeaseActive(current, now)) {
-        return {
-          ok: false,
-          code: "not_found",
-          message: `No active voice lease for session ${sessionId}`,
-        };
-      }
-      if (current.actorId !== actorId) {
-        return {
-          ok: false,
-          code: "conflict",
-          holderActorId: current.actorId,
-          message: `Voice lease already active for session ${sessionId} (held by ${current.actorId})`,
-        };
-      }
+      const held = await requireActiveHolder(sessionId, actorId, now);
+      if (!held.ok) return held;
 
-      const released = releaseVoiceLease(current);
+      const released = releaseVoiceLease(held.lease);
       await upsert(released, now);
       return { ok: true, lease: released };
     },
@@ -182,24 +196,10 @@ export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
 
     async setResumeHandle(sessionId, actorId, handle) {
       const now = new Date();
-      const current = await loadRow(sessionId);
-      if (!current || !isVoiceLeaseActive(current, now)) {
-        return {
-          ok: false,
-          code: "not_found",
-          message: `No active voice lease for session ${sessionId}`,
-        };
-      }
-      if (current.actorId !== actorId) {
-        return {
-          ok: false,
-          code: "conflict",
-          holderActorId: current.actorId,
-          message: `Voice lease already active for session ${sessionId} (held by ${current.actorId})`,
-        };
-      }
+      const held = await requireActiveHolder(sessionId, actorId, now);
+      if (!held.ok) return held;
 
-      const next: VoiceLease = { ...current, providerResumeHandle: handle };
+      const next: VoiceLease = { ...held.lease, providerResumeHandle: handle };
       await upsert(next, now);
       return { ok: true, lease: next };
     },

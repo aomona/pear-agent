@@ -64,11 +64,11 @@ class GeminiLiveVoiceConnection implements VoiceConnection {
       httpOptions: { apiVersion: "v1alpha" },
     });
 
-    // Config is locked in the ephemeral token; only sessionResumption handle is client-side.
-    const config: Record<string, unknown> = {
-      responseModalities: ["AUDIO"],
-      sessionResumption: this.options.resumeHandle ? { handle: this.options.resumeHandle } : {},
-    };
+    // Live systemInstruction/tools are locked into the ephemeral token server-side.
+    // Client only supplies session resumption when reconnecting.
+    const config: Record<string, unknown> = this.options.resumeHandle
+      ? { sessionResumption: { handle: this.options.resumeHandle } }
+      : {};
 
     this.session = await ai.live.connect({
       model,

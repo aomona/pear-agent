@@ -91,9 +91,10 @@ export {
   executeVoiceTool,
   listVoiceToolDeclarations,
   summarizeSnapshotForVoice,
+  voiceToolAuthorizeEventType,
   type BuiltinVoiceToolName,
+  type VoiceToolAuthorizeEventType,
   type VoiceToolDeclaration,
-  type VoiceToolRegistry,
   type VoiceToolResult,
 } from "./voice/tools.js";
 export {

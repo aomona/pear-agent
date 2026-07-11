@@ -69,4 +69,4 @@ Default auth context: `x-pear-context: {"actorId":"...","roles":[],"claims":{}}`
 - Bind optional secret `GEMINI_API_KEY` for real token minting (never ship to clients).
 - Install optional peer `@google/genai` on the Worker when using the default Google minter.
 - Apply D1 migration `0002_voice_leases.sql`.
-- Inject `voiceTokenMinter` / `voiceTools` on `createPearApp` for tests or Domain capabilities.
+- Inject `voiceTokenMinter` on `createPearApp` for tests (real mint uses `GEMINI_API_KEY` + optional `@google/genai`).
