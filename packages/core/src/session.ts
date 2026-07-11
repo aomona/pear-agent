@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { dateSchema } from "./date.js";
+
 export const executionSessionStatusSchema = z.enum([
   "not_started",
   "active",
@@ -17,8 +19,8 @@ export const executionSessionSchema = z.object({
   goalId: z.string().min(1),
   status: executionSessionStatusSchema,
   actorIds: z.array(z.string().min(1)).min(1),
-  createdAt: z.date(),
-  updatedAt: z.date(),
+  createdAt: dateSchema,
+  updatedAt: dateSchema,
 });
 
 export type ExecutionSession = z.infer<typeof executionSessionSchema>;

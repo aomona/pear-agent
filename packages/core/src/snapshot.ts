@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { dateSchema } from "./date.js";
 import { runtimeEventSchema, type RuntimeEvent } from "./event.js";
 import { executionPlanSchema, type ExecutionPlan } from "./plan.js";
 import {
@@ -22,7 +23,7 @@ export const runtimeSnapshotSchema = z.object({
   readyStepIds: z.array(z.string().min(1)),
   activeStepIds: z.array(z.string().min(1)),
   blockedStepIds: z.array(z.string().min(1)),
-  generatedAt: z.date(),
+  generatedAt: dateSchema,
 });
 
 export type RuntimeSnapshot = z.infer<typeof runtimeSnapshotSchema>;

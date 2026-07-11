@@ -2,8 +2,9 @@ import { defineConfig } from "vitest/config";
 
 /**
  * Root Node tests for core + examples.
- * Explicit includes avoid scanning local git worktrees under `.worktrees/`.
- * Cloudflare Workers tests run from packages/cloudflare when that package exists.
+ * Explicit includes/excludes avoid scanning local git worktrees under `.worktrees/`.
+ * `@pear-agent/cloudflare` Workers tests run via packages/cloudflare/vitest.config.ts
+ * (`pnpm --filter @pear-agent/cloudflare exec vitest run` from the root `test` script).
  */
 export default defineConfig({
   test: {

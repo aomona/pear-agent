@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { dateSchema } from "./date.js";
 import { jsonValueSchema } from "./world-state.js";
 
 export const successCriterionEvaluatorSchema = z.discriminatedUnion("type", [
@@ -23,7 +24,7 @@ export const executionGoalSchema = z
     description: z.string().min(1),
     successCriteria: z.array(successCriterionSchema).min(1),
     completionPolicy: z.enum(["automatic", "human_confirmation"]),
-    deadline: z.date().optional(),
+    deadline: dateSchema.optional(),
     priority: z.number().optional(),
   })
   .superRefine((goal, context) => {
@@ -48,7 +49,7 @@ export const criterionEvaluationSchema = z.object({
   status: z.enum(["satisfied", "unsatisfied", "unknown"]),
   // Must stay JSON-safe: repository boundaries clone state with structuredClone.
   evidence: z.array(jsonValueSchema),
-  evaluatedAt: z.date(),
+  evaluatedAt: dateSchema,
 });
 
 export type CriterionEvaluation = z.infer<typeof criterionEvaluationSchema>;

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { dateSchema } from "./date.js";
 import { criterionEvaluationSchema } from "./goal.js";
 import { executionPlanSchema } from "./plan.js";
 import { worldStateSchema, jsonValueSchema } from "./world-state.js";
@@ -10,7 +11,7 @@ const runtimeEventEnvelopeSchema = z.object({
   idempotencyKey: z.string().min(1),
   actorId: z.string().min(1),
   origin: z.string().min(1),
-  occurredAt: z.date(),
+  occurredAt: dateSchema,
 });
 
 const emptyPayloadSchema = z.object({}).strict();

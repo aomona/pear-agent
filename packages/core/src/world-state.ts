@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { dateSchema } from "./date.js";
+
 export const jsonValueSchema = z.json();
 
 export type JsonValue = z.infer<typeof jsonValueSchema>;
@@ -23,7 +25,7 @@ export const worldStateSchema = z.object({
   resources: z.array(worldStateResourceSchema),
   observations: z.array(worldStateObservationSchema),
   activeConstraints: z.array(z.string().min(1)),
-  updatedAt: z.date(),
+  updatedAt: dateSchema,
 });
 
 export type WorldState = z.infer<typeof worldStateSchema>;

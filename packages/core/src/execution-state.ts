@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { dateSchema } from "./date.js";
 import {
   criterionEvaluationSchema,
   evaluateGoalCompletion,
@@ -30,7 +31,7 @@ export const materializedExecutionStateSchema = z.object({
   // append-only list, so re-evaluation can still complete a goal.
   criterionEvaluations: z.record(z.string(), criterionEvaluationSchema),
   criterionEvaluationHistory: z.array(criterionEvaluationSchema),
-  lastAppliedEventAt: z.date().optional(),
+  lastAppliedEventAt: dateSchema.optional(),
   appliedEventIds: z.array(z.string().min(1)),
   appliedIdempotencyKeys: z.array(z.string().min(1)),
 });
