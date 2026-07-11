@@ -6,7 +6,7 @@
 
 ## 実装計画の分割
 
-1. **Foundation** — workspace、Core、Goal、Plan DAG、Step State、Domain Contract
+1. **Foundation** — workspace、Oxlint・Oxfmt・tsgo、Core、Goal、Plan DAG、Step State、Domain Contract
 2. **Execution State** — Session、WorldState、Event、Timer、Snapshot
 3. **Cloudflare Runtime** — Agents、D1、R2、認可Hook
 4. **React Client** — 型安全なClient、Provider、hooks、リアルタイム同期

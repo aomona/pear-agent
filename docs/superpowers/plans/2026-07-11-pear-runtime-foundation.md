@@ -6,7 +6,7 @@
 
 **Architecture:** pnpm workspace内にCore packageと外出準備Domain fixtureを置く。CoreはZod Schema、純粋関数、明示的な状態遷移だけを提供し、永続化・AI SDK・Cloudflare統合は後続計画へ分離する。
 
-**Tech Stack:** TypeScript、pnpm workspace、Zod、Vitest、Oxlint、Oxfmt
+**Tech Stack:** TypeScript、pnpm workspace、Zod、Vitest、Oxlint、Oxfmt、tsgo (`@typescript/native-preview`)
 
 ## Global Constraints
 
@@ -15,6 +15,8 @@
 - StepはDAGで表現し、複数Stepの`active`状態を許可する。
 - 完了済みStepは変更不能とする。
 - 公開APIには明示的な型とZod Schemaを用意する。
+- LintはOxlint、FormatはOxfmt、Typecheckはtsgoを使用する。
+- `@typescript/native-preview`はlockfileでVersionを固定する。
 - テストを先に書き、各Taskを独立したコミットにする。
 
 ---
@@ -68,7 +70,7 @@ examples/outing-domain/src/domain.ts 外出準備Domain fixture
   "devDependencies": {
     "oxfmt": "^0.49.0",
     "oxlint": "^1.64.0",
-    "typescript": "^5.9.0",
+    "@typescript/native-preview": "7.0.0-dev.20260702.3",
     "vite": "^8.0.12",
     "vitest": "^4.1.6"
   }
@@ -77,7 +79,7 @@ examples/outing-domain/src/domain.ts 外出準備Domain fixture
 
 - [ ] **Step 2: workspaceとTypeScript設定を作る**
 
-`pnpm-workspace.yaml`は`packages/*`と`examples/*`を含める。`tsconfig.base.json`は`strict`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`verbatimModuleSyntax`を有効にする。
+`pnpm-workspace.yaml`は`packages/*`と`examples/*`を含める。`tsconfig.base.json`は`strict`、`noUncheckedIndexedAccess`、`exactOptionalPropertyTypes`、`verbatimModuleSyntax`を有効にする。各packageの`typecheck` scriptは`tsgo --noEmit -p tsconfig.json`とする。
 
 - [ ] **Step 3: Core packageを作る**
 
@@ -87,7 +89,7 @@ examples/outing-domain/src/domain.ts 外出準備Domain fixture
 
 Run: `pnpm install && pnpm typecheck && pnpm test`
 
-Expected: `pnpm-lock.yaml`が生成され、すべて終了コード0。
+Expected: `pnpm-lock.yaml`が生成され、Typecheckログにtsgoが使われ、すべて終了コード0。
 
 - [ ] **Step 5: Commit**
 

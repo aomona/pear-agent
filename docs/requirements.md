@@ -280,6 +280,15 @@ pnpm deploy
 - 外出準備サンプルをPlaywright E2Eで検証する
 - デモシナリオ10回中9回以上の完走を目標にする
 
+### NFR-06 開発ツール
+
+- LintはOxlintを唯一の基準とする
+- FormatはOxfmtを唯一の基準とする
+- Typecheckはtsgoを使用する
+- tsgoは`@typescript/native-preview`として導入し、lockfileでVersionを固定する
+- tsgoがPreviewであることを既知の制約として明記する
+- tsgo固有の不具合で開発が停止する場合に限り、診断比較用としてTypeScript stableを一時実行できるが、CIの正式なTypecheckはtsgoとする
+
 ## 7. v0.1の非目標
 
 - Gemini Live以外のVoice Provider対応
@@ -309,4 +318,3 @@ CLIでプロジェクト生成
 → Affected Subgraphだけを部分再計画
 → Goal達成を判定して完了
 ```
-

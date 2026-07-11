@@ -70,6 +70,7 @@ Cloudflare Workers
 - Vercel AI SDK（Planner / Replanner / Tool Calling）
 - Gemini Live API（Realtime Voice）
 - Zod
+- Oxlint / Oxfmt / tsgo
 - Vitest / Playwright
 
 AI SDKはモデル呼び出し、構造化出力、Tool Callingを担当します。Gemini Liveは連続音声のWebSocketセッションとして分離します。
