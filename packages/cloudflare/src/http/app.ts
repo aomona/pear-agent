@@ -18,7 +18,10 @@ import {
   type PearRequestContext,
 } from "../context.js";
 import type { PearEnv } from "../env.js";
+import { registerContinuationRoutes } from "../continuation/routes.js";
 import {
+  ContinuationConflictError,
+  ContinuationNotFoundError,
   EventIdentityConflictError,
   SessionConflictError,
   SessionNotFoundError,
@@ -89,7 +92,9 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       error instanceof EventIdentityConflictError ||
       error instanceof VoiceLeaseConflictError ||
       error instanceof VoiceLeaseNotFoundError ||
-      error instanceof VoiceTokenUnavailableError
+      error instanceof VoiceTokenUnavailableError ||
+      error instanceof ContinuationConflictError ||
+      error instanceof ContinuationNotFoundError
     ) {
       return c.json({ error: error.message }, error.status);
     }
@@ -283,6 +288,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     voiceTokenMinter,
     ...(options.geminiLiveModel === undefined ? {} : { geminiLiveModel: options.geminiLiveModel }),
   });
+  registerContinuationRoutes(app, options.authorize);
 
   return app;
 }

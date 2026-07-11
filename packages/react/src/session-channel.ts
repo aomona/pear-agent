@@ -192,6 +192,7 @@ export class SessionChannel {
       if (this.disposed || generation !== this.hydrateGeneration) return;
       this.setState({
         snapshot: next,
+        continuation: next.continuation,
         status: "connected",
         error: null,
       });

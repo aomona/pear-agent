@@ -58,3 +58,21 @@ export class VoiceTokenUnavailableError extends Error {
     this.name = "VoiceTokenUnavailableError";
   }
 }
+
+export class ContinuationConflictError extends Error {
+  readonly status = 409 as const;
+
+  constructor(sessionId: string) {
+    super(`Continuation transition conflict for session ${sessionId}`);
+    this.name = "ContinuationConflictError";
+  }
+}
+
+export class ContinuationNotFoundError extends Error {
+  readonly status = 404 as const;
+
+  constructor(continuationId: string) {
+    super(`Unknown continuation: ${continuationId}`);
+    this.name = "ContinuationNotFoundError";
+  }
+}

@@ -79,7 +79,7 @@ function SessionPanel() {
 | --------------------- | ------------------------------------------------------------------------------------ |
 | `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                              |
 | `useRuntimeSnapshot`  | HTTP hydrate + Agent pulse invalidation; loading/error/reconnect                     |
-| `useContinuation`     | Thin stub (`null` / `status: "none"` until Issue #7); shares channel with snapshot   |
+| `useContinuation`     | Durable Continuation read model plus suspend / claim-resume / complete operations    |
 | `useVoiceSession`     | Voice Lease + ephemeral token + Live connect; tool bridge; disconnect ≠ session stop |
 
 ```tsx

@@ -6,7 +6,10 @@ import type {
   RuntimeEvent,
   RuntimeSnapshot,
   VoiceLease,
+  ContinuationWakeCondition,
+  ExecutionContinuation,
 } from "@pear-agent/core";
+import type { ContinuationClaimResult } from "../continuation/store.js";
 
 import type { PearEnv } from "../env.js";
 import type { VoiceLeaseResult } from "../voice/results.js";
@@ -43,6 +46,33 @@ export type ExecutionSessionAgentRpc = {
     actorId: string;
     handle: string | null;
   }): Promise<VoiceLeaseResult>;
+  suspendContinuation(input: {
+    id?: string;
+    actorId: string;
+    wakeCondition: ContinuationWakeCondition;
+    suspendedReason: string;
+    resumeDirective: string;
+  }): Promise<ExecutionContinuation>;
+  getContinuation(): Promise<ExecutionContinuation | null>;
+  claimContinuationResume(input: {
+    continuationId: string;
+    actorId: string;
+  }): Promise<ContinuationClaimResult>;
+  completeContinuation(input: {
+    continuationId: string;
+    actorId: string;
+    attemptId: string;
+  }): Promise<ExecutionContinuation | null>;
+  failContinuationResume(input: {
+    continuationId: string;
+    actorId: string;
+    attemptId: string;
+  }): Promise<ExecutionContinuation | null>;
+  wakeContinuation(input: { continuationId: string }): Promise<void>;
+  recoverStaleContinuationResume(input: {
+    continuationId: string;
+    attemptId: string;
+  }): Promise<void>;
 };
 
 export async function getExecutionSessionAgent(
@@ -149,4 +179,57 @@ export async function agentSetVoiceResumeHandle(
 ): Promise<VoiceLeaseResult> {
   const agent = await getExecutionSessionAgent(env, sessionId);
   return agent.setVoiceResumeHandle(input);
+}
+
+export async function agentSuspendContinuation(
+  env: PearEnv,
+  sessionId: string,
+  input: {
+    id?: string;
+    actorId: string;
+    wakeCondition: ContinuationWakeCondition;
+    suspendedReason: string;
+    resumeDirective: string;
+  },
+): Promise<ExecutionContinuation> {
+  return (await getExecutionSessionAgent(env, sessionId)).suspendContinuation(input);
+}
+
+export async function agentGetContinuation(
+  env: PearEnv,
+  sessionId: string,
+): Promise<ExecutionContinuation | null> {
+  return (await getExecutionSessionAgent(env, sessionId)).getContinuation();
+}
+
+export async function agentClaimContinuationResume(
+  env: PearEnv,
+  sessionId: string,
+  input: { continuationId: string; actorId: string },
+): Promise<ContinuationClaimResult> {
+  return (await getExecutionSessionAgent(env, sessionId)).claimContinuationResume(input);
+}
+
+export async function agentCompleteContinuation(
+  env: PearEnv,
+  sessionId: string,
+  input: { continuationId: string; actorId: string },
+  attemptId: string,
+): Promise<ExecutionContinuation | null> {
+  return (await getExecutionSessionAgent(env, sessionId)).completeContinuation({
+    ...input,
+    attemptId,
+  });
+}
+
+export async function agentFailContinuationResume(
+  env: PearEnv,
+  sessionId: string,
+  input: { continuationId: string; actorId: string },
+  attemptId: string,
+): Promise<ExecutionContinuation | null> {
+  return (await getExecutionSessionAgent(env, sessionId)).failContinuationResume({
+    ...input,
+    attemptId,
+  });
 }

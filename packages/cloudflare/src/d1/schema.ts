@@ -83,6 +83,32 @@ export const voiceLeases = sqliteTable("voice_leases", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const executionContinuations = sqliteTable(
+  "execution_continuations",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => executionSessions.id),
+    status: text("status").notNull(),
+    wakeConditionJson: text("wake_condition_json").notNull(),
+    suspendedReason: text("suspended_reason").notNull(),
+    resumeDirective: text("resume_directive").notNull(),
+    checkpointPlanVersionId: text("checkpoint_plan_version_id").notNull(),
+    checkpointLastEventId: text("checkpoint_last_event_id"),
+    checkpointSnapshotJson: text("checkpoint_snapshot_json").notNull(),
+    providerResumeHandle: text("provider_resume_handle"),
+    schedulerId: text("scheduler_id"),
+    resumingActorId: text("resuming_actor_id"),
+    resumeAttemptId: text("resume_attempt_id"),
+    resumeClaimedAt: text("resume_claimed_at"),
+    transitionToken: text("transition_token"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("execution_continuations_session_status").on(table.sessionId, table.status)],
+);
+
 export const pearSchema = {
   executionSessions,
   materializedStates,
@@ -90,4 +116,5 @@ export const pearSchema = {
   rawInputs,
   normalizedInputs,
   voiceLeases,
+  executionContinuations,
 };

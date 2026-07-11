@@ -39,6 +39,13 @@ export function buildVoiceLiveConfig(input: {
     "Voice disconnect must never be treated as session cancellation; only call pause_session when the user asks to pause work.",
     "Current runtime summary JSON:",
     JSON.stringify(summary),
+    ...(input.snapshot.continuation
+      ? [
+          `Resume reason: ${input.snapshot.continuation.suspendedReason}`,
+          `Resume directive: ${input.snapshot.continuation.resumeDirective}`,
+          "Confirm the current state briefly before giving the next instruction.",
+        ]
+      : []),
   ].join("\n");
 
   const sessionResumption: Record<string, unknown> = {};

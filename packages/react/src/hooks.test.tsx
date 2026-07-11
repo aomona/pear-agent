@@ -185,6 +185,43 @@ describe("react hooks", () => {
     expect(result.current.status).toBe("none");
   });
 
+  it("rehydrates a persisted wake_pending Continuation without connecting voice", async () => {
+    const continuation = {
+      id: "cont-1",
+      sessionId: "s1",
+      status: "wake_pending",
+      wakeCondition: { type: "manual" },
+      suspendedReason: "User stepped away",
+      resumeDirective: "Confirm the current state",
+      checkpointPlanVersionId: "plan-1:1",
+      checkpointLastEventId: null,
+      providerResumeHandle: null,
+      schedulerId: null,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:01:00.000Z",
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ snapshot: { ...sampleSnapshot, continuation } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result } = renderHook(() => useContinuation("s1"), {
+      wrapper: createWrapper(client),
+    });
+    await waitFor(() => expect(result.current.status).toBe("wake_pending"));
+
+    expect(result.current.continuation?.id).toBe("cont-1");
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+  });
+
   it("shares one HTTP channel between snapshot and continuation hooks", async () => {
     const fetchMock = vi.fn(async () => {
       return new Response(JSON.stringify({ snapshot: sampleSnapshot }), {
@@ -362,6 +399,27 @@ describe("react hooks", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
+      if (url.endsWith("/continuations") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            continuation: {
+              id: "cont-suspend",
+              sessionId: "s1",
+              status: "suspended",
+              wakeCondition: { type: "manual" },
+              suspendedReason: "Pause voice",
+              resumeDirective: "Confirm state",
+              checkpointPlanVersionId: "plan-1:1",
+              checkpointLastEventId: null,
+              providerResumeHandle: "handle-xyz",
+              schedulerId: null,
+              createdAt: "2026-07-11T00:00:00.000Z",
+              updatedAt: "2026-07-11T00:00:00.000Z",
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
       throw new Error(`Unexpected fetch ${method} ${url}`);
     });
 
@@ -405,7 +463,11 @@ describe("react hooks", () => {
     });
 
     await act(async () => {
-      await result.current.disconnect();
+      await result.current.suspend({
+        wakeCondition: { type: "manual" },
+        suspendedReason: "Pause voice",
+        resumeDirective: "Confirm state",
+      });
     });
 
     expect(result.current.status).toBe("disconnected");
@@ -416,6 +478,211 @@ describe("react hooks", () => {
       return url.includes("/events");
     });
     expect(cancelled).toBe(false);
+  });
+
+  it("falls back to a new Voice Session when a continuation resume handle is stale", async () => {
+    const fallback = new FakeVoiceProvider();
+    const attemptedHandles: Array<string | null | undefined> = [];
+    const provider = {
+      connect: async (options: Parameters<typeof fallback.connect>[0]) => {
+        attemptedHandles.push(options.resumeHandle);
+        if (options.resumeHandle) throw new Error("stale resume handle");
+        return fallback.connect(options);
+      },
+    };
+    const baseContinuation = {
+      id: "cont-1",
+      sessionId: "s1",
+      wakeCondition: { type: "manual" as const },
+      suspendedReason: "Interrupted",
+      resumeDirective: "Confirm state",
+      checkpointPlanVersionId: "plan-1:1",
+      checkpointLastEventId: null,
+      providerResumeHandle: "stale-handle",
+      schedulerId: null,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:01:00.000Z",
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/continuations/cont-1/resume")) {
+        return new Response(
+          JSON.stringify({
+            continuation: {
+              ...baseContinuation,
+              status: "resuming",
+              resumingActorId: "traveler",
+              resumeAttemptId: "attempt-1",
+              resumeClaimedAt: "2026-07-11T00:01:00.000Z",
+            },
+            snapshot: {
+              ...sampleSnapshot,
+              continuation: {
+                ...baseContinuation,
+                status: "resuming",
+                resumingActorId: "traveler",
+                resumeAttemptId: "attempt-1",
+                resumeClaimedAt: "2026-07-11T00:01:00.000Z",
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/lease") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: "stale-handle",
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/token")) {
+        return new Response(JSON.stringify({ token: "token", model: "fake" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/voice/resume-handle") && method === "PUT") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/continuations/cont-1/complete")) {
+        return new Response(
+          JSON.stringify({ continuation: { ...baseContinuation, status: "completed" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+    const { result } = renderHook(() => useVoiceSession("s1", { provider }), {
+      wrapper: createWrapper(client),
+    });
+
+    await act(async () => result.current.connect({ continuationId: "cont-1" }));
+
+    expect(result.current.status).toBe("connected");
+    expect(attemptedHandles).toEqual(["stale-handle", null]);
+    expect(fallback.connections).toHaveLength(1);
+  });
+
+  it("returns a claimed Continuation to wake_pending when Voice connect fails", async () => {
+    let rolledBack = false;
+    const continuation = {
+      id: "cont-fail",
+      sessionId: "s1",
+      wakeCondition: { type: "manual" as const },
+      suspendedReason: "Interrupted",
+      resumeDirective: "Confirm state",
+      checkpointPlanVersionId: "plan-1:1",
+      checkpointLastEventId: null,
+      providerResumeHandle: null,
+      schedulerId: null,
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:01:00.000Z",
+    };
+    const lease = {
+      id: "lease-fail",
+      sessionId: "s1",
+      actorId: "traveler",
+      acquiredAt: "2026-07-11T00:00:00.000Z",
+      expiresAt: "2026-07-11T00:30:00.000Z",
+      providerResumeHandle: null,
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/voice/lease") && method === "POST") {
+        return new Response(JSON.stringify({ lease: { ...lease, status: "active" } }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/continuations/cont-fail/resume")) {
+        return new Response(
+          JSON.stringify({
+            continuation: {
+              ...continuation,
+              status: "resuming",
+              resumingActorId: "traveler",
+              resumeAttemptId: "attempt-fail",
+              resumeClaimedAt: "2026-07-11T00:01:00.000Z",
+            },
+            snapshot: {
+              ...sampleSnapshot,
+              continuation: {
+                ...continuation,
+                status: "resuming",
+                resumingActorId: "traveler",
+                resumeAttemptId: "attempt-fail",
+                resumeClaimedAt: "2026-07-11T00:01:00.000Z",
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/token")) {
+        return new Response(JSON.stringify({ token: "token", model: "fake" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/continuations/cont-fail/resume-failed")) {
+        rolledBack = true;
+        return new Response(
+          JSON.stringify({ continuation: { ...continuation, status: "wake_pending" } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/lease") && method === "DELETE") {
+        return new Response(JSON.stringify({ lease: { ...lease, status: "released" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+    const provider = { connect: async () => Promise.reject(new Error("provider unavailable")) };
+    const { result } = renderHook(() => useVoiceSession("s1", { provider }), {
+      wrapper: createWrapper(client),
+    });
+
+    await expect(
+      act(async () => result.current.connect({ continuationId: "cont-fail" })),
+    ).rejects.toThrow("provider unavailable");
+    expect(rolledBack).toBe(true);
   });
 
   it("useVoiceSession session switch releases prior lease without painting it on the new session", async () => {
