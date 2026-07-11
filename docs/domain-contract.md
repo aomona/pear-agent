@@ -1,5 +1,7 @@
 # Domain Contract
 
+`defineDomain()`が返す公開型は`ExecutionDomainDefinition`です。Domainが生成する共通計画・Step・Goalには、それぞれ`ExecutionPlan`、`ExecutionStep`、`ExecutionGoal`を使用します。Stepの状態は`StepStatus`で表します。
+
 ## 目的
 
 Domain Contractは、PEAR Runtimeへ用途固有の入力、計画指示、イベント、Capability、成功条件を接続する契約です。
@@ -8,7 +10,7 @@ Domain Contractは、PEAR Runtimeへ用途固有の入力、計画指示、イ�
 
 ```ts
 const outingDomain = defineDomain({
-  id: 'outing',
+  id: "outing",
   version: 1,
 
   schemas: {
@@ -23,20 +25,16 @@ const outingDomain = defineDomain({
 
   planning: {
     instructions: outingPlannerInstructions,
-    objectives: [
-      '出発時刻までに必要な準備を完了する',
-      '待機時間に並行可能な準備を進める',
-    ],
+    objectives: ["出発時刻までに必要な準備を完了する", "待機時間に並行可能な準備を進める"],
   },
 
   replanning: {
     instructions: outingReplannerInstructions,
-    defaultMode: 'automatic',
+    defaultMode: "automatic",
   },
 
   capabilities,
-  completionPolicy: 'automatic',
-  authorize,
+  completionPolicy: "automatic",
 });
 ```
 
@@ -77,8 +75,8 @@ type CapabilityDefinition<TInput, TOutput> = {
   description: string;
   inputSchema: Schema<TInput>;
   outputSchema: Schema<TOutput>;
-  executionMode: 'automatic' | 'confirm' | 'suggest';
-  riskLevel: 'low' | 'medium' | 'high';
+  executionMode: "automatic" | "confirm" | "suggest";
+  riskLevel: "low" | "medium" | "high";
   execute(input: TInput, context: CapabilityContext): Promise<TOutput>;
 };
 ```
@@ -87,15 +85,7 @@ CapabilityはPEAR Runtimeの認可とPolicy評価を通じて実行します。
 
 ### Authorization
 
-ホストアプリが認証したContextを受け取り、操作単位で許可を返します。
-
-```ts
-type PearRequestContext = {
-  actorId: string;
-  roles?: string[];
-  claims?: Record<string, unknown>;
-};
-```
+認証Contextと操作単位の認可は後続PhaseでDomain Contractへ追加します。Foundationの`ExecutionDomainDefinition`にはまだ含まれません。
 
 ## RuntimeがDomainへ保証するもの
 
@@ -103,13 +93,9 @@ type PearRequestContext = {
 - DAGとStep状態遷移
 - ActorとAssignment
 - Goal評価の実行基盤
-- Event追加とWorldState更新の整合性
-- Capability Policyと認可
-- ContinuationとWake
-- Voice Session lifecycle
-- Plan Patchの構造検証
-- Plan VersionとRollback
-- React hooksからの型安全な操作
+- Capability Policy
+
+Event追加とWorldState更新、認可、Continuation、Voice Session lifecycle、Plan Patch、Plan Version / Rollback、React hooksは後続Phaseで提供します。
 
 ## Domainが保証するもの
 
@@ -127,4 +113,3 @@ type PearRequestContext = {
 - 動的に取得した任意コードの実行
 - Domain Marketplace
 - Schema Versionの自動Migration
-

@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-import type { ExecutionStep } from "./plan.js";
-
 export const stepStatusSchema = z.enum([
   "blocked",
   "ready",
@@ -20,7 +18,12 @@ export type StepState = z.infer<typeof stepStateSchema>;
 
 export const stepStatesSchema = z.record(z.string(), stepStateSchema);
 
-type StepDependency = Pick<ExecutionStep<unknown>, "id" | "after">;
+export type StepStates = z.infer<typeof stepStatesSchema>;
+
+export type StepDependency = {
+  readonly id: string;
+  readonly after: readonly string[];
+};
 
 const TERMINAL_STATUSES = new Set<StepStatus>(["completed", "skipped"]);
 

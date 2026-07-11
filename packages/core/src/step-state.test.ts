@@ -5,6 +5,7 @@ import {
   stepStateSchema,
   stepStatusSchema,
   transitionStep,
+  type StepStates,
 } from "./step-state.js";
 
 describe("deriveStepStatuses", () => {
@@ -12,10 +13,11 @@ describe("deriveStepStatuses", () => {
     { id: "pack", after: [] },
     { id: "charge", after: [] },
     { id: "leave", after: ["pack", "charge"] },
-  ];
+  ] as const;
 
   test("marks independent steps ready in parallel", () => {
-    const states = deriveStepStatuses(steps, {});
+    const currentStates: StepStates = {};
+    const states = deriveStepStatuses(steps, currentStates);
 
     expect(states.pack?.status).toBe("ready");
     expect(states.charge?.status).toBe("ready");

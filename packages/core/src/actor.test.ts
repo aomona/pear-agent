@@ -27,6 +27,30 @@ describe("capabilityDefinitionSchema", () => {
   const outputSchema = z.object({ delivered: z.boolean() });
   const schema = capabilityDefinitionSchema(inputSchema, outputSchema);
 
+  it("accepts a capability definition with matching schemas and policy values", () => {
+    const capability = {
+      id: "notify",
+      description: "Send a notification",
+      inputSchema,
+      outputSchema,
+      executionMode: "confirm" as const,
+      riskLevel: "medium" as const,
+      execute: async () => ({ delivered: true }),
+    };
+
+    const parsed = schema.parse(capability);
+
+    expect(parsed).toMatchObject({
+      id: "notify",
+      description: "Send a notification",
+      inputSchema,
+      outputSchema,
+      executionMode: "confirm",
+      riskLevel: "medium",
+    });
+    expect(parsed.execute).toBeTypeOf("function");
+  });
+
   it("rejects an invalid capability policy boundary", () => {
     expect(
       schema.safeParse({
