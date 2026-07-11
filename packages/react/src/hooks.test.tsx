@@ -236,6 +236,44 @@ describe("react hooks", () => {
     expect(result.current.error?.message).toContain("Session not found");
   });
 
+  it("refetch reloads the HTTP snapshot", async () => {
+    let packStatus: "ready" | "completed" = "ready";
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          snapshot: {
+            ...sampleSnapshot,
+            stepStates: { pack: { status: packStatus } },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result } = renderHook(() => useRuntimeSnapshot("s1"), {
+      wrapper: createWrapper(client),
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("connected");
+    });
+    expect(result.current.snapshot?.stepStates.pack?.status).toBe("ready");
+
+    packStatus = "completed";
+    await act(async () => {
+      await result.current.refetch();
+    });
+
+    expect(result.current.snapshot?.stepStates.pack?.status).toBe("completed");
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("throws when hooks are used outside PearProvider", () => {
     expect(() => {
       renderHook(() => useExecutionSession());

@@ -1,5 +1,3 @@
-import type { RuntimeSnapshot } from "@pear-agent/core";
-
 /**
  * Host-resolved auth context, sent as `x-pear-context` JSON on HTTP calls.
  * Matches `@pear-agent/cloudflare` `PearRequestContext` shape without importing
@@ -14,13 +12,7 @@ export type PearClientContext = {
 };
 
 /** Connection lifecycle for realtime snapshot subscriptions. */
-export type ConnectionStatus =
-  | "idle"
-  | "loading"
-  | "connected"
-  | "reconnecting"
-  | "disconnected"
-  | "error";
+export type ConnectionStatus = "idle" | "loading" | "connected" | "reconnecting" | "error";
 
 /**
  * Stub Continuation until Issue #7. Always null from the server today.
@@ -41,10 +33,13 @@ export type ExecutionContinuationStub = {
   providerResumeHandle: string | null;
 };
 
-/** Agent DO broadcast mirror (JSON wire). */
+/**
+ * Agent DO invalidation pulse (JSON wire).
+ * Clients re-fetch Runtime Snapshot over HTTP when `revision` advances.
+ */
 export type ExecutionSessionSyncState = {
   revision: number;
-  snapshot: unknown | null;
+  lastEventId: string | null;
   continuation: ExecutionContinuationStub | null;
 };
 
@@ -85,8 +80,8 @@ export type DomainEventInput = AppendEventInput & {
   payload: unknown;
 };
 
-export type ParsedSyncSnapshot = {
+export type ParsedSyncPulse = {
   revision: number;
-  snapshot: RuntimeSnapshot | null;
+  lastEventId: string | null;
   continuation: ExecutionContinuationStub | null;
 };

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import type { AppendEventResult, RuntimeEvent } from "@pear-agent/core";
 
@@ -44,6 +44,9 @@ export type UseExecutionSessionResult = {
  *   `create()` / `setSessionId()`. Passing `null` is also unbound and does not
  *   wipe a session created via `create()`.
  * - **Controlled**: pass a `string` session id; the bound id tracks the prop.
+ *
+ * Concurrent actions share a single `status` / `error` (last write wins). Prefer
+ * not overlapping mutations from the same hook instance.
  */
 export function useExecutionSession(sessionId?: string | null): UseExecutionSessionResult {
   const { client } = usePearContext();
@@ -101,117 +104,42 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
     [client, controlled, run],
   );
 
-  const appendEvent = useCallback(
-    async (event: RuntimeEvent) => {
-      const id = event.sessionId || requireSessionId();
-      return run(() => client.appendEvent(id, event));
-    },
-    [client, requireSessionId, run],
-  );
+  const actions = useMemo(() => {
+    const withSession =
+      <A extends unknown[], R>(fn: (sessionId: string, ...args: A) => Promise<R>) =>
+      (...args: A): Promise<R> => {
+        const id = requireSessionId();
+        return run(() => fn(id, ...args));
+      };
 
-  const startSession = useCallback(
-    async (input?: Parameters<PearClient["startSession"]>[1]) => {
-      const id = requireSessionId();
-      return run(() => client.startSession(id, input ?? {}));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const pauseSession = useCallback(
-    async (input?: Parameters<PearClient["pauseSession"]>[1]) => {
-      const id = requireSessionId();
-      return run(() => client.pauseSession(id, input ?? {}));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const cancelSession = useCallback(
-    async (input?: Parameters<PearClient["cancelSession"]>[1]) => {
-      const id = requireSessionId();
-      return run(() => client.cancelSession(id, input ?? {}));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const startStep = useCallback(
-    async (input: StepActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.startStep(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const completeStep = useCallback(
-    async (input: StepActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.completeStep(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const failStep = useCallback(
-    async (input: StepActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.failStep(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const pauseStep = useCallback(
-    async (input: StepActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.pauseStep(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const skipStep = useCallback(
-    async (input: StepActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.skipStep(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const startTimer = useCallback(
-    async (input: TimerStartInput) => {
-      const id = requireSessionId();
-      return run(() => client.startTimer(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const pauseTimer = useCallback(
-    async (input: TimerActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.pauseTimer(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const completeTimer = useCallback(
-    async (input: TimerActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.completeTimer(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const cancelTimer = useCallback(
-    async (input: TimerActionInput) => {
-      const id = requireSessionId();
-      return run(() => client.cancelTimer(id, input));
-    },
-    [client, requireSessionId, run],
-  );
-
-  const reportDomainEvent = useCallback(
-    async (input: DomainEventInput) => {
-      const id = requireSessionId();
-      return run(() => client.reportDomainEvent(id, input));
-    },
-    [client, requireSessionId, run],
-  );
+    return {
+      appendEvent: async (event: RuntimeEvent) => {
+        const id = event.sessionId || requireSessionId();
+        return run(() => client.appendEvent(id, event));
+      },
+      startSession: withSession((id, input?: Parameters<PearClient["startSession"]>[1]) =>
+        client.startSession(id, input ?? {}),
+      ),
+      pauseSession: withSession((id, input?: Parameters<PearClient["pauseSession"]>[1]) =>
+        client.pauseSession(id, input ?? {}),
+      ),
+      cancelSession: withSession((id, input?: Parameters<PearClient["cancelSession"]>[1]) =>
+        client.cancelSession(id, input ?? {}),
+      ),
+      startStep: withSession((id, input: StepActionInput) => client.startStep(id, input)),
+      completeStep: withSession((id, input: StepActionInput) => client.completeStep(id, input)),
+      failStep: withSession((id, input: StepActionInput) => client.failStep(id, input)),
+      pauseStep: withSession((id, input: StepActionInput) => client.pauseStep(id, input)),
+      skipStep: withSession((id, input: StepActionInput) => client.skipStep(id, input)),
+      startTimer: withSession((id, input: TimerStartInput) => client.startTimer(id, input)),
+      pauseTimer: withSession((id, input: TimerActionInput) => client.pauseTimer(id, input)),
+      completeTimer: withSession((id, input: TimerActionInput) => client.completeTimer(id, input)),
+      cancelTimer: withSession((id, input: TimerActionInput) => client.cancelTimer(id, input)),
+      reportDomainEvent: withSession((id, input: DomainEventInput) =>
+        client.reportDomainEvent(id, input),
+      ),
+    };
+  }, [client, requireSessionId, run]);
 
   return {
     sessionId: boundSessionId,
@@ -220,20 +148,7 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
     client,
     create,
     setSessionId,
-    appendEvent,
-    startSession,
-    pauseSession,
-    cancelSession,
-    startStep,
-    completeStep,
-    failStep,
-    pauseStep,
-    skipStep,
-    startTimer,
-    pauseTimer,
-    completeTimer,
-    cancelTimer,
-    reportDomainEvent,
+    ...actions,
     clearError: () => setError(null),
   };
 }

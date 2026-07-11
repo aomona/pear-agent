@@ -1,8 +1,8 @@
 import type { RuntimeSnapshot } from "@pear-agent/core";
 
 import type { PearClient } from "./client.js";
+import { PEAR_CONTEXT_QUERY_KEY, serializePearClientContext } from "./context-wire.js";
 import { parseSyncState } from "./parse.js";
-import { PEAR_CONTEXT_QUERY_KEY } from "./provider.js";
 import type { ConnectionStatus, ExecutionContinuationStub, PearClientContext } from "./types.js";
 
 export type SessionChannelOptions = {
@@ -18,6 +18,7 @@ export type SessionChannelSnapshot = {
   snapshot: RuntimeSnapshot | null;
   continuation: ExecutionContinuationStub | null;
   revision: number;
+  lastEventId: string | null;
   status: ConnectionStatus;
   error: Error | null;
 };
@@ -32,6 +33,19 @@ type AgentSocket = {
   removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
 };
 
+/** Stable identity for PearClient instances so channels never cross clients. */
+const clientIds = new WeakMap<PearClient, number>();
+let nextClientId = 0;
+
+function clientKey(client: PearClient): number {
+  let id = clientIds.get(client);
+  if (id === undefined) {
+    id = ++nextClientId;
+    clientIds.set(client, id);
+  }
+  return id;
+}
+
 function hostFromBaseUrl(baseUrl: string): string {
   try {
     const url = new URL(baseUrl);
@@ -41,8 +55,13 @@ function hostFromBaseUrl(baseUrl: string): string {
   }
 }
 
-function channelKey(sessionId: string, options: SessionChannelOptions): ChannelKey {
+function channelKey(
+  sessionId: string,
+  client: PearClient,
+  options: SessionChannelOptions,
+): ChannelKey {
   return [
+    clientKey(client),
     sessionId,
     options.realtime ? "rt" : "http",
     options.recentEventLimit ?? "default",
@@ -55,6 +74,9 @@ function channelKey(sessionId: string, options: SessionChannelOptions): ChannelK
 /**
  * Shared per-session subscription so multiple hooks (snapshot + continuation)
  * share one HTTP hydrate and one Agent WebSocket.
+ *
+ * Realtime path: Agent broadcasts an invalidation pulse (`revision` /
+ * `lastEventId`). Snapshots always come from HTTP — never from Agent state.
  */
 export class SessionChannel {
   private readonly listeners = new Set<Listener>();
@@ -63,10 +85,12 @@ export class SessionChannel {
     snapshot: null,
     continuation: null,
     revision: 0,
+    lastEventId: null,
     status: "loading",
     error: null,
   };
   private lastRevision = 0;
+  private hydrateGeneration = 0;
   private stopAgent: (() => void) | null = null;
   private disposed = false;
 
@@ -123,20 +147,28 @@ export class SessionChannel {
     this.emit();
   }
 
-  private applySync(raw: unknown): void {
+  /** Apply Agent invalidation pulse; snapshot content always comes from HTTP. */
+  private applyPulse(raw: unknown): void {
     try {
       const parsed = parseSyncState(raw);
       if (parsed.revision < this.lastRevision) {
         return;
       }
+
+      const advanced = parsed.revision > this.lastRevision;
       this.lastRevision = parsed.revision;
       this.setState({
         revision: parsed.revision,
-        snapshot: parsed.snapshot,
+        lastEventId: parsed.lastEventId,
         continuation: parsed.continuation,
-        status: "connected",
+        status: this.state.status === "loading" ? "loading" : "connected",
         error: null,
       });
+
+      // Revision advanced → re-fetch durable snapshot over HTTP.
+      if (advanced && parsed.revision > 0) {
+        void this.hydrateHttp();
+      }
     } catch (caught) {
       const next = caught instanceof Error ? caught : new Error(String(caught));
       this.setState({ error: next, status: "error" });
@@ -145,7 +177,7 @@ export class SessionChannel {
 
   private async hydrateHttp(): Promise<void> {
     if (this.disposed) return;
-    const revisionAtStart = this.lastRevision;
+    const generation = ++this.hydrateGeneration;
     if (this.state.status !== "connected" && this.state.status !== "reconnecting") {
       this.setState({ status: "loading", error: null });
     }
@@ -157,19 +189,14 @@ export class SessionChannel {
           ? undefined
           : { recentEventLimit: this.options.recentEventLimit },
       );
-      if (this.disposed) return;
-      // Do not clobber a fresher Agent broadcast that arrived while HTTP was in flight.
-      if (this.lastRevision > revisionAtStart) {
-        this.setState({ status: "connected", error: null });
-        return;
-      }
+      if (this.disposed || generation !== this.hydrateGeneration) return;
       this.setState({
         snapshot: next,
         status: "connected",
         error: null,
       });
     } catch (caught) {
-      if (this.disposed) return;
+      if (this.disposed || generation !== this.hydrateGeneration) return;
       const nextErr = caught instanceof Error ? caught : new Error(String(caught));
       this.setState({ error: nextErr, status: "error" });
     }
@@ -191,18 +218,12 @@ export class SessionChannel {
           query: async () => {
             const context = await this.options.getContext();
             return {
-              [PEAR_CONTEXT_QUERY_KEY]: JSON.stringify({
-                actorId: context.actorId,
-                roles: context.roles ?? [],
-                claims: context.claims ?? {},
-                ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
-                ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }),
-              }),
+              [PEAR_CONTEXT_QUERY_KEY]: serializePearClientContext(context),
             };
           },
           onStateUpdate: (state: unknown) => {
             if (closed || this.disposed) return;
-            this.applySync(state);
+            this.applyPulse(state);
           },
           onConnectionError: (connectionError: Error) => {
             if (closed || this.disposed) return;
@@ -216,6 +237,7 @@ export class SessionChannel {
         const onOpen = () => {
           if (closed || this.disposed) return;
           this.setState({ status: "connected" });
+          // Reconnect convergence: always re-fetch durable snapshot.
           void this.hydrateHttp();
         };
         const onClose = () => {
@@ -258,13 +280,16 @@ export type AcquireSessionChannelResult = {
 /**
  * Acquire a shared channel for a session. Call `release` when the consumer unmounts.
  * The underlying connection is torn down when the last consumer releases.
+ *
+ * Channels are keyed by PearClient instance identity so two providers/clients
+ * never silently share auth or fetch implementations.
  */
 export function acquireSessionChannel(
   sessionId: string,
   client: PearClient,
   options: SessionChannelOptions,
 ): AcquireSessionChannelResult {
-  const key = channelKey(sessionId, options);
+  const key = channelKey(sessionId, client, options);
   let channel = channels.get(key);
   if (!channel) {
     channel = new SessionChannel(sessionId, client, options);

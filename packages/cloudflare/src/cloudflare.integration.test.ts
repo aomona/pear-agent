@@ -187,7 +187,7 @@ describe("cloudflare runtime integration", () => {
     expect(normalizedBody.normalizedInput.departureAt).toBe("2026-07-11T03:00:00Z");
   });
 
-  it("publishes JSON-safe snapshot on Agent sync state after mutations", async () => {
+  it("publishes invalidation pulse on Agent sync state after mutations", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     expect((await createSession(sessionId)).status).toBe(201);
 
@@ -196,9 +196,7 @@ describe("cloudflare runtime integration", () => {
     const afterCreate = await agent.getSyncState();
     expect(afterCreate.revision).toBeGreaterThan(0);
     expect(afterCreate.continuation).toBeNull();
-    expect(afterCreate.snapshot).toMatchObject({
-      session: { id: sessionId, status: "not_started" },
-    });
+    expect(afterCreate.lastEventId).toBeNull();
 
     const started = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/events`, {
@@ -223,9 +221,7 @@ describe("cloudflare runtime integration", () => {
 
     const afterEvent = await agent.getSyncState();
     expect(afterEvent.revision).toBeGreaterThan(afterCreate.revision);
-    expect(afterEvent.snapshot).toMatchObject({
-      session: { id: sessionId, status: "active" },
-    });
+    expect(afterEvent.lastEventId).toBe(`${sessionId}-evt-start-sync`);
   });
 
   it("serializes concurrent appends for the same session via the Agent", async () => {

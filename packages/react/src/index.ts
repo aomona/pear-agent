@@ -1,8 +1,12 @@
 export { PearClient, type CreateSessionResult, type PearClientOptions } from "./client.js";
+export {
+  PEAR_CONTEXT_HEADER,
+  PEAR_CONTEXT_QUERY_KEY,
+  serializePearClientContext,
+} from "./context-wire.js";
 export { PearClientError } from "./errors.js";
 export {
   DEFAULT_AGENT_NAME,
-  PEAR_CONTEXT_QUERY_KEY,
   PearProvider,
   usePearContext,
   type PearContextValue,
@@ -23,6 +27,7 @@ export type {
   DomainEventInput,
   ExecutionContinuationStub,
   ExecutionSessionSyncState,
+  ParsedSyncPulse,
   PearClientContext,
   StepActionInput,
   TimerActionInput,

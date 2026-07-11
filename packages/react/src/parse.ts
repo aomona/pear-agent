@@ -9,7 +9,7 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
-import type { ExecutionContinuationStub, ExecutionSessionSyncState } from "./types.js";
+import type { ExecutionContinuationStub, ParsedSyncPulse } from "./types.js";
 
 const appendEventResponseSchema = z.object({
   kind: z.enum(["applied", "duplicate"]),
@@ -37,7 +37,7 @@ const continuationStubSchema = z
 
 const syncStateSchema = z.object({
   revision: z.number().int().nonnegative(),
-  snapshot: z.unknown().nullable(),
+  lastEventId: z.string().nullable().default(null),
   continuation: continuationStubSchema.default(null),
 });
 
@@ -57,15 +57,11 @@ export function parseAppendEventResult(value: unknown): AppendEventResult {
   return appendEventResponseSchema.parse(value);
 }
 
-export function parseSyncState(value: unknown): {
-  revision: number;
-  snapshot: RuntimeSnapshot | null;
-  continuation: ExecutionContinuationStub | null;
-} {
-  const raw = syncStateSchema.parse(value) as ExecutionSessionSyncState;
+export function parseSyncState(value: unknown): ParsedSyncPulse {
+  const raw = syncStateSchema.parse(value);
   return {
     revision: raw.revision,
-    snapshot: raw.snapshot === null ? null : parseRuntimeSnapshot(raw.snapshot),
-    continuation: raw.continuation,
+    lastEventId: raw.lastEventId,
+    continuation: raw.continuation as ExecutionContinuationStub | null,
   };
 }

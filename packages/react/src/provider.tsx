@@ -1,13 +1,13 @@
-import { createContext, useContext, useMemo, useRef, type ReactNode } from "react";
+import { createContext, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { PearClient } from "./client.js";
+import { PEAR_CONTEXT_QUERY_KEY } from "./context-wire.js";
 import type { PearClientContext } from "./types.js";
+
+export { PEAR_CONTEXT_QUERY_KEY };
 
 /** Default kebab-case name for `ExecutionSessionAgent`. */
 export const DEFAULT_AGENT_NAME = "execution-session-agent";
-
-/** Query key used for Agent WebSocket auth (mirrors HTTP x-pear-context). */
-export const PEAR_CONTEXT_QUERY_KEY = "pearContext";
 
 export type PearProviderProps = {
   /** Worker origin for HTTP API and Agent WebSocket host. */
@@ -80,11 +80,11 @@ export function PearProvider(props: PearProviderProps) {
     });
   }, [baseUrl, fetchImpl, injectedClient, stableGetContext]);
 
-  // Injected clients may have been built with a different resolver; point them at
-  // the stable wrapper so inline getContext props still work.
-  if (injectedClient) {
+  // Keep injected clients on the stable resolver (layout effect — not during render).
+  useLayoutEffect(() => {
+    if (!injectedClient) return;
     injectedClient.setGetContext(stableGetContext);
-  }
+  }, [injectedClient, stableGetContext]);
 
   const agentSecure = deriveAgentSecure(baseUrl, agentSecureProp);
   const client = injectedClient ?? ownedClient!;

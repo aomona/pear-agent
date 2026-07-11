@@ -23,6 +23,13 @@ Workspace:
 
 Use `createPearWorker` from `@pear-agent/cloudflare` so `/agents/execution-session-agent/:sessionId` is routed and authorized for WebSockets (`session.read` via `?pearContext=`).
 
+## Sync model
+
+- **HTTP** is the source of truth for Runtime Snapshots (`GET /sessions/:id/snapshot`).
+- **Agent WebSocket** broadcasts a lightweight invalidation pulse (`revision`, `lastEventId`).
+- On revision advance or reconnect, hooks re-fetch the snapshot over HTTP.
+- Snapshot + continuation hooks share one channel per session + client instance.
+
 ## Usage
 
 ```tsx
@@ -71,7 +78,7 @@ function SessionPanel() {
 | Hook                  | Role                                                                               |
 | --------------------- | ---------------------------------------------------------------------------------- |
 | `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                            |
-| `useRuntimeSnapshot`  | HTTP hydrate + Agent realtime sync; loading/error/reconnect                        |
+| `useRuntimeSnapshot`  | HTTP hydrate + Agent pulse invalidation; loading/error/reconnect                   |
 | `useContinuation`     | Thin stub (`null` / `status: "none"` until Issue #7); shares channel with snapshot |
 
 ### Auth

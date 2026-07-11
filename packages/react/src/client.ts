@@ -1,6 +1,7 @@
 import {
   executionPlanSchema,
   executionSessionSchema,
+  runtimeEventSchema,
   stepStatesSchema,
   type AppendEventResult,
   type ExecutionPlan,
@@ -12,6 +13,7 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
+import { PEAR_CONTEXT_HEADER, serializePearClientContext } from "./context-wire.js";
 import { PearClientError } from "./errors.js";
 import { parseAppendEventResult, parseMaterializedState, parseRuntimeSnapshot } from "./parse.js";
 import type {
@@ -23,8 +25,6 @@ import type {
   TimerActionInput,
   TimerStartInput,
 } from "./types.js";
-
-const CONTEXT_HEADER = "x-pear-context";
 
 export type PearClientOptions = {
   /** Worker origin, e.g. `https://my-worker.example.workers.dev` or `http://127.0.0.1:8787`. */
@@ -201,26 +201,32 @@ export class PearClient {
 
   async reportDomainEvent(sessionId: string, input: DomainEventInput): Promise<AppendEventResult> {
     const envelope = await this.buildEnvelope(sessionId, input);
-    return this.appendEvent(sessionId, {
-      ...envelope,
-      type: "domain_event",
-      domainType: input.domainType,
-      payload: input.payload as never,
-    });
+    return this.appendEvent(
+      sessionId,
+      runtimeEventSchema.parse({
+        ...envelope,
+        type: "domain_event",
+        domainType: input.domainType,
+        payload: input.payload,
+      }),
+    );
   }
 
   private async appendBuiltEvent(
     sessionId: string,
-    type: RuntimeEvent["type"],
+    type: Exclude<RuntimeEvent["type"], "domain_event">,
     payload: Record<string, unknown>,
     input: AppendEventInput,
   ): Promise<AppendEventResult> {
     const envelope = await this.buildEnvelope(sessionId, input);
-    return this.appendEvent(sessionId, {
-      ...envelope,
-      type,
-      payload,
-    } as RuntimeEvent);
+    return this.appendEvent(
+      sessionId,
+      runtimeEventSchema.parse({
+        ...envelope,
+        type,
+        payload,
+      }),
+    );
   }
 
   private async buildEnvelope(
@@ -258,13 +264,7 @@ export class PearClient {
   ): Promise<T> {
     const context = await this.getContext();
     const headers: Record<string, string> = {
-      [CONTEXT_HEADER]: JSON.stringify({
-        actorId: context.actorId,
-        roles: context.roles ?? [],
-        claims: context.claims ?? {},
-        ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
-        ...(context.sessionId === undefined ? {} : { sessionId: context.sessionId }),
-      }),
+      [PEAR_CONTEXT_HEADER]: serializePearClientContext(context),
     };
 
     const method = init?.method ?? "GET";

@@ -19,6 +19,7 @@ export type UseRuntimeSnapshotResult = {
   snapshot: RuntimeSnapshot | null;
   continuation: ExecutionContinuationStub | null;
   revision: number;
+  lastEventId: string | null;
   status: ConnectionStatus;
   error: Error | null;
   /** Force HTTP re-fetch of the latest snapshot (also used after reconnect). */
@@ -30,6 +31,7 @@ const IDLE_SNAPSHOT: SessionChannelSnapshot = {
   snapshot: null,
   continuation: null,
   revision: 0,
+  lastEventId: null,
   status: "idle",
   error: null,
 };
@@ -38,10 +40,10 @@ const IDLE_SNAPSHOT: SessionChannelSnapshot = {
  * Subscribe to a session's Runtime Snapshot.
  *
  * - Always hydrates via HTTP `GET /sessions/:id/snapshot` (source of truth read).
- * - When realtime is on, also opens an Agents SDK WebSocket (`agents/client`)
- *   and applies state broadcasts. On reconnect, re-fetches HTTP so the client
- *   converges to the latest durable snapshot.
- * - Multiple hooks for the same session share one channel (see `session-channel`).
+ * - When realtime is on, opens an Agents SDK WebSocket and listens for
+ *   invalidation pulses (`revision` / `lastEventId`). On advance or reconnect,
+ *   re-fetches HTTP so the client converges to the latest durable snapshot.
+ * - Multiple hooks for the same session + client share one channel.
  */
 export function useRuntimeSnapshot(
   sessionId: string | null | undefined,
@@ -73,7 +75,6 @@ export function useRuntimeSnapshot(
 
   const [state, setState] = useState<SessionChannelSnapshot>(IDLE_SNAPSHOT);
   const [errorCleared, setErrorCleared] = useState(false);
-  const [channelVersion, setChannelVersion] = useState(0);
 
   useEffect(() => {
     setErrorCleared(false);
@@ -88,13 +89,13 @@ export function useRuntimeSnapshot(
       snapshot: null,
       continuation: null,
       revision: 0,
+      lastEventId: null,
       status: "loading",
       error: null,
     });
 
     const { channel, release } = acquireSessionChannel(sessionId, pear.client, channelOptions);
     setState(channel.getSnapshot());
-    setChannelVersion((v) => v + 1);
 
     const unsubscribe = channel.subscribe(() => {
       setErrorCleared(false);
@@ -110,7 +111,6 @@ export function useRuntimeSnapshot(
   const refetch = useCallback(async () => {
     if (!sessionId) return;
     setErrorCleared(false);
-    // Re-acquire path: channel is retained by the effect; find via temporary retain.
     const { channel, release } = acquireSessionChannel(sessionId, pear.client, channelOptions);
     try {
       await channel.refetch();
@@ -120,13 +120,11 @@ export function useRuntimeSnapshot(
     }
   }, [sessionId, pear.client, channelOptions]);
 
-  // channelVersion keeps refetch/stable identity tied to the active effect channel.
-  void channelVersion;
-
   return {
     snapshot: state.snapshot,
     continuation: state.continuation,
     revision: state.revision,
+    lastEventId: state.lastEventId,
     status: sessionId ? state.status : "idle",
     error: errorCleared ? null : state.error,
     refetch,

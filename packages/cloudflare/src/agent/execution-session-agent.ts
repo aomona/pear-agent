@@ -9,11 +9,7 @@ import { Agent, type Connection, type ConnectionContext } from "agents";
 
 import { D1ExecutionStateRepository } from "../d1/repository.js";
 import type { PearEnv } from "../env.js";
-import { toJsonValue } from "../serialize.js";
 import { EMPTY_SYNC_STATE, type ExecutionSessionSyncState } from "./sync-state.js";
-
-/** Keep Agent mirror lighter than full HTTP snapshots; clients hydrate events via HTTP. */
-const SYNC_RECENT_EVENT_LIMIT = 50;
 
 /**
  * Per-session Durable Agent. Serializes mutations for one Execution Session
@@ -26,9 +22,11 @@ const SYNC_RECENT_EVENT_LIMIT = 50;
  * D1 read-modify-write (lost step updates). DO input gates help, but miniflare
  * and concurrent Worker→DO RPC still need an explicit chain.
  *
- * {@link ExecutionSessionSyncState} is a broadcast mirror for WebSocket clients
- * (`agents/client` / `agents/react`). It is not the durable PEAR store.
- * WebSocket auth is enforced in {@link createPearWorker} `onBeforeConnect`.
+ * {@link ExecutionSessionSyncState} is a lightweight invalidation pulse for
+ * WebSocket clients (`agents/client` / `agents/react`). Clients re-fetch the
+ * Runtime Snapshot over HTTP when `revision` advances. It is not the durable
+ * PEAR store. WebSocket auth is enforced in {@link createPearWorker}
+ * `onBeforeConnect`.
  */
 export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncState> {
   override initialState: ExecutionSessionSyncState = EMPTY_SYNC_STATE;
@@ -42,13 +40,14 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   }
 
   /**
-   * On (re)connect, rehydrate the sync mirror from D1 so clients converge
-   * to the durable snapshot even if Agent SQLite lagged or was empty.
+   * On (re)connect, ensure a non-empty pulse exists when the session is already
+   * in D1 but Agent SQLite still holds the empty initial state (cold DO).
+   * Skips work when revision is already advanced.
    */
   override async onConnect(connection: Connection, ctx: ConnectionContext): Promise<void> {
     void connection;
     void ctx;
-    await this.runExclusive(() => this.publishSyncStateFromD1());
+    await this.runExclusive(() => this.ensureSyncPulse());
   }
 
   /** Chains session mutations so only one D1 RMW runs at a time in this isolate. */
@@ -91,7 +90,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
         domainId: input.domainId,
         ...(input.normalizedInput === undefined ? {} : { normalizedInput: input.normalizedInput }),
       });
-      await this.publishSyncStateFromD1();
+      this.bumpPulse(null);
       return { ok: true as const };
     });
   }
@@ -108,7 +107,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     this.assertSession(event.sessionId);
     return this.runExclusive(async () => {
       const result = await this.repository().appendEvent(event);
-      await this.publishSyncStateFromD1();
+      this.bumpPulse(result.event.id);
       return result;
     });
   }
@@ -123,14 +122,9 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   async putNormalizedInput(payload: unknown): Promise<{ ok: true }> {
     return this.runExclusive(async () => {
       await this.repository().putNormalizedInput(this.sessionId(), payload);
-      // Normalized input is not in the RuntimeSnapshot mirror; bump revision only
-      // so clients can re-fetch related HTTP resources without a full D1 snapshot load.
+      // Normalized input is not on the snapshot; still bump so clients re-fetch.
       const previous = this.state ?? EMPTY_SYNC_STATE;
-      this.setState({
-        revision: previous.revision + 1,
-        snapshot: previous.snapshot,
-        continuation: null,
-      });
+      this.bumpPulse(previous.lastEventId);
       return { ok: true as const };
     });
   }
@@ -142,24 +136,41 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     });
   }
 
-  /** Current broadcast mirror (for tests and diagnostics). */
+  /** Current invalidation pulse (for tests and diagnostics). */
   async getSyncState(): Promise<ExecutionSessionSyncState> {
     return this.state;
   }
 
   /**
-   * Loads the latest snapshot from D1 and broadcasts via `setState`.
-   * Safe when the session row does not exist yet (snapshot stays null).
+   * Advance the client invalidation pulse. Cheap: no D1 snapshot load.
    * Must be called under {@link runExclusive} when concurrent with other writers.
    */
-  private async publishSyncStateFromD1(): Promise<void> {
-    const snapshot = await this.repository().getSnapshot(this.sessionId(), {
-      recentEventLimit: SYNC_RECENT_EVENT_LIMIT,
-    });
+  private bumpPulse(lastEventId: string | null): void {
     const previous = this.state ?? EMPTY_SYNC_STATE;
     this.setState({
       revision: previous.revision + 1,
-      snapshot: snapshot === undefined ? null : toJsonValue(snapshot),
+      lastEventId,
+      continuation: null,
+    });
+  }
+
+  /**
+   * If Agent state is still empty but D1 has the session, seed a pulse so
+   * reconnecting clients see a non-zero revision. Uses a 1-event snapshot only.
+   */
+  private async ensureSyncPulse(): Promise<void> {
+    const current = this.state ?? EMPTY_SYNC_STATE;
+    if (current.revision > 0) return;
+
+    const snapshot = await this.repository().getSnapshot(this.sessionId(), {
+      recentEventLimit: 1,
+    });
+    if (snapshot === undefined) return;
+
+    const last = snapshot.recentEvents[snapshot.recentEvents.length - 1];
+    this.setState({
+      revision: 1,
+      lastEventId: last?.id ?? null,
       continuation: null,
     });
   }
