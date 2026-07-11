@@ -134,6 +134,42 @@ describe("createRuntimeSnapshot", () => {
     ).toThrow("Plan identity/version");
   });
 
+  it.each([
+    [
+      "steps",
+      { ...plan, steps: [{ ...plan.steps[0]!, estimatedDurationSeconds: 120 }, plan.steps[1]!] },
+    ],
+    ["goal", { ...plan, goal: { ...plan.goal, description: "Stay home" } }],
+    [
+      "domain data",
+      { ...plan, steps: [{ ...plan.steps[0]!, domainData: { changed: true } }, plan.steps[1]!] },
+    ],
+  ])("rejects the same plan identity/version with differing %s", (_name, suppliedPlan) => {
+    expect(() => createRuntimeSnapshot({ plan: suppliedPlan, state, recentEvents: [] })).toThrow(
+      "Supplied plan does not match execution state plan",
+    );
+  });
+
+  it("rejects a session whose goal does not match the plan", () => {
+    expect(() =>
+      createRuntimeSnapshot({
+        plan,
+        state: { ...state, session: { ...state.session, goalId: "other-goal" } },
+        recentEvents: [],
+      }),
+    ).toThrow("Session goal does not match execution plan goal");
+  });
+
+  it("rejects recent events from another session", () => {
+    expect(() =>
+      createRuntimeSnapshot({
+        plan,
+        state,
+        recentEvents: [{ ...event, sessionId: "session-2" }],
+      }),
+    ).toThrow("Recent event does not belong to execution session");
+  });
+
   it("rejects malformed materialized state and non-running active timers", () => {
     expect(() =>
       createRuntimeSnapshot({

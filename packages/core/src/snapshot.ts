@@ -55,6 +55,17 @@ export function createRuntimeSnapshot<TStepData = unknown>({
   ) {
     throw new Error("Plan identity/version does not match execution state session");
   }
+  if (JSON.stringify(parsedPlan) !== JSON.stringify(parsedState.plan)) {
+    throw new Error("Supplied plan does not match execution state plan");
+  }
+  if (parsedState.session.goalId !== parsedPlan.goal.id) {
+    throw new Error("Session goal does not match execution plan goal");
+  }
+
+  const parsedRecentEvents = recentEvents.map((event) => runtimeEventSchema.parse(event));
+  if (parsedRecentEvents.some(({ sessionId }) => sessionId !== parsedState.session.id)) {
+    throw new Error("Recent event does not belong to execution session");
+  }
 
   const planStepIds = new Set(parsedPlan.steps.map(({ id }) => id));
   const stepStates = Object.fromEntries(
@@ -79,7 +90,7 @@ export function createRuntimeSnapshot<TStepData = unknown>({
     worldState: parsedState.worldState,
     stepStates,
     activeTimers: Object.values(parsedState.timers).filter(({ status }) => status === "running"),
-    recentEvents: [...recentEvents],
+    recentEvents: parsedRecentEvents,
     readyStepIds,
     activeStepIds,
     blockedStepIds,
