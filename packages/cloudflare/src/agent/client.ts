@@ -8,6 +8,7 @@ import type {
 } from "@pear-agent/core";
 
 import type { PearEnv } from "../env.js";
+import type { ExecutionSessionSyncState } from "./sync-state.js";
 
 /**
  * Typed Worker→Agent RPC surface.
@@ -25,6 +26,7 @@ export type ExecutionSessionAgentRpc = {
   getSnapshot(options?: GetSnapshotOptions): Promise<RuntimeSnapshot | null>;
   putNormalizedInput(payload: unknown): Promise<{ ok: true }>;
   getNormalizedInput(): Promise<unknown | null>;
+  getSyncState(): Promise<ExecutionSessionSyncState>;
 };
 
 export async function getExecutionSessionAgent(

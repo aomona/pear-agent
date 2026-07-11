@@ -187,6 +187,43 @@ describe("cloudflare runtime integration", () => {
     expect(normalizedBody.normalizedInput.departureAt).toBe("2026-07-11T03:00:00Z");
   });
 
+  it("publishes invalidation pulse on Agent sync state after mutations", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+
+    const { getExecutionSessionAgent } = await import("./agent/client.js");
+    const agent = await getExecutionSessionAgent(pearEnv, sessionId);
+    const afterCreate = await agent.getSyncState();
+    expect(afterCreate.revision).toBeGreaterThan(0);
+    expect(afterCreate.continuation).toBeNull();
+    expect(afterCreate.lastEventId).toBeNull();
+
+    const started = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/events`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...contextHeaders(),
+        },
+        body: JSON.stringify({
+          id: `${sessionId}-evt-start-sync`,
+          sessionId,
+          idempotencyKey: "session-start-sync",
+          actorId: "traveler",
+          origin: "user",
+          type: "session_started",
+          payload: {},
+          occurredAt: "2026-07-11T00:00:00.000Z",
+        }),
+      }),
+    );
+    expect(started.status).toBe(200);
+
+    const afterEvent = await agent.getSyncState();
+    expect(afterEvent.revision).toBeGreaterThan(afterCreate.revision);
+    expect(afterEvent.lastEventId).toBe(`${sessionId}-evt-start-sync`);
+  });
+
   it("serializes concurrent appends for the same session via the Agent", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     expect((await createSession(sessionId)).status).toBe(201);

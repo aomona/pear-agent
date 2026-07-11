@@ -2,14 +2,15 @@ import { outingGoal, outingPlan } from "../../../examples/outing-domain/src/doma
 
 import { allowAllAuthorize, AuthorizationError, type AuthorizeFn } from "./authorize.js";
 import { ExecutionSessionAgent } from "./agent/execution-session-agent.js";
-import { createPearApp } from "./http/app.js";
 import { createStaticPlanGenerator } from "./planner.js";
+import { createPearWorker } from "./worker.js";
 
 export { ExecutionSessionAgent };
 
 /**
- * Test/demo Worker entry. Production hosts call {@link createPearApp} with their
- * own authorize + AI SDK PlanGenerator and export ExecutionSessionAgent.
+ * Test/demo Worker entry. Production hosts call {@link createPearWorker} (or
+ * {@link createPearApp} + `routeAgentRequest`) with their own authorize + AI SDK
+ * PlanGenerator and export ExecutionSessionAgent.
  */
 const denyHeader = "x-pear-deny";
 
@@ -21,7 +22,7 @@ const authorize: AuthorizeFn = async (operation, context) => {
   await allowAllAuthorize(operation, context);
 };
 
-const app = createPearApp({
+const worker = createPearWorker({
   authorize,
   planGenerator: createStaticPlanGenerator(outingPlan),
   resolveContext: (request) => {
@@ -53,5 +54,5 @@ const app = createPearApp({
 void outingGoal;
 
 export default {
-  fetch: app.fetch,
+  fetch: worker.fetch,
 };

@@ -9,6 +9,18 @@ export {
   getExecutionSessionAgent,
 } from "./agent/client.js";
 export {
+  EMPTY_SYNC_STATE,
+  EXECUTION_SESSION_AGENT_NAME,
+  type ExecutionSessionSyncState,
+} from "./agent/sync-state.js";
+export {
+  createPearWorker,
+  PEAR_CONTEXT_QUERY_KEY,
+  resolveAgentConnectContext,
+  sessionIdFromAgentRequest,
+  type PearWorker,
+} from "./worker.js";
+export {
   allowAllAuthorize,
   AuthorizationError,
   type AuthorizeFn,

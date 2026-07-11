@@ -33,9 +33,11 @@ const planGenerator: PlanGenerator = {
   },
 };
 
-const app = createPearApp({ authorize, planGenerator });
+// Prefer createPearWorker so React clients can subscribe via agents WebSocket
+// (`/agents/execution-session-agent/:sessionId`). createPearApp is HTTP-only.
+const worker = createPearWorker({ authorize, planGenerator });
 
-export default { fetch: app.fetch };
+export default { fetch: worker.fetch };
 ```
 
 Bind `DB` (D1), `RAW_INPUTS` (R2), and `ExecutionSessionAgent` (Durable Object with SQLite migration) in Wrangler. Apply `migrations/0001_init.sql`.
