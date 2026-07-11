@@ -214,6 +214,7 @@ export function applyRuntimeEvent(
     plan = applied.plan;
     session = applied.session;
     stepStates = applied.stepStates;
+    criterionEvaluations = applied.criterionEvaluations;
   }
 
   if (event.type === "session_started") {
@@ -302,6 +303,7 @@ function applyPlanUpdate(
   plan: ExecutionPlan;
   session: MaterializedExecutionState["session"];
   stepStates: StepStates;
+  criterionEvaluations: MaterializedExecutionState["criterionEvaluations"];
 } {
   if (nextPlan.id !== state.plan.id) {
     throw new Error(`Plan id mismatch: ${nextPlan.id} !== ${state.plan.id}`);
@@ -319,9 +321,7 @@ function applyPlanUpdate(
   for (const [stepId, stepState] of Object.entries(state.stepStates)) {
     if (!PROTECTED_STEP_STATUSES.has(stepState.status)) continue;
     if (!nextStepIds.has(stepId)) {
-      throw new Error(
-        `Cannot remove ${stepState.status} step: ${stepId}`,
-      );
+      throw new Error(`Cannot remove ${stepState.status} step: ${stepId}`);
     }
   }
 
@@ -337,10 +337,22 @@ function applyPlanUpdate(
     }
   }
 
+  // Retain status only when the step structure is unchanged, or when the step
+  // is protected (completed/skipped/active — already structurally equal above).
+  // Non-protected steps that were rewritten (e.g. failed) drop status so
+  // deriveStepStatuses can re-ready them after replan.
   const retainedStates: StepStates = {};
   for (const step of nextPlan.steps) {
     const existing = state.stepStates[step.id];
-    if (existing) retainedStates[step.id] = existing;
+    if (!existing) continue;
+    const previous = previousSteps.get(step.id);
+    if (!previous) continue;
+    if (
+      PROTECTED_STEP_STATUSES.has(existing.status) ||
+      stepsStructurallyEqual(previous, step)
+    ) {
+      retainedStates[step.id] = existing;
+    }
   }
 
   const stepStates = {
@@ -348,16 +360,35 @@ function applyPlanUpdate(
     ...deriveStepStatuses(nextPlan.steps, retainedStates),
   };
 
+  // Drop projected evaluations for criterion IDs no longer on the goal.
+  // History remains an audit log; completion only consults the projection.
+  const criterionIds = new Set(nextPlan.goal.successCriteria.map(({ id }) => id));
+  const criterionEvaluations = Object.fromEntries(
+    Object.entries(state.criterionEvaluations).filter(([criterionId]) =>
+      criterionIds.has(criterionId),
+    ),
+  );
+
+  let session: MaterializedExecutionState["session"] = {
+    ...state.session,
+    planId: nextPlan.id,
+    planVersion: nextPlan.version,
+    goalId: nextPlan.goal.id,
+    updatedAt: occurredAt,
+  };
+
+  if (nextPlan.goal.completionPolicy === "automatic") {
+    const latestEvaluations = latestCriterionEvaluations(nextPlan.goal, criterionEvaluations);
+    if (evaluateGoalCompletion(nextPlan.goal, latestEvaluations) === "satisfied") {
+      session = { ...session, status: "completed", updatedAt: occurredAt };
+    }
+  }
+
   return {
     plan: nextPlan,
-    session: {
-      ...state.session,
-      planId: nextPlan.id,
-      planVersion: nextPlan.version,
-      goalId: nextPlan.goal.id,
-      updatedAt: occurredAt,
-    },
+    session,
     stepStates,
+    criterionEvaluations,
   };
 }
 

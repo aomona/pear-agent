@@ -110,7 +110,8 @@ export function defineDomain<
 
 /**
  * Validates a runtime `domain_event` against Domain `schemas.events`.
- * `domainType` becomes the event discriminator when `payload` omits `type`.
+ * `domainType` is the authoritative discriminator: when `payload` omits `type`
+ * it is injected; when `payload` includes `type`, it must match `domainType`.
  */
 export function parseDomainEvent<TEventsSchema extends z.ZodType>(
   eventsSchema: TEventsSchema,
@@ -122,6 +123,12 @@ export function parseDomainEvent<TEventsSchema extends z.ZodType>(
     !Array.isArray(event.payload) &&
     "type" in event.payload
   ) {
+    const payloadType = (event.payload as { type: unknown }).type;
+    if (payloadType !== event.domainType) {
+      throw new Error(
+        `Domain event type mismatch: domainType ${JSON.stringify(event.domainType)} !== payload.type ${JSON.stringify(payloadType)}`,
+      );
+    }
     return eventsSchema.parse(event.payload);
   }
 

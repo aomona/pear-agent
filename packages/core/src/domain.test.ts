@@ -206,4 +206,25 @@ describe("parseDomainEvent", () => {
       }),
     ).toThrow();
   });
+
+  it("rejects payload.type that disagrees with domainType", () => {
+    const multiEventSchemas = {
+      ...schemas,
+      events: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("delay"), minutes: z.number().positive() }),
+        z.object({ type: z.literal("cancel"), reason: z.string().min(1) }),
+      ]),
+    };
+    const domain = defineDomain({
+      ...validDefinition(),
+      schemas: multiEventSchemas,
+    });
+
+    expect(() =>
+      parseDomainEvent(domain.schemas.events, {
+        domainType: "delay",
+        payload: { type: "cancel", reason: "user" },
+      }),
+    ).toThrow("Domain event type mismatch");
+  });
 });
