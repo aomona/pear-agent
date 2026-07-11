@@ -418,6 +418,199 @@ describe("applyRuntimeEvent", () => {
     expect(satisfied.session.status).toBe("active");
     expect(applyRuntimeEvent(satisfied, confirmationEvent()).session.status).toBe("completed");
   });
+
+  it("pauses and skips steps through dedicated events", () => {
+    const paused = applyRuntimeEvent(initialState, stepEvent("step_paused", "pack", 0));
+    expect(paused.stepStates.pack).toEqual({ status: "paused" });
+
+    const resumed = applyRuntimeEvent(paused, stepEvent("step_started", "pack", 1));
+    expect(resumed.stepStates.pack).toEqual({ status: "active" });
+
+    const skippedFromReady: MaterializedExecutionState = {
+      ...initialState,
+      stepStates: { pack: { status: "ready" } },
+    };
+    const skipped = applyRuntimeEvent(skippedFromReady, stepEvent("step_skipped", "pack", 2));
+    expect(skipped.stepStates.pack).toEqual({ status: "skipped" });
+  });
+
+  it("records domain events as world-state observations without other mutations", () => {
+    const occurredAt = new Date("2026-07-11T01:00:00.000Z");
+    const next = applyRuntimeEvent(initialState, {
+      id: "domain-1",
+      sessionId: "session-1",
+      idempotencyKey: "domain-1",
+      actorId: "human-1",
+      origin: "user",
+      type: "domain_event",
+      domainType: "delay",
+      payload: { minutes: 15 },
+      occurredAt,
+    });
+
+    expect(next.worldState.observations).toEqual([
+      { type: "delay", data: { minutes: 15 } },
+    ]);
+    expect(next.worldState.updatedAt).toEqual(occurredAt);
+    expect(next.stepStates).toEqual(initialState.stepStates);
+    expect(next.session.status).toBe("active");
+  });
+
+  it("shallow-merges facts on world_state_facts_patched", () => {
+    const base: MaterializedExecutionState = {
+      ...initialState,
+      worldState: {
+        ...initialState.worldState,
+        facts: { packedItemIds: ["keys"], chargeByBelongingId: { phone: 20 } },
+      },
+    };
+    const occurredAt = new Date("2026-07-11T01:00:00.000Z");
+    const next = applyRuntimeEvent(base, {
+      id: "facts-1",
+      sessionId: "session-1",
+      idempotencyKey: "facts-1",
+      actorId: "human-1",
+      origin: "user",
+      type: "world_state_facts_patched",
+      payload: { facts: { packedItemIds: ["keys", "wallet"], ready: true } },
+      occurredAt,
+    });
+
+    expect(next.worldState.facts).toEqual({
+      packedItemIds: ["keys", "wallet"],
+      chargeByBelongingId: { phone: 20 },
+      ready: true,
+    });
+    expect(next.worldState.updatedAt).toEqual(occurredAt);
+  });
+
+  it("applies a newer plan version while preserving completed steps", () => {
+    const completedPack: MaterializedExecutionState = {
+      ...initialState,
+      stepStates: { pack: { status: "completed" } },
+    };
+    const nextPlan = {
+      ...initialState.plan,
+      version: 2,
+      steps: [
+        packStep,
+        {
+          id: "leave",
+          executor: { type: "human" as const },
+          after: ["pack"],
+          requirements: [],
+          estimatedDurationSeconds: 30,
+          timers: [],
+          domainData: {},
+        },
+      ],
+    };
+    const next = applyRuntimeEvent(completedPack, {
+      id: "plan-2",
+      sessionId: "session-1",
+      idempotencyKey: "plan-2",
+      actorId: "system",
+      origin: "runtime",
+      type: "plan_updated",
+      payload: { plan: nextPlan },
+      occurredAt: now,
+    });
+
+    expect(next.plan.version).toBe(2);
+    expect(next.session.planVersion).toBe(2);
+    expect(next.stepStates).toMatchObject({
+      pack: { status: "completed" },
+      leave: { status: "ready" },
+    });
+  });
+
+  it("rejects plan updates that drop or mutate completed steps", () => {
+    const completedPack: MaterializedExecutionState = {
+      ...initialState,
+      stepStates: { pack: { status: "completed" } },
+    };
+
+    expect(() =>
+      applyRuntimeEvent(completedPack, {
+        id: "plan-drop",
+        sessionId: "session-1",
+        idempotencyKey: "plan-drop",
+        actorId: "system",
+        origin: "runtime",
+        type: "plan_updated",
+        payload: {
+          plan: {
+            ...initialState.plan,
+            version: 2,
+            steps: [
+              {
+                id: "leave",
+                executor: { type: "human" },
+                after: [],
+                requirements: [],
+                estimatedDurationSeconds: 30,
+                timers: [],
+                domainData: {},
+              },
+            ],
+          },
+        },
+        occurredAt: now,
+      }),
+    ).toThrow("Cannot remove completed step");
+
+    expect(() =>
+      applyRuntimeEvent(completedPack, {
+        id: "plan-mutate",
+        sessionId: "session-1",
+        idempotencyKey: "plan-mutate",
+        actorId: "system",
+        origin: "runtime",
+        type: "plan_updated",
+        payload: {
+          plan: {
+            ...initialState.plan,
+            version: 2,
+            steps: [
+              {
+                ...packStep,
+                estimatedDurationSeconds: 120,
+              },
+            ],
+          },
+        },
+        occurredAt: now,
+      }),
+    ).toThrow("Cannot mutate completed step");
+  });
+
+  it("rejects plan updates that do not increase version or change plan identity", () => {
+    expect(() =>
+      applyRuntimeEvent(initialState, {
+        id: "plan-same",
+        sessionId: "session-1",
+        idempotencyKey: "plan-same",
+        actorId: "system",
+        origin: "runtime",
+        type: "plan_updated",
+        payload: { plan: { ...initialState.plan, version: 1 } },
+        occurredAt: now,
+      }),
+    ).toThrow("Plan version must increase");
+
+    expect(() =>
+      applyRuntimeEvent(initialState, {
+        id: "plan-id",
+        sessionId: "session-1",
+        idempotencyKey: "plan-id",
+        actorId: "system",
+        origin: "runtime",
+        type: "plan_updated",
+        payload: { plan: { ...initialState.plan, id: "other-plan", version: 2 } },
+        occurredAt: now,
+      }),
+    ).toThrow("Plan id mismatch");
+  });
 });
 
 function confirmationEvent(): Extract<RuntimeEvent, { type: "goal_completion_confirmed" }> {
@@ -434,10 +627,20 @@ function confirmationEvent(): Extract<RuntimeEvent, { type: "goal_completion_con
 }
 
 function stepEvent(
-  type: "step_started" | "step_completed" | "step_failed",
+  type: "step_started" | "step_completed" | "step_failed" | "step_paused" | "step_skipped",
   stepId: string,
   suffix: number,
-): Extract<RuntimeEvent, { type: "step_started" | "step_completed" | "step_failed" }> {
+): Extract<
+  RuntimeEvent,
+  {
+    type:
+      | "step_started"
+      | "step_completed"
+      | "step_failed"
+      | "step_paused"
+      | "step_skipped";
+  }
+> {
   return {
     id: `${type}-${stepId}-${suffix}`,
     sessionId: "session-1",

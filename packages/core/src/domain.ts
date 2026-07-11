@@ -8,6 +8,7 @@ import {
 } from "./actor.js";
 import { executionGoalSchema } from "./goal.js";
 import type { ExecutionGoal } from "./goal.js";
+import type { JsonValue } from "./world-state.js";
 
 export type DomainSchemas = {
   input: z.ZodType;
@@ -105,4 +106,28 @@ export function defineDomain<
       >;
     },
   };
+}
+
+/**
+ * Validates a runtime `domain_event` against Domain `schemas.events`.
+ * `domainType` becomes the event discriminator when `payload` omits `type`.
+ */
+export function parseDomainEvent<TEventsSchema extends z.ZodType>(
+  eventsSchema: TEventsSchema,
+  event: { domainType: string; payload: JsonValue },
+): z.output<TEventsSchema> {
+  if (
+    typeof event.payload === "object" &&
+    event.payload !== null &&
+    !Array.isArray(event.payload) &&
+    "type" in event.payload
+  ) {
+    return eventsSchema.parse(event.payload);
+  }
+
+  const fields =
+    typeof event.payload === "object" && event.payload !== null && !Array.isArray(event.payload)
+      ? event.payload
+      : {};
+  return eventsSchema.parse({ type: event.domainType, ...fields });
 }

@@ -1,4 +1,5 @@
 import {
+  createWorldStateFromDomainFacts,
   defineDomain,
   type ExecutionGoal,
   type ExecutionPlan,
@@ -16,6 +17,13 @@ const belongingSchema = belongingInputSchema.extend({
   chargePercent: z.number().min(0).max(100).nullable(),
 });
 
+/** Domain-specific facts stored in WorldState.facts (not the Core envelope). */
+const outingWorldStateFactsSchema = z.object({
+  departureAt: z.iso.datetime(),
+  packedBelongingIds: z.array(z.string().min(1)),
+  chargeByBelongingId: z.record(z.string(), z.number().min(0).max(100).nullable()),
+});
+
 export const outingDomain = defineDomain({
   id: "outing",
   version: 1,
@@ -31,10 +39,7 @@ export const outingDomain = defineDomain({
     stepData: z.object({
       belongingIds: z.array(z.string().min(1)),
     }),
-    worldState: z.object({
-      packedBelongingIds: z.array(z.string().min(1)),
-      chargeByBelongingId: z.record(z.string(), z.number().min(0).max(100).nullable()),
-    }),
+    worldState: outingWorldStateFactsSchema,
     events: z.discriminatedUnion("type", [
       z.object({ type: z.literal("delay"), minutes: z.number().positive() }),
     ]),
@@ -102,14 +107,12 @@ export const outingPlan: ExecutionPlan<{ belongingIds: string[] }> = {
   ],
 };
 
-export const initialOutingWorldState: WorldState = {
-  facts: {
+export const initialOutingWorldState: WorldState = createWorldStateFromDomainFacts(
+  outingDomain.schemas.worldState,
+  {
     departureAt: "2026-07-11T03:00:00Z",
     packedBelongingIds: [],
     chargeByBelongingId: { phone: 20 },
   },
-  resources: [],
-  observations: [],
-  activeConstraints: [],
-  updatedAt: new Date("2026-07-11T00:00:00.000Z"),
-};
+  { updatedAt: new Date("2026-07-11T00:00:00.000Z") },
+);
