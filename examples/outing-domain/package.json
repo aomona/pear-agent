@@ -1,0 +1,13 @@
+{
+  "name": "@pear-agent/outing-domain-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@pear-agent/core": "workspace:*",
+    "zod": "^4.3.5"
+  }
+}
