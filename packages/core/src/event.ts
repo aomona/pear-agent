@@ -24,9 +24,7 @@ const goalCompletionConfirmedPayloadSchema = z.object({ goalId: z.string().min(1
 const worldStateFactsPatchedPayloadSchema = z
   .object({ facts: z.record(z.string(), jsonValueSchema) })
   .strict();
-const planUpdatedPayloadSchema = z
-  .object({ plan: executionPlanSchema(z.unknown()) })
-  .strict();
+const planUpdatedPayloadSchema = z.object({ plan: executionPlanSchema(z.unknown()) }).strict();
 
 function coreEventSchema<TType extends string, TPayload extends z.ZodType>(
   type: TType,

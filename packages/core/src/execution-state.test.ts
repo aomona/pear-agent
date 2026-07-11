@@ -471,9 +471,7 @@ describe("applyRuntimeEvent", () => {
       occurredAt,
     });
 
-    expect(next.worldState.observations).toEqual([
-      { type: "delay", data: { minutes: 15 } },
-    ]);
+    expect(next.worldState.observations).toEqual([{ type: "delay", data: { minutes: 15 } }]);
     expect(next.worldState.updatedAt).toEqual(occurredAt);
     expect(next.stepStates).toEqual(initialState.stepStates);
     expect(next.session.status).toBe("active");
@@ -834,12 +832,7 @@ function stepEvent(
 ): Extract<
   RuntimeEvent,
   {
-    type:
-      | "step_started"
-      | "step_completed"
-      | "step_failed"
-      | "step_paused"
-      | "step_skipped";
+    type: "step_started" | "step_completed" | "step_failed" | "step_paused" | "step_skipped";
   }
 > {
   return {

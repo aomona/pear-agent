@@ -268,10 +268,7 @@ export function applyRuntimeEvent(
     if (state.plan.goal.completionPolicy !== "human_confirmation") {
       throw new Error("Goal does not require human confirmation");
     }
-    const latestEvaluations = latestCriterionEvaluations(
-      state.plan.goal,
-      criterionEvaluations,
-    );
+    const latestEvaluations = latestCriterionEvaluations(state.plan.goal, criterionEvaluations);
     if (evaluateGoalCompletion(state.plan.goal, latestEvaluations) !== "satisfied") {
       throw new Error("Cannot confirm goal completion before all criteria are satisfied");
     }
@@ -347,10 +344,7 @@ function applyPlanUpdate(
     if (!existing) continue;
     const previous = previousSteps.get(step.id);
     if (!previous) continue;
-    if (
-      PROTECTED_STEP_STATUSES.has(existing.status) ||
-      stepsStructurallyEqual(previous, step)
-    ) {
+    if (PROTECTED_STEP_STATUSES.has(existing.status) || stepsStructurallyEqual(previous, step)) {
       retainedStates[step.id] = existing;
     }
   }

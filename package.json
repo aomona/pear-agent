@@ -5,7 +5,8 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run --passWithNoTests",
     "lint": "oxlint .",
-    "format": "oxfmt ."
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check packages examples package.json pnpm-workspace.yaml tsconfig.base.json vitest.config.ts"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260702.3",
