@@ -25,12 +25,29 @@ Read the issue + matching FR before implementing. Stay within the issue boundary
 3. Domain/cooking concepts stay in Domain packages or samples, not Core.
 4. Prefer host-injected Ports (`PlanGenerator`, `authorize`) over baking AI/auth into Core.
 
-## Commands
+## Pre-push gate (required)
+
+**Do not `git push` (or open/update a PR expecting CI) until all four pass locally.**  
+These match GitHub Actions CI on `main` / `dev`.
 
 ```bash
-pnpm typecheck
-pnpm lint
-pnpm test
+pnpm typecheck      # tsgo
+pnpm lint           # oxlint
+pnpm format:check   # oxfmt --check (packages, examples, root configs)
+pnpm test           # vitest (Node) + @pear-agent/cloudflare Workers tests when present
+```
+
+Rules for agents and humans:
+
+1. Run the four commands above after implementation and before every push.
+2. If `format:check` fails, run `pnpm format` (or `pnpm exec oxfmt <paths>`) and re-check.
+3. Fix failures; do not push broken typecheck, lint, format, or tests “to see CI”.
+4. Prefer the same order as CI: typecheck → lint → format:check → test.
+
+Optional one-liner:
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check && pnpm test
 ```
 
 ## Skills (project)
@@ -39,6 +56,6 @@ Use project skills under `.grok/skills/` (no superpowers workflow required):
 
 - `/pear-runtime` — architecture & Core conventions
 - `/pear-cloudflare` — Workers / D1 / R2 / Agent adapter
-- `/pear-verify` — verification gates
+- `/pear-verify` — verification gates (aligns with the pre-push gate)
 
 User-level `cloudflare-deploy` is available for general Cloudflare platform deploy guidance.
