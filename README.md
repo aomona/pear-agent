@@ -123,6 +123,8 @@ AI SDKはモデル呼び出し、構造化出力、Tool Callingを担当しま�
 
 環境非依存の`@pear-agent/core`は、`ExecutionGoal`、`ExecutionActor`、Capability Policy、`ExecutionPlan` / `ExecutionStep`、`StepStatus`、`ExecutionDomainDefinition`と、それらのSchema・検証関数を公開します。最小Domain定義、DAG検証、Step状態導出の利用例は[`packages/core/README.md`](./packages/core/README.md)を参照してください。
 
-永続化、Voice Session、AI SDKによる計画・再計画はFoundationの対象外で、後続Phaseで追加します。
+## Cloudflare Adapter
+
+`@pear-agent/cloudflare`は Execution Session Agent、D1（Drizzle）、R2 Raw Input、認可Hook、最小Worker HTTP APIを提供します。ホストは `PlanGenerator`（AI SDK Planner）と `authorize` を注入します。詳細は[`packages/cloudflare/README.md`](./packages/cloudflare/README.md)を参照してください。
 
 > **AIが計画と実行を支援し、現実の変化を評価して、実行中に計画を更新する閉ループ型の実行支援基盤。**

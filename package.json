@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "typecheck": "pnpm -r typecheck",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests && pnpm --filter @pear-agent/cloudflare exec vitest run",
     "lint": "oxlint .",
     "format": "oxfmt ."
   },
