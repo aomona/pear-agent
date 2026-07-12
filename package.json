@@ -6,7 +6,8 @@
     "test": "vitest run --passWithNoTests && pnpm --filter @pear-agent/cloudflare exec vitest run && pnpm --filter @pear-agent/react exec vitest run",
     "lint": "oxlint .",
     "format": "oxfmt .",
-    "format:check": "oxfmt --check packages examples package.json pnpm-workspace.yaml tsconfig.base.json vitest.config.ts"
+    "format:check": "oxfmt --check packages examples package.json pnpm-workspace.yaml tsconfig.base.json vitest.config.ts",
+    "create-pear-agent": "pnpm --filter create-pear-agent exec node ./bin/create-pear-agent.mjs"
   },
   "devDependencies": {
     "@typescript/native-preview": "7.0.0-dev.20260702.3",

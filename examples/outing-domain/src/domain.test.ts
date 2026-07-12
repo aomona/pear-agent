@@ -7,7 +7,19 @@ import {
   worldStateSchema,
 } from "@pear-agent/core";
 
-import { initialOutingWorldState, outingDomain, outingGoal, outingPlan } from "./domain.js";
+import {
+  assessOutingDelayReplan,
+  buildOutingDelayPatch,
+  buildOutingPlan,
+  buildOutingWorldState,
+  initialOutingWorldState,
+  outingDomain,
+  outingGoal,
+  outingPlan,
+  OUTING_CHARGE_TIMER_ID,
+  OUTING_DELAY_CHARGE_EXTENSION_SECONDS,
+  reconcileOutingWorldState,
+} from "./domain.js";
 
 describe("outingDomain", () => {
   it("normalizes departure time, belongings, and charge state", async () => {
@@ -55,7 +67,71 @@ describe("outingDomain", () => {
     ).toEqual({
       departureAt: "2026-07-11T03:00:00Z",
       packedBelongingIds: [],
-      chargeByBelongingId: { phone: 20 },
+      chargeByBelongingId: { keys: null, phone: 20 },
     });
+  });
+
+  it("builds plan and world state from normalized input", () => {
+    const normalized = {
+      departureAt: "2026-08-20T09:00:00Z",
+      belongings: [
+        { id: "wallet", name: "Wallet", chargePercent: null },
+        { id: "laptop", name: "Laptop", chargePercent: 40 },
+      ],
+    };
+    const plan = buildOutingPlan(normalized);
+    expect(plan.steps.map((s) => s.id)).toEqual(["pack", "charge"]);
+    expect(plan.steps.find((s) => s.id === "pack")?.domainData.belongingIds).toEqual([
+      "wallet",
+      "laptop",
+    ]);
+    expect(plan.steps.find((s) => s.id === "charge")?.domainData.belongingIds).toEqual(["laptop"]);
+    expect(plan.steps.find((s) => s.id === "charge")?.timers).toEqual([
+      { id: OUTING_CHARGE_TIMER_ID, durationSeconds: 300 },
+    ]);
+
+    const world = buildOutingWorldState(normalized, {
+      updatedAt: new Date("2026-08-20T00:00:00.000Z"),
+    });
+    expect(parseDomainWorldStateFacts(outingDomain.schemas.worldState, world)).toEqual({
+      departureAt: "2026-08-20T09:00:00Z",
+      packedBelongingIds: [],
+      chargeByBelongingId: { wallet: null, laptop: 40 },
+    });
+  });
+
+  it("assesses delay events and builds a charge-only patch", () => {
+    const delayEvent = {
+      id: "evt-delay-1",
+      type: "domain_event",
+      domainType: "delay",
+      payload: { minutes: 15 },
+    };
+    const assessment = assessOutingDelayReplan({ recentEvents: [delayEvent] });
+    expect(assessment.needsReplan).toBe(true);
+    expect(assessment.directlyAffectedStepIds).toEqual(["charge"]);
+
+    const patch = buildOutingDelayPatch({
+      plan: outingPlan,
+      assessment,
+      affectedStepIds: ["charge"],
+      recentEvents: [delayEvent],
+      patchId: "patch-1",
+    });
+    expect(patch.affectedStepIds).toEqual(["charge"]);
+    expect(patch.operations).toHaveLength(1);
+    const op = patch.operations[0];
+    expect(op?.type).toBe("update_step");
+    if (op?.type === "update_step") {
+      expect(op.step.estimatedDurationSeconds).toBe(
+        (outingPlan.steps.find((s) => s.id === "charge")?.estimatedDurationSeconds ?? 0) +
+          OUTING_DELAY_CHARGE_EXTENSION_SECONDS,
+      );
+    }
+  });
+
+  it("reconciles world state with plan utilization resource", () => {
+    const next = reconcileOutingWorldState(outingPlan, initialOutingWorldState);
+    expect(next.resources.some((r) => r.id === "plan-utilization")).toBe(true);
   });
 });

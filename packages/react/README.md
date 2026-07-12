@@ -75,19 +75,21 @@ function SessionPanel() {
 
 ### Hooks
 
-| Hook                  | Role                                                                                 |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                              |
-| `useRuntimeSnapshot`  | HTTP hydrate + Agent pulse invalidation; loading/error/reconnect                     |
-| `useContinuation`     | Durable Continuation read model plus suspend / claim-resume / complete operations    |
-| `useVoiceSession`     | Voice Lease + ephemeral token + Live connect; tool bridge; disconnect ≠ session stop |
+| Hook                  | Role                                                                                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                                                              |
+| `useRuntimeSnapshot`  | HTTP hydrate + Agent pulse invalidation; loading/error/reconnect                                                     |
+| `useContinuation`     | Durable Continuation read model plus suspend / claim-resume / complete operations                                    |
+| `useVoiceSession`     | Voice Lease + ephemeral token + Live connect; **browser mic/speaker bridge**; tool bridge; disconnect ≠ session stop |
 
 ```tsx
 import { useVoiceSession, FakeVoiceProvider } from "@pear-agent/react";
 
 function VoicePanel({ sessionId }: { sessionId: string }) {
   const voice = useVoiceSession(sessionId);
-  // Tests: useVoiceSession(sessionId, { provider: new FakeVoiceProvider() })
+  // After connect(): mic capture + model audio playback start automatically
+  // (disable with enableBrowserMedia: false).
+  // Tests: useVoiceSession(sessionId, { provider: new FakeVoiceProvider(), enableBrowserMedia: false })
   return (
     <button type="button" onClick={() => void voice.connect()}>
       Connect voice ({voice.status})
@@ -96,7 +98,9 @@ function VoicePanel({ sessionId }: { sessionId: string }) {
 }
 ```
 
-Optional peer: `@google/genai` for `GeminiLiveVoiceProvider` (default when no `provider` override).
+Optional peer: `@google/genai` for `GeminiLiveVoiceProvider` (default when no `provider` override). Host apps should depend on `@google/genai` so the browser can load it.
+
+Live defaults (gemini-live-api-dev skill): model `gemini-3.1-flash-live-preview`, ephemeral tokens from the Worker, `sendRealtimeInput` for audio/text, `audioStreamEnd` on mute, flush playback on `interrupted`.
 
 ### Partial Replanning
 

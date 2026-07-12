@@ -80,3 +80,13 @@ Provider resume handleや接続状態をReactだけに保持しません。Execu
 - Cloudflare Workersで利用できないNode固有処理をCoreへ持ち込まない
 - 既存コードをコピーする場合も、PEARのSchemaと境界に合わせて再検証する
 - cook-agentの挙動を回帰テストケースとして活用する
+
+## Core 拡張カタログ
+
+cook-agent 相当の「計画を作り・見せ・直し・実行する」体験に向けて Core へ載せる候補機能は、[core-extensions-for-cook-parity.md](./core-extensions-for-cook-parity.md) に CE-01 以降として列挙する。
+
+- 表示フィールド、Timer 定義、timeline、scheduler
+- Planner / Improver Port、Plan Artifact と Version
+- 量付き資源、presentation、diff など
+
+料理固有概念（レシピ、prep/cook kind、食品安全）は引き続き Domain 側。

@@ -13,6 +13,12 @@ export const voiceSessionStatusSchema = z.enum([
 ]);
 export type VoiceSessionStatus = z.infer<typeof voiceSessionStatusSchema>;
 
+/**
+ * Recommended Gemini Live model (gemini-live-api-dev).
+ * Single source of truth for Worker minting and client fallbacks.
+ */
+export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview";
+
 export const voiceLeaseStatusSchema = z.enum(["active", "released", "expired"]);
 export type VoiceLeaseStatus = z.infer<typeof voiceLeaseStatusSchema>;
 
@@ -115,6 +121,8 @@ export type VoiceConnectionEventMap = {
   toolCall: VoiceToolCall[];
   error: Error;
   resumeHandle: string;
+  /** Model interrupted playback (user barge-in); clients should flush audio queues. */
+  interrupted: true;
 };
 
 export type VoiceConnectionEvent = keyof VoiceConnectionEventMap;
@@ -158,6 +166,7 @@ export function createVoiceEventBus(): VoiceEventBus {
     toolCall: new Set(),
     error: new Set(),
     resumeHandle: new Set(),
+    interrupted: new Set(),
   };
 
   return {

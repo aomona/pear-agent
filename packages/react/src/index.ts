@@ -31,6 +31,17 @@ export {
   type UseVoiceSessionOptions,
   type UseVoiceSessionResult,
 } from "./use-voice-session.js";
+export {
+  attachBrowserVoiceMedia,
+  downsampleMono,
+  floatToPcm16Bytes,
+  GEMINI_LIVE_INPUT_SAMPLE_RATE,
+  GEMINI_LIVE_OUTPUT_SAMPLE_RATE,
+  type AttachBrowserVoiceMediaOptions,
+  type BrowserVoiceMediaHandle,
+} from "./voice/browser-media.js";
+// Re-export model constant from Core (single source of truth).
+export { DEFAULT_GEMINI_LIVE_MODEL } from "@pear-agent/core";
 export type {
   AppendEventInput,
   AsyncStatus,
