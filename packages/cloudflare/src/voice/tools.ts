@@ -196,12 +196,19 @@ const BUILTIN_TOOLS = {
   pause_step: stepTool("Pause an active plan step.", "step_paused"),
   skip_step: stepTool("Skip a plan step.", "step_skipped"),
   start_timer: {
-    description: "Start a timer by id.",
+    description:
+      "Start a plan timer by id. Prefer timerId + durationSeconds from the plan summary (steps[].timers). Do not ask the user for duration when the plan already defines it.",
     parameters: {
       type: "object" as const,
       properties: {
-        timerId: { type: "string" },
-        durationSeconds: { type: "number" },
+        timerId: {
+          type: "string",
+          description: "Timer id from plan step timers, e.g. charge-wait",
+        },
+        durationSeconds: {
+          type: "number",
+          description: "Duration from plan timer definition when first starting the timer",
+        },
       },
       required: ["timerId"],
     },
@@ -298,18 +305,61 @@ export function summarizeSnapshotForVoice(snapshot: RuntimeSnapshot): Record<str
           .map((operation) => operation.stepId),
       }
     : null;
+
+  const steps = snapshot.plan.steps.map((step) => {
+    const status = snapshot.stepStates[step.id]?.status ?? "unknown";
+    return {
+      id: step.id,
+      label: step.label ?? step.id,
+      status,
+      estimatedDurationSeconds: step.estimatedDurationSeconds ?? null,
+      instructions: step.instructions ?? step.summary ?? null,
+      timers: step.timers.map((timer) => ({
+        id: timer.id,
+        label: timer.label ?? timer.id,
+        durationSeconds: timer.durationSeconds,
+        autoStart: timer.autoStart ?? false,
+      })),
+    };
+  });
+
+  const active =
+    steps.find((s) => s.status === "active") ?? steps.find((s) => s.status === "ready") ?? null;
+
   return {
     sessionId: snapshot.session.id,
     sessionStatus: snapshot.session.status,
     planId: snapshot.plan.id,
     planVersion: snapshot.plan.version,
+    planTitle: snapshot.plan.title ?? null,
+    steps,
+    /** Convenience: current or next human-facing step. */
+    focusStep: active
+      ? {
+          id: active.id,
+          label: active.label,
+          status: active.status,
+          instructions: active.instructions,
+          timers: active.timers,
+        }
+      : null,
     stepStates: Object.fromEntries(
       Object.entries(snapshot.stepStates).map(([id, state]) => [id, state.status]),
+    ),
+    /** Timers defined on the plan (not yet necessarily running). */
+    planTimers: steps.flatMap((s) =>
+      s.timers.map((t) => ({
+        ...t,
+        stepId: s.id,
+        stepLabel: s.label,
+      })),
     ),
     activeTimers: snapshot.activeTimers.map((t) => ({
       id: t.id,
       status: t.status,
       remainingSeconds: t.remainingSeconds,
+      durationSeconds: t.durationSeconds,
+      endsAt: t.endsAt?.toISOString?.() ?? t.endsAt ?? null,
     })),
     recentEventTypes: snapshot.recentEvents.slice(-6).map((e) => e.type),
     latestPlanChange: planDiff,

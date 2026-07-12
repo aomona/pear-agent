@@ -3,6 +3,7 @@ import { PearProvider, usePearContext, type PlanArtifactDetail } from "@pear-age
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { ActiveTimersHud } from "./components/active-timers-hud";
 import { ExecuteScreen } from "./components/execute-screen";
 import { PhaseStepper } from "./components/phase-stepper";
 import { PlanDraftPanel } from "./components/plan-draft-panel";
@@ -218,6 +219,7 @@ function DemoShell() {
         {phase === "execute" ? (
           <>
             <ExecuteScreen sessionId={sessionForCurrentPlan} />
+            <ActiveTimersHud sessionId={sessionForCurrentPlan} />
             <VoiceDock sessionId={sessionForCurrentPlan} />
           </>
         ) : null}

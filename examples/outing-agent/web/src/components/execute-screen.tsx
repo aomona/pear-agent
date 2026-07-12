@@ -198,19 +198,38 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
                   できた
                 </Button>
               ) : null}
-              {next.node.id === "charge" && next.mode === "active" ? (
-                <Button
-                  size="lg"
-                  variant="secondary"
-                  onClick={() =>
-                    void run("タイマー開始", () =>
-                      session.startTimer({ timerId: "charge-wait", durationSeconds: 300 }),
-                    )
-                  }
-                >
-                  充電タイマー
-                </Button>
-              ) : null}
+              {next.node.id === "charge" && next.mode === "active"
+                ? (() => {
+                    const chargeStep = plan?.steps.find((s) => s.id === "charge");
+                    const chargeTimer =
+                      chargeStep?.timers.find((t) => t.id === "charge-wait") ??
+                      chargeStep?.timers[0];
+                    if (!chargeTimer) return null;
+                    const alreadyRunning = Boolean(
+                      snapshot?.activeTimers.some((t) => t.id === chargeTimer.id),
+                    );
+                    const mins = Math.round(chargeTimer.durationSeconds / 60);
+                    return (
+                      <Button
+                        size="lg"
+                        variant="secondary"
+                        disabled={alreadyRunning}
+                        onClick={() =>
+                          void run(`タイマー ${chargeTimer.durationSeconds}s 開始`, () =>
+                            session.startTimer({
+                              timerId: chargeTimer.id,
+                              durationSeconds: chargeTimer.durationSeconds,
+                            }),
+                          )
+                        }
+                      >
+                        {alreadyRunning
+                          ? "タイマー作動中"
+                          : `充電タイマー（${mins > 0 ? `${mins}分` : `${chargeTimer.durationSeconds}秒`}）`}
+                      </Button>
+                    );
+                  })()
+                : null}
               <Button
                 size="lg"
                 variant="outline"

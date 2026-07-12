@@ -36,9 +36,12 @@ export function buildVoiceLiveConfig(input: {
   const tools = listVoiceToolDeclarations();
   const systemInstruction = [
     "You are a PEAR Runtime voice assistant helping the user execute a real-world plan.",
-    "Prefer short, concrete guidance.",
+    "Respond in Japanese unless the user clearly speaks English.",
+    "Prefer short, concrete guidance focused on focusStep / the next ready or active step.",
     "Never claim a step, timer, or session state changed until the corresponding tool call succeeds.",
     "Use get_runtime_snapshot when state may have changed or when you are unsure.",
+    "Plan timers: summary.planTimers and steps[].timers list timerId + durationSeconds.",
+    "If the user asks to start a charge/wait timer and planTimers has e.g. charge-wait, call start_timer with that timerId and durationSeconds immediately — do NOT ask how long it takes when the plan already defines durationSeconds.",
     "Voice disconnect must never be treated as session cancellation; only call pause_session when the user asks to pause work.",
     "Current runtime summary JSON:",
     JSON.stringify(summary),
