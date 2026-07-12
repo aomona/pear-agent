@@ -79,7 +79,7 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     .join(",");
 
   // Sequential loop: play burst → wait 1s after it ends → play again.
-  // Abort on cleanup so React Strict Mode / complete_timer cannot stack loops.
+  // Depend only on doneKey (not cards) so the 250ms tick never restarts the loop.
   useEffect(() => {
     if (!doneKey) {
       toastedDoneKeyRef.current = "";
@@ -90,7 +90,7 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
       toastedDoneKeyRef.current = doneKey;
       const labels = doneCards.map((c) => c.label).join("、");
       toast.message(`${labels} が終了しました`, {
-        description: "ピピピピ…「完了して」と言うか完了を押すまで、1秒おきに繰り返します",
+        description: "ピピピピ…「完了して」と言うか完了を押すまで、鳴り終わりから1秒後に再鳴",
         duration: 6_000,
       });
     }
@@ -100,13 +100,16 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     void (async () => {
       while (!cancelled) {
         await playTimerAlarmBeepsThenWait(ALARM_GAP_AFTER_BURST_MS);
+        if (cancelled) break;
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [doneKey, doneCards]);
+    // doneCards labels only used on first toast for this doneKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-arm when done set changes
+  }, [doneKey]);
 
   if (!sessionId || cards.length === 0) return null;
 
