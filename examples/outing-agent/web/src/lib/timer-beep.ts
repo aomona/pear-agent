@@ -71,9 +71,3 @@ export function playTimerAlarmBeeps(): Promise<void> {
   playChain = job.catch(() => undefined);
   return job;
 }
-
-/** Wait `gapMs` after a burst finishes (for repeat loops). */
-export async function playTimerAlarmBeepsThenWait(gapMs: number): Promise<void> {
-  await playTimerAlarmBeeps();
-  await sleep(gapMs);
-}

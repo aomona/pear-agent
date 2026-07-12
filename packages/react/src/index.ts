@@ -33,6 +33,11 @@ export {
   type UseVoiceSessionResult,
 } from "./use-voice-session.js";
 export {
+  createResumeHandleSync,
+  type ResumeHandleSync,
+  type ResumeHandleSyncOptions,
+} from "./voice/resume-handle-sync.js";
+export {
   attachBrowserVoiceMedia,
   downsampleMono,
   floatToPcm16Bytes,

@@ -1,8 +1,9 @@
-import { buildPlanPresentation } from "@pear-agent/core";
+import { buildPlanPresentation, type ExecutionPlan } from "@pear-agent/core";
 import { useExecutionSession, usePearContext, useRuntimeSnapshot } from "@pear-agent/react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { findChargeTimer, formatTimerDurationLabel } from "../lib/plan-timers";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -198,38 +199,17 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
                   できた
                 </Button>
               ) : null}
-              {next.node.id === "charge" && next.mode === "active"
-                ? (() => {
-                    const chargeStep = plan?.steps.find((s) => s.id === "charge");
-                    const chargeTimer =
-                      chargeStep?.timers.find((t) => t.id === "charge-wait") ??
-                      chargeStep?.timers[0];
-                    if (!chargeTimer) return null;
-                    const alreadyRunning = Boolean(
-                      snapshot?.activeTimers.some((t) => t.id === chargeTimer.id),
-                    );
-                    const mins = Math.round(chargeTimer.durationSeconds / 60);
-                    return (
-                      <Button
-                        size="lg"
-                        variant="secondary"
-                        disabled={alreadyRunning}
-                        onClick={() =>
-                          void run(`タイマー ${chargeTimer.durationSeconds}s 開始`, () =>
-                            session.startTimer({
-                              timerId: chargeTimer.id,
-                              durationSeconds: chargeTimer.durationSeconds,
-                            }),
-                          )
-                        }
-                      >
-                        {alreadyRunning
-                          ? "タイマー作動中"
-                          : `充電タイマー（${mins > 0 ? `${mins}分` : `${chargeTimer.durationSeconds}秒`}）`}
-                      </Button>
-                    );
-                  })()
-                : null}
+              {next.node.id === "charge" && next.mode === "active" ? (
+                <ChargeTimerButton
+                  plan={plan}
+                  activeTimerIds={snapshot?.activeTimers.map((t) => t.id) ?? []}
+                  onStart={(timerId, durationSeconds) =>
+                    void run(`タイマー ${durationSeconds}s 開始`, () =>
+                      session.startTimer({ timerId, durationSeconds }),
+                    )
+                  }
+                />
+              ) : null}
               <Button
                 size="lg"
                 variant="outline"
@@ -274,5 +254,27 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ChargeTimerButton(props: {
+  plan: ExecutionPlan | undefined;
+  activeTimerIds: string[];
+  onStart: (timerId: string, durationSeconds: number) => void;
+}) {
+  const chargeTimer = findChargeTimer(props.plan);
+  if (!chargeTimer) return null;
+  const alreadyRunning = props.activeTimerIds.includes(chargeTimer.id);
+  return (
+    <Button
+      size="lg"
+      variant="secondary"
+      disabled={alreadyRunning}
+      onClick={() => props.onStart(chargeTimer.id, chargeTimer.durationSeconds)}
+    >
+      {alreadyRunning
+        ? "タイマー作動中"
+        : `充電タイマー（${formatTimerDurationLabel(chargeTimer.durationSeconds)}）`}
+    </Button>
   );
 }

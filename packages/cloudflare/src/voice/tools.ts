@@ -6,6 +6,14 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
+import { summarizeSnapshotForVoice } from "./snapshot-summary.js";
+
+export {
+  summarizeSnapshotForVoice,
+  type VoiceRuntimeSummary,
+  type VoiceStepSummary,
+} from "./snapshot-summary.js";
+
 /** Built-in PEAR voice tools (v0.1). */
 export const BUILTIN_VOICE_TOOL_NAMES = [
   "get_runtime_snapshot",
@@ -276,95 +284,6 @@ export function voiceToolAuthorizeEventType(
   const tool = BUILTIN_TOOLS[toolName as BuiltinVoiceToolName];
   if (!tool) return undefined;
   return tool.authorizeEventType;
-}
-
-export function summarizeSnapshotForVoice(snapshot: RuntimeSnapshot): Record<string, unknown> {
-  const planChange = snapshot.latestPlanChange;
-  const planDiff = planChange
-    ? {
-        status: planChange.status,
-        effect:
-          planChange.status === "applied"
-            ? "applied"
-            : planChange.status === "failed"
-              ? "rejected"
-              : "proposed",
-        mode: planChange.mode,
-        summary: planChange.patch.summary,
-        causeEventIds: planChange.patch.causeEventIds,
-        targetPlanVersion: planChange.targetPlanVersion,
-        failureReason: planChange.failureReason,
-        addedStepIds: planChange.patch.operations
-          .filter((operation) => operation.type === "add_step")
-          .map((operation) => operation.step.id),
-        updatedStepIds: planChange.patch.operations
-          .filter((operation) => operation.type === "update_step")
-          .map((operation) => operation.stepId),
-        removedStepIds: planChange.patch.operations
-          .filter((operation) => operation.type === "remove_step")
-          .map((operation) => operation.stepId),
-      }
-    : null;
-
-  const steps = snapshot.plan.steps.map((step) => {
-    const status = snapshot.stepStates[step.id]?.status ?? "unknown";
-    return {
-      id: step.id,
-      label: step.label ?? step.id,
-      status,
-      estimatedDurationSeconds: step.estimatedDurationSeconds ?? null,
-      instructions: step.instructions ?? step.summary ?? null,
-      timers: step.timers.map((timer) => ({
-        id: timer.id,
-        label: timer.label ?? timer.id,
-        durationSeconds: timer.durationSeconds,
-        autoStart: timer.autoStart ?? false,
-      })),
-    };
-  });
-
-  const active =
-    steps.find((s) => s.status === "active") ?? steps.find((s) => s.status === "ready") ?? null;
-
-  return {
-    sessionId: snapshot.session.id,
-    sessionStatus: snapshot.session.status,
-    planId: snapshot.plan.id,
-    planVersion: snapshot.plan.version,
-    planTitle: snapshot.plan.title ?? null,
-    steps,
-    /** Convenience: current or next human-facing step. */
-    focusStep: active
-      ? {
-          id: active.id,
-          label: active.label,
-          status: active.status,
-          instructions: active.instructions,
-          timers: active.timers,
-        }
-      : null,
-    stepStates: Object.fromEntries(
-      Object.entries(snapshot.stepStates).map(([id, state]) => [id, state.status]),
-    ),
-    /** Timers defined on the plan (not yet necessarily running). */
-    planTimers: steps.flatMap((s) =>
-      s.timers.map((t) => ({
-        ...t,
-        stepId: s.id,
-        stepLabel: s.label,
-      })),
-    ),
-    activeTimers: snapshot.activeTimers.map((t) => ({
-      id: t.id,
-      status: t.status,
-      remainingSeconds: t.remainingSeconds,
-      durationSeconds: t.durationSeconds,
-      endsAt: t.endsAt?.toISOString?.() ?? t.endsAt ?? null,
-    })),
-    recentEventTypes: snapshot.recentEvents.slice(-6).map((e) => e.type),
-    latestPlanChange: planDiff,
-    generatedAt: snapshot.generatedAt.toISOString(),
-  };
 }
 
 export async function executeVoiceTool(

@@ -125,6 +125,8 @@ export {
   summarizeSnapshotForVoice,
   voiceToolAuthorizeEventType,
   type BuiltinVoiceToolName,
+  type VoiceRuntimeSummary,
+  type VoiceStepSummary,
   type VoiceToolAuthorizeEventType,
   type VoiceToolDeclaration,
   type VoiceToolResult,

@@ -1,7 +1,7 @@
 import type { RuntimeSnapshot } from "@pear-agent/core";
 import { describe, expect, it } from "vitest";
 
-import { summarizeSnapshotForVoice } from "./tools.js";
+import { summarizeSnapshotForVoice } from "./snapshot-summary.js";
 
 function minimalSnapshot(): RuntimeSnapshot {
   const now = new Date("2026-07-12T00:00:00.000Z");
@@ -60,22 +60,29 @@ function minimalSnapshot(): RuntimeSnapshot {
 }
 
 describe("summarizeSnapshotForVoice", () => {
-  it("exposes plan timer definitions for start_timer", () => {
+  it("exposes steps with timers and focusStepId without redundant mirrors", () => {
     const summary = summarizeSnapshotForVoice(minimalSnapshot());
-    expect(summary.planTimers).toEqual([
+    expect(summary.focusStepId).toBe("charge");
+    expect(summary.steps).toEqual([
       {
-        id: "charge-wait",
-        label: "Charge wait",
-        durationSeconds: 300,
-        autoStart: false,
-        stepId: "charge",
-        stepLabel: "Charge devices",
+        id: "charge",
+        label: "Charge devices",
+        status: "active",
+        estimatedDurationSeconds: 300,
+        instructions: "Plug in phone",
+        timers: [
+          {
+            id: "charge-wait",
+            label: "Charge wait",
+            durationSeconds: 300,
+            autoStart: false,
+          },
+        ],
       },
     ]);
-    expect(summary.focusStep).toMatchObject({
-      id: "charge",
-      status: "active",
-      timers: [{ id: "charge-wait", durationSeconds: 300 }],
-    });
+    // Redundant fields must stay gone (keeps Live token small).
+    expect(summary).not.toHaveProperty("stepStates");
+    expect(summary).not.toHaveProperty("planTimers");
+    expect(summary).not.toHaveProperty("focusStep");
   });
 });

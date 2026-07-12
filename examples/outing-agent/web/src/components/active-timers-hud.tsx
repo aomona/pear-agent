@@ -2,7 +2,7 @@ import { useExecutionSession, useRuntimeSnapshot } from "@pear-agent/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { playTimerAlarmBeepsThenWait } from "../lib/timer-beep";
+import { startTimerAlarmLoop } from "../lib/timer-alarm-loop";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -37,7 +37,7 @@ function labelForTimer(
 
 /**
  * Floating countdown for running execution timers (bottom-right, above voice dock).
- * At zero: beep burst → wait 1s → beep again, until complete_timer (UI or Live).
+ * At zero: abortable alarm loop until complete_timer (UI or Live).
  */
 export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
   const { snapshot, refetch } = useRuntimeSnapshot(sessionId);
@@ -78,34 +78,26 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     .sort()
     .join(",");
 
-  // Sequential loop: play burst → wait 1s after it ends → play again.
-  // Depend only on doneKey (not cards) so the 250ms tick never restarts the loop.
   useEffect(() => {
     if (!doneKey) {
       toastedDoneKeyRef.current = "";
       return;
     }
 
-    if (toastedDoneKeyRef.current !== doneKey) {
-      toastedDoneKeyRef.current = doneKey;
-      const labels = doneCards.map((c) => c.label).join("、");
-      toast.message(`${labels} 終了`);
-    }
-
-    let cancelled = false;
-
-    void (async () => {
-      while (!cancelled) {
-        await playTimerAlarmBeepsThenWait(ALARM_GAP_AFTER_BURST_MS);
-        if (cancelled) break;
-      }
-    })();
+    const labels = doneCards.map((c) => c.label).join("、");
+    const loop = startTimerAlarmLoop({
+      gapAfterBurstMs: ALARM_GAP_AFTER_BURST_MS,
+      onFirstBurst: () => {
+        if (toastedDoneKeyRef.current === doneKey) return;
+        toastedDoneKeyRef.current = doneKey;
+        toast.message(`${labels} 終了`);
+      },
+    });
 
     return () => {
-      cancelled = true;
+      loop.stop();
     };
-    // doneCards labels only used on first toast for this doneKey
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-arm when done set changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- arm only when done set changes
   }, [doneKey]);
 
   if (!sessionId || cards.length === 0) return null;

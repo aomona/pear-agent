@@ -62,18 +62,27 @@ export type PlanLibraryOptions = {
   }) => Promise<unknown>;
 };
 
+/** Prefer env factory when present; otherwise static optional service. */
+function resolveOptionalEnvService<T, E>(
+  create: ((env: E) => T | undefined) | undefined,
+  fallback: T | undefined,
+  env: E,
+): T | undefined {
+  return create?.(env) ?? fallback;
+}
+
 function resolveFreeTextResolver(
   options: PlanLibraryOptions,
   env: { GEMINI_API_KEY?: string },
 ): FreeTextFieldResolver | undefined {
-  return options.createFreeTextResolver?.(env) ?? options.freeTextResolver;
+  return resolveOptionalEnvService(options.createFreeTextResolver, options.freeTextResolver, env);
 }
 
 function resolvePlanImprover(
   options: PlanLibraryOptions,
   env: { GEMINI_API_KEY?: string },
 ): PlanImprover | undefined {
-  return options.createPlanImprover?.(env) ?? options.planImprover;
+  return resolveOptionalEnvService(options.createPlanImprover, options.planImprover, env);
 }
 
 function asHttpError(error: unknown): never {
