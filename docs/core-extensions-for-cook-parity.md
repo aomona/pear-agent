@@ -481,8 +481,43 @@ Wave C の後に **PEAR Cook**（Issue #11 相当）を Domain として接続�
 - [implementation-roadmap.md](./implementation-roadmap.md) — 全体マイルストーン
 - [roadmap.md](./roadmap.md) — Phase 5 PEAR Cook 接続
 
+## ブランチ計画（実装スタック）
+
+base: `dev`（またはマージ済みの sample ブランチ）
+
+| ブランチ                            | 含む CE                                   | 目的                                             |
+| ----------------------------------- | ----------------------------------------- | ------------------------------------------------ |
+| `feat/cli-outing-sample`            | —                                         | Issue #9 縦切り + 本カタログ docs（sample 土台） |
+| `feat/core-wave-a-readable-plan`    | CE-01, 02, 06, 07, 08                     | 読める・話せる Plan + Planner Port の Core 化    |
+| `feat/core-wave-b-schedulable-plan` | CE-03, 04, 05, 09, 11, 12, 16, 17, 18, 21 | スケジューラ・Improve・Artifact・diff            |
+| `feat/core-wave-c-cook-ready`       | CE-10, 13–15, 19, 20, 22–24               | PEAR Cook 接続前の残拡張                         |
+
+### 運用
+
+1. `feat/cli-outing-sample` を PR → `dev` にマージ（Wave A は sample マージ後の `dev`、または sample 先端から切る）。
+2. Wave ブランチは **積み上げ**（A → B → C）を推奨。
+3. 1 Wave = 1 PR を基本とする。PR 本文に CE ID を列挙する。
+4. Sample（outing-agent）の追随は各 Wave に最小 diff で含めてよい。
+5. 料理 Domain 本体は Wave C 完了後の `feat/cook-domain`（Issue #11）で扱う。
+
+### Wave A 実装順（依存が少ない順）
+
+```text
+CE-01 表示フィールド
+  → CE-02 Timer 定義
+  → CE-07 title / metadata
+  → CE-06 presentation 純関数
+  → CE-08 Planner Port を Core へ
+```
+
+```bash
+git checkout feat/cli-outing-sample   # または dev
+git checkout -b feat/core-wave-a-readable-plan
+```
+
 ## 改訂履歴
 
 | 日付       | 内容                                            |
 | ---------- | ----------------------------------------------- |
 | 2026-07-12 | 初版。cook-agent 比較に基づく Core 拡張カタログ |
+| 2026-07-12 | ブランチ計画（Wave A/B/C スタック）を追加       |
