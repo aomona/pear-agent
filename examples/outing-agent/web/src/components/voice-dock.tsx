@@ -1,7 +1,8 @@
 import { useContinuation, useVoiceSession } from "@pear-agent/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 
+import { coalesceTranscript } from "../lib/coalesce-transcript";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -34,26 +35,35 @@ function isLive(status: string): boolean {
 function roleShort(role: string): string {
   if (role === "assistant") return "AI";
   if (role === "user") return "You";
+  if (role === "tool") return "tool";
   return role;
 }
 
 /**
- * Floating Gemini Live control strip — start/stop, mute, scrolling transcript.
- * Claim / complete resume collapse into one「再開」path.
+ * Floating Gemini Live control strip — start/stop, mute, horizontal flowing transcript.
  */
 export function VoiceDock({ sessionId }: VoiceDockProps) {
   const voice = useVoiceSession(sessionId);
   const continuation = useContinuation(sessionId);
   const cont = continuation.continuation;
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const tickerRef = useRef<HTMLDivElement>(null);
   const live = isLive(voice.status);
   const canResume = Boolean(cont && cont.status !== "completed");
 
+  const turns = useMemo(
+    () => coalesceTranscript(voice.transcript).filter((t) => t.role !== "status"),
+    [voice.transcript],
+  );
+  // Show recent turns so the strip stays readable; prefer latest speech.
+  const visibleTurns = turns.slice(-6);
+  const streamKey = visibleTurns.map((t) => `${t.role}:${t.text}`).join("|");
+
+  // Keep the right edge (latest text) in view as partials stream in.
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = tickerRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [voice.transcript]);
+    el.scrollLeft = el.scrollWidth;
+  }, [streamKey]);
 
   async function handlePrimary() {
     if (!sessionId) return;
@@ -112,45 +122,73 @@ export function VoiceDock({ sessionId }: VoiceDockProps) {
     }
   }
 
-  const recent = voice.transcript.slice(-8);
-  const lastLine = recent[recent.length - 1];
-
   return (
     <div
       className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
       aria-label="Gemini Live"
     >
       <div className="pointer-events-auto w-full max-w-xl overflow-hidden rounded-2xl border bg-background/95 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/85">
+        {/* Horizontal flowing transcript (coalesced into sentences) */}
         <div
-          ref={scrollRef}
-          className={cn(
-            "max-h-16 overflow-y-auto border-b bg-muted/40 px-3 py-1.5 text-[11px] leading-snug text-muted-foreground",
-            recent.length === 0 && "flex items-center",
-          )}
+          className="relative border-b bg-muted/40"
+          style={{
+            maskImage:
+              "linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent)",
+            WebkitMaskImage:
+              "linear-gradient(90deg, transparent, #000 12px, #000 calc(100% - 12px), transparent)",
+          }}
         >
-          {recent.length === 0 ? (
-            <span className="truncate">
-              {canResume
-                ? "一時停止中 — 再開で続きから話せます"
-                : "音声アシストの文字起こしがここに流れます"}
-            </span>
-          ) : (
-            <ul className="space-y-0.5">
-              {recent.map((entry, i) => (
-                <li key={`${entry.role}-${i}-${entry.text.slice(0, 12)}`} className="truncate">
+          <div
+            ref={tickerRef}
+            className="flex h-9 items-center gap-3 overflow-x-auto overflow-y-hidden px-3 whitespace-nowrap scrollbar-none"
+            style={{ scrollbarWidth: "none" }}
+          >
+            {visibleTurns.length === 0 ? (
+              <span className="text-[11px] text-muted-foreground">
+                {canResume
+                  ? "一時停止中 — 再開で続きから話せます"
+                  : "話した内容がここに横へ流れていきます"}
+              </span>
+            ) : (
+              visibleTurns.map((turn, i) => (
+                <span
+                  key={`${turn.role}-${i}-${turn.text.length}`}
+                  className="inline-flex items-baseline gap-1 text-[12px] leading-none"
+                >
                   <span
                     className={cn(
-                      "mr-1 font-semibold",
-                      entry.role === "assistant" ? "text-primary" : "text-foreground",
+                      "shrink-0 text-[10px] font-bold tracking-wide",
+                      turn.role === "assistant" && "text-primary",
+                      turn.role === "user" && "text-foreground",
+                      turn.role === "tool" && "text-muted-foreground",
                     )}
                   >
-                    {roleShort(entry.role)}
+                    {roleShort(turn.role)}
                   </span>
-                  {entry.text}
-                </li>
-              ))}
-            </ul>
-          )}
+                  <span
+                    className={cn(
+                      "font-medium",
+                      turn.role === "assistant" && "text-foreground",
+                      turn.role === "user" && "text-foreground/90",
+                      turn.role === "tool" && "text-muted-foreground",
+                    )}
+                  >
+                    {turn.text}
+                  </span>
+                  {i < visibleTurns.length - 1 ? (
+                    <span className="ml-1 text-muted-foreground/50" aria-hidden>
+                      ·
+                    </span>
+                  ) : (
+                    <span
+                      className="ml-0.5 inline-block h-3 w-0.5 animate-pulse bg-primary/70 align-middle"
+                      aria-hidden
+                    />
+                  )}
+                </span>
+              ))
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 px-2.5 py-2">
@@ -176,9 +214,7 @@ export function VoiceDock({ sessionId }: VoiceDockProps) {
                 ) : null}
               </div>
               <p className="truncate text-[10px] text-muted-foreground">
-                {lastLine
-                  ? `${roleShort(lastLine.role)}: ${lastLine.text}`
-                  : "Gemini Live · 実行とは別の一時接続"}
+                Gemini Live · 部分文字起こしを文章として横スクロール
               </p>
             </div>
           </div>
