@@ -45,15 +45,14 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
   const [now, setNow] = useState(() => Date.now());
   const toastedDoneKeyRef = useRef("");
 
-  const running = snapshot?.activeTimers ?? [];
-
   useEffect(() => {
-    if (running.length === 0) return;
+    if (!snapshot?.activeTimers?.length) return;
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
-  }, [running.length]);
+  }, [snapshot?.activeTimers]);
 
   const cards = useMemo(() => {
+    const running = snapshot?.activeTimers ?? [];
     return running.map((timer) => {
       const endsAtMs = timer.endsAt ? new Date(timer.endsAt).getTime() : NaN;
       const remaining =
@@ -70,7 +69,7 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
         done: remaining <= 0,
       };
     });
-  }, [running, now, snapshot?.plan]);
+  }, [snapshot?.activeTimers, snapshot?.plan, now]);
 
   const doneCards = useMemo(() => cards.filter((c) => c.done), [cards]);
   const doneKey = doneCards

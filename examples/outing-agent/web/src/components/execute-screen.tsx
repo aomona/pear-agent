@@ -38,15 +38,13 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
   const [showAll, setShowAll] = useState(false);
   const [delayBusy, setDelayBusy] = useState(false);
 
-  const plan = snapshot?.plan;
-  const stepStates = snapshot?.stepStates ?? {};
-  const presentation = useMemo(
-    () => (plan ? buildPlanPresentation(plan, stepStates) : null),
-    [plan, stepStates],
-  );
+  const presentation = useMemo(() => {
+    if (!snapshot?.plan || !snapshot.stepStates) return null;
+    return buildPlanPresentation(snapshot.plan, snapshot.stepStates);
+  }, [snapshot?.plan, snapshot?.stepStates]);
 
   const next = useMemo(() => {
-    if (!presentation || !snapshot) return null;
+    if (!presentation || !snapshot?.stepStates) return null;
     const states = snapshot.stepStates;
     const active = presentation.nodes.find((n) => states[n.id]?.status === "active");
     if (active) return { node: active, mode: "active" as const };
@@ -55,11 +53,12 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
     const allDone = presentation.nodes.every((n) => states[n.id]?.status === "completed");
     if (allDone) return { node: null, mode: "done" as const };
     return { node: presentation.nodes[0] ?? null, mode: "other" as const };
-  }, [presentation, snapshot]);
+  }, [presentation, snapshot?.stepStates]);
 
   const doneCount = presentation
-    ? presentation.nodes.filter((n) => (stepStates[n.id]?.status ?? n.status) === "completed")
-        .length
+    ? presentation.nodes.filter(
+        (n) => (snapshot?.stepStates?.[n.id]?.status ?? n.status) === "completed",
+      ).length
     : 0;
   const totalCount = presentation?.nodes.length ?? 0;
 
@@ -125,7 +124,7 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
         </div>
         <div className="flex flex-wrap gap-1.5">
           {presentation.nodes.map((node) => {
-            const st = node.status ?? stepStates[node.id]?.status ?? "unknown";
+            const st = node.status ?? snapshot?.stepStates?.[node.id]?.status ?? "unknown";
             const isFocus = next.node?.id === node.id;
             return (
               <span
@@ -201,7 +200,7 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
               ) : null}
               {next.node.id === "charge" && next.mode === "active" ? (
                 <ChargeTimerButton
-                  plan={plan}
+                  plan={snapshot?.plan}
                   activeTimerIds={snapshot?.activeTimers.map((t) => t.id) ?? []}
                   onStart={(timerId, durationSeconds) =>
                     void run(`タイマー ${durationSeconds}s 開始`, () =>
@@ -237,7 +236,7 @@ export function ExecuteScreen({ sessionId }: ExecuteScreenProps) {
         {showAll ? (
           <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto text-xs">
             {presentation.nodes.map((node) => {
-              const st = node.status ?? stepStates[node.id]?.status ?? "unknown";
+              const st = node.status ?? snapshot?.stepStates?.[node.id]?.status ?? "unknown";
               return (
                 <li
                   key={node.id}
