@@ -86,7 +86,7 @@ Session と独立した Plan を D1 に保存できます（migration `0005_plan
 
 - 構造化入力や `id:name` 形式の自由文は **LLM なし**で通る
 - 「明日の朝、鍵とスマホ30%」のような自然文は **`GEMINI_API_KEY` 必須**（未設定時 503）
-- UI の 4 フェーズ導線は後続（現状は API + 既存 Setup）
+- Web UI: **一覧 → 入力 → 計画 → 実行** の 4 フェーズ（localStorage で plan/session を保持）
 
 ## デプロイ
 

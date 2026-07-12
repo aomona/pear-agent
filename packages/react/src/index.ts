@@ -52,6 +52,8 @@ export type {
   ExecutionSessionSyncState,
   ParsedSyncPulse,
   PearClientContext,
+  PlanArtifactDetail,
+  PlanListItem,
   StepActionInput,
   TimerActionInput,
   TimerStartInput,
