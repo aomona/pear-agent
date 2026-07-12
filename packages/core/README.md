@@ -63,6 +63,26 @@ const result = validatePlanGraph([
 ]);
 ```
 
+## 自由文 Input（フィールド単位）
+
+```ts
+import { freeTextValueSchema, resolveMaybeFreeTextField, z } from "@pear-agent/core";
+
+// input schema: structured OR free text per field
+departureAt: z.union([z.iso.datetime(), freeTextValueSchema]);
+
+// in normalizeInput(input, ctx):
+const departureAt = await resolveMaybeFreeTextField({
+  domainId: "outing",
+  field: "departureAt",
+  value: input.departureAt,
+  freeTextResolver: ctx?.freeTextResolver, // often LLM
+  parseDeterministic: (text) => {
+    /* Date.parse ... */ return null;
+  },
+});
+```
+
 ## Plan foundation（Waves A+B）
 
 - Step: `label` / `summary` / `instructions` / `notes`、構造化 `timers`、`resourceRequirements`、`timeline`

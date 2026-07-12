@@ -1,9 +1,12 @@
 import {
   createWorldStateFromDomainFacts,
   defineDomain,
+  freeTextValueSchema,
   PlanPatchValidationError,
+  resolveMaybeFreeTextField,
   type ExecutionGoal,
   type ExecutionPlan,
+  type NormalizeInputContext,
   type PlanPatch,
   type ReplanAssessment,
   type WorldState,
@@ -27,9 +30,13 @@ const outingWorldStateFactsSchema = z.object({
   chargeByBelongingId: z.record(z.string(), z.number().min(0).max(100).nullable()),
 });
 
+/**
+ * Each input field accepts structured data OR free-text (`{ freeText }`).
+ * Free text is resolved in normalizeInput (deterministic parse, then optional LLM resolver).
+ */
 const outingInputSchema = z.object({
-  departureAt: z.iso.datetime(),
-  belongings: z.array(belongingInputSchema),
+  departureAt: z.union([z.iso.datetime(), freeTextValueSchema]),
+  belongings: z.union([z.array(belongingInputSchema).min(1), freeTextValueSchema]),
 });
 
 const outingNormalizedInputSchema = z.object({
@@ -44,6 +51,63 @@ const outingStepDataSchema = z.object({
 export type OutingInput = z.infer<typeof outingInputSchema>;
 export type OutingNormalizedInput = z.infer<typeof outingNormalizedInputSchema>;
 export type OutingStepData = z.infer<typeof outingStepDataSchema>;
+export type OutingBelongingInput = z.infer<typeof belongingInputSchema>;
+
+/** Deterministic free-text → ISO datetime (returns null when LLM resolver should take over). */
+export function parseOutingDepartureFreeText(freeText: string): string | null {
+  const trimmed = freeText.trim();
+  const ms = Date.parse(trimmed);
+  if (!Number.isNaN(ms)) return new Date(ms).toISOString();
+  return null;
+}
+
+/**
+ * Deterministic free-text belongings.
+ * Supports lines / commas: `id:name[:charge%]` or `name charge%` / bare `name`.
+ */
+export function parseOutingBelongingsFreeText(freeText: string): OutingBelongingInput[] | null {
+  const trimmed = freeText.trim();
+  // Natural-language prose without structure → leave to freeTextResolver (LLM).
+  if (!/[:\d%]/.test(trimmed) && trimmed.split(/\s+/).length > 3) {
+    return null;
+  }
+
+  const tokens = trimmed
+    .split(/[\n,]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return null;
+
+  const belongings: OutingBelongingInput[] = [];
+  for (const token of tokens) {
+    const colonParts = token.split(":").map((p) => p.trim());
+    if (colonParts.length >= 2 && colonParts[0] && colonParts[1]) {
+      const item: OutingBelongingInput = { id: colonParts[0], name: colonParts[1] };
+      if (colonParts[2] !== undefined && colonParts[2] !== "") {
+        const charge = Number(colonParts[2]);
+        if (Number.isNaN(charge)) return null;
+        item.chargePercent = charge;
+      }
+      belongings.push(item);
+      continue;
+    }
+
+    const chargeMatch = token.match(/^(.*?)\s+(\d{1,3})\s*%?$/);
+    if (chargeMatch?.[1] && chargeMatch[2] !== undefined) {
+      const name = chargeMatch[1].trim();
+      const charge = Number(chargeMatch[2]);
+      if (!name || Number.isNaN(charge) || charge > 100) return null;
+      const id = name.toLowerCase().replace(/\s+/g, "-");
+      belongings.push({ id, name, chargePercent: charge });
+      continue;
+    }
+
+    const id = token.toLowerCase().replace(/\s+/g, "-");
+    belongings.push({ id, name: token });
+  }
+
+  return belongings.length > 0 ? belongings : null;
+}
 
 export const outingDomain = defineDomain({
   id: "outing",
@@ -57,13 +121,37 @@ export const outingDomain = defineDomain({
       z.object({ type: z.literal("delay"), minutes: z.number().positive() }),
     ]),
   },
-  normalizeInput: async ({ departureAt, belongings }) => ({
-    departureAt,
-    belongings: belongings.map((belonging) => ({
-      ...belonging,
-      chargePercent: belonging.chargePercent ?? null,
-    })),
-  }),
+  normalizeInput: async (input, ctx?: NormalizeInputContext) => {
+    const departureAt = await resolveMaybeFreeTextField({
+      domainId: "outing",
+      field: "departureAt",
+      value: input.departureAt,
+      ...(ctx?.freeTextResolver ? { freeTextResolver: ctx.freeTextResolver } : {}),
+      ...(ctx?.context !== undefined ? { context: ctx.context } : {}),
+      parseDeterministic: parseOutingDepartureFreeText,
+      hint: "ISO-8601 datetime string",
+    });
+
+    const belongingsRaw = await resolveMaybeFreeTextField({
+      domainId: "outing",
+      field: "belongings",
+      value: input.belongings,
+      ...(ctx?.freeTextResolver ? { freeTextResolver: ctx.freeTextResolver } : {}),
+      ...(ctx?.context !== undefined ? { context: ctx.context } : {}),
+      parseDeterministic: parseOutingBelongingsFreeText,
+      hint: "Array of { id, name, chargePercent? }",
+    });
+
+    const belongings = belongingInputSchema.array().min(1).parse(belongingsRaw);
+
+    return {
+      departureAt: z.iso.datetime().parse(departureAt),
+      belongings: belongings.map((belonging) => ({
+        ...belonging,
+        chargePercent: belonging.chargePercent ?? null,
+      })),
+    };
+  },
   planning: {
     instructions: "出発時刻までに必要な持ち物と充電状態を整える",
     objectives: ["必要な持ち物を揃える", "必要な機器を充電する"],

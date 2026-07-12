@@ -22,7 +22,7 @@ import {
 } from "./domain.js";
 
 describe("outingDomain", () => {
-  it("normalizes departure time, belongings, and charge state", async () => {
+  it("normalizes structured departure time, belongings, and charge state", async () => {
     await expect(
       outingDomain.normalizeInput({
         departureAt: "2026-07-11T03:00:00Z",
@@ -37,6 +37,46 @@ describe("outingDomain", () => {
         { id: "phone", name: "Phone", chargePercent: 80 },
         { id: "keys", name: "Keys", chargePercent: null },
       ],
+    });
+  });
+
+  it("normalizes per-field free text with deterministic parsers", async () => {
+    await expect(
+      outingDomain.normalizeInput({
+        departureAt: { freeText: "2026-07-11T03:00:00.000Z" },
+        belongings: { freeText: "phone:Phone:80\nkeys:Keys" },
+      }),
+    ).resolves.toEqual({
+      departureAt: "2026-07-11T03:00:00.000Z",
+      belongings: [
+        { id: "phone", name: "Phone", chargePercent: 80 },
+        { id: "keys", name: "Keys", chargePercent: null },
+      ],
+    });
+  });
+
+  it("uses freeTextResolver when free text is not deterministically parseable", async () => {
+    await expect(
+      outingDomain.normalizeInput(
+        {
+          departureAt: { freeText: "tomorrow morning" },
+          belongings: { freeText: "whatever the model says" },
+        },
+        {
+          freeTextResolver: {
+            async resolve({ field }) {
+              if (field === "departureAt") return "2026-07-12T00:00:00.000Z";
+              if (field === "belongings") {
+                return [{ id: "wallet", name: "Wallet", chargePercent: 10 }];
+              }
+              throw new Error(`unexpected field ${field}`);
+            },
+          },
+        },
+      ),
+    ).resolves.toEqual({
+      departureAt: "2026-07-12T00:00:00.000Z",
+      belongings: [{ id: "wallet", name: "Wallet", chargePercent: 10 }],
     });
   });
 

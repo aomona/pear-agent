@@ -57,7 +57,21 @@ Domain IDは永続データへ保存する安定した識別子です。Version�
 
 ### `normalizeInput()`
 
-Raw Inputの参照を受け取り、型付きNormalized Inputを返します。Raw Inputの取得、解析、外部API利用はDomainの責任です。
+Raw / 構造化 Input を受け取り、型付き Normalized Input を返します。取得・解析・外部 API は Domain の責任です。
+
+**フィールド単位の自由文**もサポートできます。input Schema で各フィールドを
+
+`structured | { freeText: string }`
+
+の union にし、normalize 内で:
+
+1. 構造化値はそのまま使う
+2. 自由文は **決定論パーサ**を試す
+3. 失敗したら host の **`freeTextResolver`（典型は LLM structured output）** に任せる
+4. 最終結果を `schemas.normalizedInput` で検証する
+
+Core は `freeTextValueSchema` / `resolveMaybeFreeTextField` / `NormalizeInputContext` を提供します。  
+**LLM は必須ではなく Port**です。outing デモは決定論パーサ付きで、resolver は任意注入です。
 
 ### Planning
 
