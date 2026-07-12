@@ -1,14 +1,20 @@
+import { useMutation } from "@tanstack/react-query";
 import { usePearContext, type PlanArtifactDetail } from "@pear-agent/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import {
+  belongingServerValueToRows,
   buildOutingInputFromForm,
+  createPendingBelongingRow,
   defaultDepartureLocal,
+  hasFailedBelongings,
+  hasInFlightBelongings,
+  readyBelongings,
   type BelongingFormRow,
   type OutingFormState,
 } from "../lib/build-outing-input";
-import { AddBelongingModal } from "./add-belonging-modal";
+import { AddBelongingModal, type AddBelongingSubmit } from "./add-belonging-modal";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -23,6 +29,11 @@ type PlanInputPanelProps = {
   onBack: () => void;
 };
 
+type StructureVariables = {
+  pendingKey: string;
+  freeText: string;
+};
+
 export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanInputPanelProps) {
   const { client } = usePearContext();
   const [form, setForm] = useState<OutingFormState>({
@@ -32,11 +43,56 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
     belongings: [],
   });
   const [addOpen, setAddOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [normalizeBusy, setNormalizeBusy] = useState(false);
 
-  function handleAddRows(rows: BelongingFormRow[]) {
-    setForm((f) => ({ ...f, belongings: [...f.belongings, ...rows] }));
-    toast.success(rows.length === 1 ? "アイテムを追加しました" : `${rows.length} 件追加しました`);
+  const structureMutation = useMutation({
+    mutationKey: ["outing", "structure-belonging", planId],
+    mutationFn: async ({ freeText }: StructureVariables) => {
+      const resolved = await client.resolvePlanField(planId, {
+        field: "belongings",
+        freeText,
+      });
+      return belongingServerValueToRows(resolved.value);
+    },
+    // Allow several Gemini jobs at once; each call tracks its own pendingKey via variables.
+    onSuccess: (rows, variables) => {
+      setForm((f) => ({
+        ...f,
+        belongings: f.belongings.flatMap((row) =>
+          row.key === variables.pendingKey ? rows.map((r) => ({ ...r, key: r.key })) : [row],
+        ),
+      }));
+      toast.success(rows.length === 1 ? "構造化完了" : `構造化完了（${rows.length} 件）`);
+    },
+    onError: (error, variables) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setForm((f) => ({
+        ...f,
+        belongings: f.belongings.map((row) =>
+          row.key === variables.pendingKey
+            ? {
+                ...row,
+                status: "error" as const,
+                errorMessage: message,
+              }
+            : row,
+        ),
+      }));
+      toast.error(message);
+    },
+  });
+
+  function handleModalSubmit(result: AddBelongingSubmit) {
+    if (result.kind === "ready") {
+      setForm((f) => ({ ...f, belongings: [...f.belongings, ...result.rows] }));
+      toast.success("アイテムを追加しました");
+      return;
+    }
+
+    // Optimistic UI: show pending row immediately, then Gemini in background.
+    const pending = createPendingBelongingRow(result.freeText);
+    setForm((f) => ({ ...f, belongings: [...f.belongings, pending] }));
+    structureMutation.mutate({ pendingKey: pending.key, freeText: result.freeText });
   }
 
   function removeBelonging(key: string) {
@@ -46,8 +102,26 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
     }));
   }
 
+  function retryBelonging(row: BelongingFormRow) {
+    if (row.status !== "error" || !row.freeTextPreview) return;
+    const freeText = row.freeTextPreview;
+    setForm((f) => ({
+      ...f,
+      belongings: f.belongings.map((r) =>
+        r.key === row.key
+          ? {
+              ...r,
+              status: "pending" as const,
+              errorMessage: undefined,
+            }
+          : r,
+      ),
+    }));
+    structureMutation.mutate({ pendingKey: row.key, freeText });
+  }
+
   async function handleNormalize() {
-    setBusy(true);
+    setNormalizeBusy(true);
     try {
       const input = buildOutingInputFromForm(form);
       const next = await client.normalizePlanInput(planId, input);
@@ -56,9 +130,14 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
-      setBusy(false);
+      setNormalizeBusy(false);
     }
   }
+
+  const inFlight = hasInFlightBelongings(form.belongings);
+  const hasFailed = hasFailedBelongings(form.belongings);
+  const readyCount = readyBelongings(form.belongings).length;
+  const canNormalize = readyCount > 0 && !inFlight && !hasFailed && !normalizeBusy;
 
   return (
     <>
@@ -68,8 +147,7 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
             <div>
               <CardTitle>2. What to prepare</CardTitle>
               <CardDescription>
-                出発は単独フィールド。持ち物は「追加」で 1
-                件ずつモーダルから入れ、構造化して一覧に出します。
+                持ち物は追加ですぐ一覧表示。自由文は「Gemini 生成中…」のまま複数並行できます。
                 {artifact?.normalizedInput ? " 保存済み normalizedInput あり。" : ""}
               </CardDescription>
             </div>
@@ -79,7 +157,6 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Departure */}
           <section className="space-y-3 rounded-lg border p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -128,13 +205,12 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
             )}
           </section>
 
-          {/* Belongings list + add modal */}
           <section className="space-y-3 rounded-lg border p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-sm font-semibold">持ち物</h3>
                 <p className="text-xs text-muted-foreground">
-                  追加 → モーダル →「構造化して追加」で Gemini 構造化（決定論なし）
+                  追加 → 一覧に即表示 → Gemini は裏で並行（TanStack Query mutation）
                 </p>
               </div>
               <Button type="button" size="sm" onClick={() => setAddOpen(true)}>
@@ -144,41 +220,27 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
 
             {form.belongings.length === 0 ? (
               <p className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
-                まだアイテムがありません。「＋ 追加」から 1 件ずつ入れてください。
+                まだアイテムがありません。「＋ 追加」から入れてください（複数並行 OK）。
               </p>
             ) : (
               <ul className="space-y-2">
                 {form.belongings.map((row, index) => (
-                  <li
+                  <BelongingListItem
                     key={row.key}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2"
-                  >
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-muted-foreground">#{index + 1}</span>
-                        <span className="font-medium">{row.name}</span>
-                        <Badge variant="outline" className="font-mono text-[10px]">
-                          {row.id}
-                        </Badge>
-                        {row.chargePercent !== "" ? (
-                          <Badge variant="secondary">充電 {row.chargePercent}%</Badge>
-                        ) : (
-                          <Badge variant="outline">充電不要</Badge>
-                        )}
-                      </div>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => removeBelonging(row.key)}
-                    >
-                      削除
-                    </Button>
-                  </li>
+                    row={row}
+                    index={index}
+                    onRemove={() => removeBelonging(row.key)}
+                    onRetry={() => retryBelonging(row)}
+                  />
                 ))}
               </ul>
             )}
+
+            {inFlight ? (
+              <p className="text-xs text-muted-foreground">
+                Gemini で構造化中の項目があります。完了を待たずに別の追加もできます。
+              </p>
+            ) : null}
           </section>
 
           {artifact?.normalizedInput !== undefined ? (
@@ -193,21 +255,97 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
             </>
           ) : null}
 
-          <Button
-            disabled={busy || form.belongings.length === 0}
-            onClick={() => void handleNormalize()}
-          >
-            {busy ? "Normalizing…" : "Normalize & continue"}
+          <Button disabled={!canNormalize} onClick={() => void handleNormalize()}>
+            {normalizeBusy
+              ? "Normalizing…"
+              : inFlight
+                ? "生成完了を待っています…"
+                : "Normalize & continue"}
           </Button>
         </CardContent>
       </Card>
 
       <AddBelongingModal
         open={addOpen}
-        planId={planId}
         onClose={() => setAddOpen(false)}
-        onAdd={handleAddRows}
+        onSubmit={handleModalSubmit}
       />
     </>
+  );
+}
+
+function BelongingListItem({
+  row,
+  index,
+  onRemove,
+  onRetry,
+}: {
+  row: BelongingFormRow;
+  index: number;
+  onRemove: () => void;
+  onRetry: () => void;
+}) {
+  if (row.status === "pending") {
+    return (
+      <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-amber-300 bg-amber-50/80 px-3 py-2">
+        <div className="min-w-0 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">#{index + 1}</span>
+            <Badge variant="warning">Gemini 生成中…</Badge>
+          </div>
+          <p className="truncate text-sm text-muted-foreground">
+            {row.freeTextPreview ?? row.name}
+          </p>
+        </div>
+        <Button type="button" size="sm" variant="ghost" onClick={onRemove}>
+          キャンセル
+        </Button>
+      </li>
+    );
+  }
+
+  if (row.status === "error") {
+    return (
+      <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/40 bg-red-50/80 px-3 py-2">
+        <div className="min-w-0 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">#{index + 1}</span>
+            <Badge variant="destructive">失敗</Badge>
+          </div>
+          <p className="truncate text-sm">{row.freeTextPreview ?? row.name}</p>
+          {row.errorMessage ? <p className="text-xs text-destructive">{row.errorMessage}</p> : null}
+        </div>
+        <div className="flex gap-1">
+          <Button type="button" size="sm" variant="outline" onClick={onRetry}>
+            再試行
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onRemove}>
+            削除
+          </Button>
+        </div>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
+      <div className="min-w-0 space-y-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">#{index + 1}</span>
+          <span className="font-medium">{row.name}</span>
+          <Badge variant="outline" className="font-mono text-[10px]">
+            {row.id}
+          </Badge>
+          {row.chargePercent !== "" ? (
+            <Badge variant="secondary">充電 {row.chargePercent}%</Badge>
+          ) : (
+            <Badge variant="outline">充電不要</Badge>
+          )}
+        </div>
+      </div>
+      <Button type="button" size="sm" variant="ghost" onClick={onRemove}>
+        削除
+      </Button>
+    </li>
   );
 }

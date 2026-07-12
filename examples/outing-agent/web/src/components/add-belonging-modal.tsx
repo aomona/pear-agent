@@ -1,8 +1,6 @@
-import { usePearContext } from "@pear-agent/react";
 import { useEffect, useId, useState } from "react";
 
 import {
-  belongingServerValueToRows,
   resolveBelongingModalDraftLocal,
   slugFromName,
   type BelongingFormRow,
@@ -12,11 +10,16 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Separator } from "./ui/separator";
 
+export type AddBelongingSubmit =
+  | { kind: "ready"; rows: BelongingFormRow[] }
+  /** Parent shows optimistic row + runs Gemini in background (TanStack mutation). */
+  | { kind: "gemini"; freeText: string };
+
 type AddBelongingModalProps = {
   open: boolean;
-  planId: string;
   onClose: () => void;
-  onAdd: (rows: BelongingFormRow[]) => void;
+  /** Called immediately; Gemini path does not wait for the network. */
+  onSubmit: (result: AddBelongingSubmit) => void;
 };
 
 const emptyDraft = () => ({
@@ -27,60 +30,45 @@ const emptyDraft = () => ({
 });
 
 /**
- * Add one belonging at a time.
- * Free text is structured only when pressing 「構造化して追加」, always via Gemini (not deterministic parse).
+ * Modal only collects input. Free text is not structured here —
+ * parent optimistically lists a pending row and mutates with Gemini.
  */
-export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelongingModalProps) {
-  const { client } = usePearContext();
+export function AddBelongingModal({ open, onClose, onSubmit }: AddBelongingModalProps) {
   const titleId = useId();
   const [draft, setDraft] = useState(emptyDraft);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
       setDraft(emptyDraft());
       setError(null);
-      setBusy(false);
     }
   }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, busy]);
+  }, [open, onClose]);
 
   if (!open) return null;
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setBusy(true);
     try {
-      // Structure only on this button press — never while typing.
       const local = resolveBelongingModalDraftLocal(draft);
       if (local.kind === "structured") {
-        onAdd(local.rows);
-        onClose();
-        return;
+        onSubmit({ kind: "ready", rows: local.rows });
+      } else {
+        onSubmit({ kind: "gemini", freeText: local.freeText });
       }
-
-      // Free text → always Gemini (local.kind === "needs_gemini").
-      const resolved = await client.resolvePlanField(planId, {
-        field: "belongings",
-        freeText: local.freeText,
-      });
-      const rows = belongingServerValueToRows(resolved.value);
-      onAdd(rows);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -90,10 +78,7 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
         type="button"
         className="absolute inset-0 bg-black/50"
         aria-label="Close dialog"
-        disabled={busy}
-        onClick={() => {
-          if (!busy) onClose();
-        }}
+        onClick={onClose}
       />
       <div
         role="dialog"
@@ -105,29 +90,28 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
           持ち物を追加
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          入力中は構造化しません。<strong>「構造化して追加」</strong>
-          で Gemini が構造化して一覧に出します（決定論パースは使いません）。
+          「追加」ですぐ一覧に出ます。自由文は Gemini 生成中…
+          として並び、完了後に構造化結果へ差し替わります。複数件を並行して積めます。
         </p>
 
-        <form className="mt-4 space-y-4" onSubmit={(e) => void handleSubmit(e)}>
+        <form className="mt-4 space-y-4" onSubmit={handleSubmit}>
           <div className="space-y-1.5">
             <Label htmlFor="belonging-free">自由文（Gemini）</Label>
             <Input
               id="belonging-free"
               autoFocus
-              disabled={busy}
               placeholder="例: スマホ残量3割と財布"
               value={draft.freeText}
               onChange={(e) => setDraft((d) => ({ ...d, freeText: e.target.value }))}
             />
             <p className="text-xs text-muted-foreground">
-              GEMINI_API_KEY 必須。自由文は常に Gemini で構造化します。
+              GEMINI_API_KEY 必須。一覧に先に表示し、裏で構造化します。
             </p>
           </div>
 
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Separator className="flex-1" />
-            <span>または直接入力（Gemini なし）</span>
+            <span>または直接入力（即 ready）</span>
             <Separator className="flex-1" />
           </div>
 
@@ -136,7 +120,6 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
               <Label htmlFor="belonging-name">名前</Label>
               <Input
                 id="belonging-name"
-                disabled={busy}
                 placeholder="Phone"
                 value={draft.name}
                 onChange={(e) => {
@@ -158,7 +141,6 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
                 <Input
                   id="belonging-id"
                   className="font-mono text-sm"
-                  disabled={busy}
                   placeholder="phone"
                   value={draft.id}
                   onChange={(e) => setDraft((d) => ({ ...d, id: e.target.value }))}
@@ -171,7 +153,6 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
                   type="number"
                   min={0}
                   max={100}
-                  disabled={busy}
                   placeholder="空=不要"
                   value={draft.chargePercent}
                   onChange={(e) => setDraft((d) => ({ ...d, chargePercent: e.target.value }))}
@@ -183,12 +164,10 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
           <div className="flex justify-end gap-2 pt-1">
-            <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+            <Button type="button" variant="outline" onClick={onClose}>
               キャンセル
             </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? "Gemini で構造化中…" : "構造化して追加"}
-            </Button>
+            <Button type="submit">追加</Button>
           </div>
         </form>
       </div>

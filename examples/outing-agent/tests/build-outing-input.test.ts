@@ -4,13 +4,15 @@ import {
   belongingServerValueToRows,
   buildOutingInputFromForm,
   createEmptyBelongingRow,
+  createPendingBelongingRow,
   defaultDepartureLocal,
+  hasInFlightBelongings,
   resolveBelongingModalDraftLocal,
   slugFromName,
 } from "../web/src/lib/build-outing-input.js";
 
 describe("resolveBelongingModalDraftLocal", () => {
-  it("routes free text to Gemini (no local deterministic structure)", () => {
+  it("routes free text to Gemini (no local structure)", () => {
     expect(
       resolveBelongingModalDraftLocal({
         freeText: "phone:Phone:20",
@@ -30,15 +32,44 @@ describe("resolveBelongingModalDraftLocal", () => {
     });
     expect(result.kind).toBe("structured");
     if (result.kind === "structured") {
-      expect(result.rows[0]).toMatchObject({ id: "wallet", name: "Wallet" });
+      expect(result.rows[0]).toMatchObject({
+        status: "ready",
+        id: "wallet",
+        name: "Wallet",
+      });
     }
   });
 });
 
+describe("pending optimistic rows", () => {
+  it("creates pending row for free text preview", () => {
+    const pending = createPendingBelongingRow("スマホ 30%");
+    expect(pending.status).toBe("pending");
+    expect(pending.freeTextPreview).toBe("スマホ 30%");
+    expect(hasInFlightBelongings([pending])).toBe(true);
+  });
+
+  it("blocks normalize while pending", () => {
+    expect(() =>
+      buildOutingInputFromForm({
+        departureMode: "structured",
+        departureLocal: "2026-07-12T10:00",
+        departureFreeText: "",
+        belongings: [createPendingBelongingRow("phone")],
+      }),
+    ).toThrow(/構造化中/);
+  });
+});
+
 describe("belongingServerValueToRows", () => {
-  it("maps server JSON to form rows", () => {
+  it("maps server JSON to ready form rows", () => {
     const rows = belongingServerValueToRows([{ id: "keys", name: "Keys" }]);
-    expect(rows[0]).toMatchObject({ id: "keys", name: "Keys", chargePercent: "" });
+    expect(rows[0]).toMatchObject({
+      status: "ready",
+      id: "keys",
+      name: "Keys",
+      chargePercent: "",
+    });
   });
 });
 
@@ -61,7 +92,7 @@ describe("buildOutingInputFromForm", () => {
     ]);
   });
 
-  it("uses free-text departure envelope (Gemini at normalize)", () => {
+  it("uses free-text departure envelope", () => {
     const input = buildOutingInputFromForm({
       departureMode: "freeText",
       departureLocal: defaultDepartureLocal(),

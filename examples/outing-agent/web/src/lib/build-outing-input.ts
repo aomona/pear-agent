@@ -1,10 +1,18 @@
 import type { OutingBelongingInput, OutingInput } from "@pear-agent/outing-domain-example";
 import { z } from "zod";
 
-/** One belongings row already structured in the list. */
+/**
+ * List item for belongings.
+ * - ready: structured, can normalize
+ * - pending: optimistic row while Gemini runs (can start more adds in parallel)
+ * - error: Gemini failed; user can remove / retry
+ */
 export type BelongingFormRow = {
-  /** Stable React key (not sent to Domain). */
   key: string;
+  status: "ready" | "pending" | "error";
+  /** Free-text prompt shown while pending / on error. */
+  freeTextPreview?: string | undefined;
+  errorMessage?: string | undefined;
   id: string;
   name: string;
   /** Empty string = no charge requirement. */
@@ -15,7 +23,6 @@ export type OutingFormState = {
   departureMode: "structured" | "freeText";
   departureLocal: string;
   departureFreeText: string;
-  /** Always structured rows (added one-by-one via modal). */
   belongings: BelongingFormRow[];
 };
 
@@ -32,19 +39,40 @@ function newRowKey(): string {
   return `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+export function createRowKey(): string {
+  return newRowKey();
+}
+
 export function createEmptyBelongingRow(
   partial?: Partial<Omit<BelongingFormRow, "key">>,
 ): BelongingFormRow {
   return {
     key: newRowKey(),
+    status: partial?.status ?? "ready",
+    freeTextPreview: partial?.freeTextPreview,
+    errorMessage: partial?.errorMessage,
     id: partial?.id ?? "",
     name: partial?.name ?? "",
     chargePercent: partial?.chargePercent ?? "",
   };
 }
 
+/** Optimistic row shown immediately while Gemini structures free text. */
+export function createPendingBelongingRow(freeText: string): BelongingFormRow {
+  const preview = freeText.trim();
+  return {
+    key: newRowKey(),
+    status: "pending",
+    freeTextPreview: preview,
+    id: "",
+    name: preview,
+    chargePercent: "",
+  };
+}
+
 export function belongingInputToRow(item: OutingBelongingInput): BelongingFormRow {
   return createEmptyBelongingRow({
+    status: "ready",
     id: item.id,
     name: item.name,
     chargePercent:
@@ -71,12 +99,12 @@ export type AddBelongingModalDraft = {
 };
 
 export type BelongingModalLocalResult =
-  /** Free text always structured via Gemini on the Worker (never client deterministic). */
-  { kind: "needs_gemini"; freeText: string } | { kind: "structured"; rows: BelongingFormRow[] };
+  | { kind: "needs_gemini"; freeText: string }
+  | { kind: "structured"; rows: BelongingFormRow[] };
 
 /**
  * Classify modal draft at Add time (no free-text parsing here).
- * Free text → always Gemini on the server. Direct fields → structured rows.
+ * Free text → always Gemini on the server. Direct fields → ready rows.
  */
 export function resolveBelongingModalDraftLocal(
   draft: AddBelongingModalDraft,
@@ -103,11 +131,11 @@ export function resolveBelongingModalDraftLocal(
   }
   return {
     kind: "structured",
-    rows: [createEmptyBelongingRow({ id, name, chargePercent: chargeRaw })],
+    rows: [createEmptyBelongingRow({ status: "ready", id, name, chargePercent: chargeRaw })],
   };
 }
 
-/** Map server resolve-field value for belongings into form rows. */
+/** Map server resolve-field value for belongings into ready form rows. */
 export function belongingServerValueToRows(value: unknown): BelongingFormRow[] {
   const items = z
     .array(
@@ -128,8 +156,28 @@ export function belongingServerValueToRows(value: unknown): BelongingFormRow[] {
   );
 }
 
-/** Build Domain input from the multi-field form (belongings always structured). */
+/** Ready rows only — for Domain normalize. */
+export function readyBelongings(rows: readonly BelongingFormRow[]): BelongingFormRow[] {
+  return rows.filter((row) => row.status === "ready");
+}
+
+export function hasInFlightBelongings(rows: readonly BelongingFormRow[]): boolean {
+  return rows.some((row) => row.status === "pending");
+}
+
+export function hasFailedBelongings(rows: readonly BelongingFormRow[]): boolean {
+  return rows.some((row) => row.status === "error");
+}
+
+/** Build Domain input from the multi-field form (ready belongings only). */
 export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
+  if (hasInFlightBelongings(form.belongings)) {
+    throw new Error("Gemini で構造化中の持ち物があります。完了を待ってください");
+  }
+  if (hasFailedBelongings(form.belongings)) {
+    throw new Error("構造化に失敗した持ち物があります。削除するか再試行してください");
+  }
+
   const departureAt: OutingInput["departureAt"] =
     form.departureMode === "freeText"
       ? { freeText: form.departureFreeText.trim() }
@@ -139,7 +187,7 @@ export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
     throw new Error("出発時刻の自由文を入力してください");
   }
 
-  const rows = form.belongings
+  const rows = readyBelongings(form.belongings)
     .map((row) => ({
       name: row.name.trim(),
       id: row.id.trim() || slugFromName(row.name),
