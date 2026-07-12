@@ -27,6 +27,44 @@ const IMPROVE_CHIPS = [
   { label: "タイトル明確に", request: "plan title を行き先が分かる短文にして" },
 ] as const;
 
+function orderMeta(plan: PlanArtifactDetail["currentPlan"]) {
+  const meta = plan.metadata ?? {};
+  return {
+    refined: meta.orderRefined === true,
+    reason: typeof meta.orderRefineReason === "string" ? meta.orderRefineReason : undefined,
+  };
+}
+
+function generateSuccessMessage(plan: PlanArtifactDetail["currentPlan"]): string {
+  const { refined, reason } = orderMeta(plan);
+  if (refined) return "計画を生成（順序を Gemini が調整）";
+  switch (reason) {
+    case "no_api_key":
+      return "計画を生成（並列のまま — GEMINI_API_KEY 未設定）";
+    case "single_step":
+      return "計画を生成（1 step のため順序調整なし）";
+    case "parse_failed":
+      return "計画を生成（順序調整に失敗 — 並列のまま）";
+    case "disabled":
+      return "計画を生成（順序調整オフ）";
+    default:
+      return reason
+        ? `計画を生成（並列のまま — ${reason.slice(0, 80)}）`
+        : "計画を生成（並列のまま）";
+  }
+}
+
+function orderBadgeLabel(plan: PlanArtifactDetail["currentPlan"]): string | null {
+  if (plan.steps.length === 0) return null;
+  const { refined, reason } = orderMeta(plan);
+  if (refined) return "順序: Gemini 調整済";
+  if (reason === "no_api_key") return "順序: 並列（キー無し）";
+  if (reason === "single_step") return "順序: 1 step";
+  if (reason === "disabled") return "順序: 調整オフ";
+  if (reason) return "順序: 並列（調整失敗）";
+  return "順序: 未調整 / 並列";
+}
+
 export function PlanDraftPanel({
   planId,
   artifact,
@@ -43,6 +81,7 @@ export function PlanDraftPanel({
   const hasSteps = steps.length > 0;
   const canStart = artifact.status === "ready" && hasSteps;
   const normalized = artifact.normalizedInput as OutingNormalizedInput | undefined;
+  const orderLabel = orderBadgeLabel(artifact.currentPlan);
 
   async function run(label: string, fn: () => Promise<PlanArtifactDetail>) {
     setBusy(true);
@@ -50,6 +89,19 @@ export function PlanDraftPanel({
       const next = await fn();
       onArtifactChange(next);
       toast.success(label);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleGenerate() {
+    setBusy(true);
+    try {
+      const next = await client.generatePlanArtifact(planId);
+      onArtifactChange(next);
+      toast.success(generateSuccessMessage(next.currentPlan));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -95,6 +147,11 @@ export function PlanDraftPanel({
               {artifact.status}
             </Badge>
             <Badge variant="outline">v{artifact.version}</Badge>
+            {orderLabel ? (
+              <Badge variant={orderMeta(artifact.currentPlan).refined ? "success" : "outline"}>
+                {orderLabel}
+              </Badge>
+            ) : null}
             <Button variant="outline" size="sm" onClick={onBackToInput}>
               入力を直す
             </Button>
@@ -119,17 +176,13 @@ export function PlanDraftPanel({
         <div className="flex flex-wrap gap-2">
           <Button
             disabled={busy || artifact.normalizedInput === undefined}
-            onClick={() =>
-              void run("計画を生成（順序は Gemini が調整）", () =>
-                client.generatePlanArtifact(planId),
-              )
-            }
+            onClick={() => void handleGenerate()}
           >
             計画を生成
           </Button>
           <p className="w-full text-xs text-muted-foreground">
             ステップ本体は Domain が決め、依存関係（after）だけ LLM
-            が差し替えます。キー無し時は全部並列。
+            が差し替えます。成功/フォールバックはバッジとトーストで表示します。
           </p>
           <Button
             variant="outline"

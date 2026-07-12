@@ -18,7 +18,7 @@ import {
 } from "../d1/plan-repository.js";
 import type { PearEnv } from "../env.js";
 import type { PearApp } from "../http/app.js";
-import type { PlanGenerator } from "../planner.js";
+import { resolvePlanGenerator, type PlanGenerator } from "../planner.js";
 import { toJsonValue } from "../serialize.js";
 
 const planSchema = executionPlanSchema(z.unknown());
@@ -93,10 +93,6 @@ function asHttpError(error: unknown): never {
 
 function repo(env: { DB: D1Database }): D1PlanRepository {
   return new D1PlanRepository(env.DB);
-}
-
-function resolvePlanGenerator(options: PlanLibraryOptions, env: PearEnv): PlanGenerator {
-  return options.createPlanGenerator?.(env) ?? options.planGenerator;
 }
 
 function artifactJson(stored: StoredPlanArtifact) {

@@ -4,6 +4,8 @@ import {
   outingDomain,
   type OutingNormalizedInput,
 } from "@pear-agent/outing-domain-example";
+import { executionPlanSchema } from "@pear-agent/core";
+import { z } from "zod";
 
 import { refinePlanOrderWithGemini } from "./plan-order-refiner.js";
 
@@ -17,6 +19,9 @@ export type CreateOutingPlanGeneratorOptions = {
  * Outing PlanGenerator:
  * 1) Deterministic steps from Domain (`buildOutingPlan`)
  * 2) Optional Gemini pass to set `after` dependencies (order / parallelism)
+ *
+ * Always sets `plan.metadata.orderRefined` / `orderRefineReason` when refine is enabled
+ * so UI can show whether ordering actually ran.
  */
 export function createOutingPlanGenerator(
   options: CreateOutingPlanGeneratorOptions,
@@ -36,7 +41,16 @@ export function createOutingPlanGenerator(
         throw new Error("Planner goal id must match the requested goal id");
       }
 
-      if (!refineOrder) return base;
+      if (!refineOrder) {
+        return executionPlanSchema(z.unknown()).parse({
+          ...base,
+          metadata: {
+            ...base.metadata,
+            orderRefined: false,
+            orderRefineReason: "disabled",
+          },
+        });
+      }
 
       const contextSummary = JSON.stringify({
         departureAt: parsed.departureAt,

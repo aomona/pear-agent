@@ -49,9 +49,44 @@ const orderResultSchema = z.object({
     .min(1),
 });
 
+export type PlanOrderRefineReason =
+  | "gemini"
+  | "no_api_key"
+  | "single_step"
+  | "parse_failed"
+  | "refine_failed"
+  | "disabled"
+  | string;
+
+export type RefinePlanOrderResult = {
+  plan: ExecutionPlan;
+  refined: boolean;
+  reason: PlanOrderRefineReason;
+};
+
+function withOrderMetadata(
+  plan: ExecutionPlan,
+  refined: boolean,
+  reason: PlanOrderRefineReason,
+  orderReasons?: Record<string, string>,
+): ExecutionPlan {
+  const metadata: Record<string, import("@pear-agent/core").JsonValue> = {
+    ...plan.metadata,
+    orderRefined: refined,
+    orderRefineReason: reason,
+  };
+  if (orderReasons && Object.keys(orderReasons).length > 0) {
+    metadata.orderReasons = orderReasons;
+  }
+  return executionPlanSchema(z.unknown()).parse({
+    ...plan,
+    metadata,
+  });
+}
+
 /**
  * Apply LLM-suggested `after` dependencies onto an existing plan.
- * Preserves step bodies; only rewires the DAG. Falls back to base on any failure.
+ * Preserves step bodies; only rewires the DAG.
  */
 export function applyPlanStepOrder(
   base: ExecutionPlan,
@@ -100,16 +135,24 @@ export type RefinePlanOrderInput = {
 
 /**
  * Ask Gemini to set step `after` edges for a sensible prep order.
- * On missing key / LLM / validation failure, returns the base plan unchanged.
+ * Always attaches plan.metadata.orderRefined / orderRefineReason so hosts can surface success vs fallback.
  */
 export async function refinePlanOrderWithGemini(
   input: RefinePlanOrderInput,
-): Promise<{ plan: ExecutionPlan; refined: boolean; reason?: string }> {
+): Promise<RefinePlanOrderResult> {
   if (!input.apiKey) {
-    return { plan: input.plan, refined: false, reason: "no_api_key" };
+    return {
+      plan: withOrderMetadata(input.plan, false, "no_api_key"),
+      refined: false,
+      reason: "no_api_key",
+    };
   }
   if (input.plan.steps.length <= 1) {
-    return { plan: input.plan, refined: false, reason: "single_step" };
+    return {
+      plan: withOrderMetadata(input.plan, false, "single_step"),
+      refined: false,
+      reason: "single_step",
+    };
   }
 
   const stepSketch = input.plan.steps.map((s) => ({
@@ -145,19 +188,39 @@ export async function refinePlanOrderWithGemini(
 
     const parsed = orderResultSchema.safeParse(raw);
     if (!parsed.success) {
-      return { plan: input.plan, refined: false, reason: "parse_failed" };
+      return {
+        plan: withOrderMetadata(input.plan, false, "parse_failed"),
+        refined: false,
+        reason: "parse_failed",
+      };
     }
 
-    const plan = applyPlanStepOrder(input.plan, parsed.data);
-    return { plan, refined: true };
-  } catch (error) {
-    if (error instanceof GeminiServiceError && error.status === 503) {
-      return { plan: input.plan, refined: false, reason: "no_api_key" };
+    const rewired = applyPlanStepOrder(input.plan, parsed.data);
+    const orderReasons: Record<string, string> = {};
+    for (const step of parsed.data.steps) {
+      if (step.reason?.trim()) orderReasons[step.id] = step.reason.trim();
     }
     return {
-      plan: input.plan,
+      plan: withOrderMetadata(rewired, true, "gemini", orderReasons),
+      refined: true,
+      reason: "gemini",
+    };
+  } catch (error) {
+    if (error instanceof GeminiServiceError && error.status === 503) {
+      return {
+        plan: withOrderMetadata(input.plan, false, "no_api_key"),
+        refined: false,
+        reason: "no_api_key",
+      };
+    }
+    const reason =
+      error instanceof Error && error.message.trim()
+        ? error.message.slice(0, 200)
+        : "refine_failed";
+    return {
+      plan: withOrderMetadata(input.plan, false, reason),
       refined: false,
-      reason: error instanceof Error ? error.message : "refine_failed",
+      reason,
     };
   }
 }

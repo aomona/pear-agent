@@ -34,7 +34,7 @@ import {
   PlanArtifactConflictError,
   PlanArtifactNotFoundError,
 } from "../d1/plan-repository.js";
-import type { PlanGenerator } from "../planner.js";
+import { resolvePlanGenerator, type PlanGenerator } from "../planner.js";
 import { registerPlanRoutes, type PlanLibraryOptions } from "../plans/routes.js";
 import { registerReplanRoutes } from "../replan/routes.js";
 import { validateReplanConfiguration, type ReplanRuntime } from "../replan/engine.js";
@@ -89,10 +89,6 @@ export type CreatePearAppOptions = {
     | "resolveDomainFreeTextField"
   >;
 };
-
-function resolvePlanGenerator(options: CreatePearAppOptions, env: PearEnv): PlanGenerator {
-  return options.createPlanGenerator?.(env) ?? options.planGenerator;
-}
 
 /** Raw JSON body — Domain `normalizedInput` is left un-revived. */
 const createSessionBodySchema = z

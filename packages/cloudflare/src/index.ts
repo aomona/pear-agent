@@ -131,8 +131,10 @@ export {
 } from "./voice/tools.js";
 export {
   createStaticPlanGenerator,
+  resolvePlanGenerator,
   type PlanGenerator,
   type PlanGeneratorInput,
+  type PlanGeneratorOptions,
 } from "./planner.js";
 export {
   DEFAULT_MAX_RAW_INPUT_BYTES,
