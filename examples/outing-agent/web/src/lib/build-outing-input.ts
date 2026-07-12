@@ -1,6 +1,10 @@
-import type { OutingInput } from "@pear-agent/outing-domain-example";
+import {
+  parseOutingBelongingsFreeText,
+  type OutingBelongingInput,
+  type OutingInput,
+} from "@pear-agent/outing-domain-example";
 
-/** One belongings row in the input form (one item = one set of fields). */
+/** One belongings row already structured in the list. */
 export type BelongingFormRow = {
   /** Stable React key (not sent to Domain). */
   key: string;
@@ -12,12 +16,10 @@ export type BelongingFormRow = {
 
 export type OutingFormState = {
   departureMode: "structured" | "freeText";
-  /** `items` = per-item fields; `freeText` = single natural-language box for all. */
-  belongingsMode: "items" | "freeText";
   departureLocal: string;
   departureFreeText: string;
+  /** Always structured rows (added one-by-one via modal). */
   belongings: BelongingFormRow[];
-  belongingsFreeText: string;
 };
 
 export function defaultDepartureLocal(): string {
@@ -44,12 +46,15 @@ export function createEmptyBelongingRow(
   };
 }
 
-export function defaultBelongingRows(): BelongingFormRow[] {
-  return [
-    createEmptyBelongingRow({ id: "keys", name: "Keys", chargePercent: "" }),
-    createEmptyBelongingRow({ id: "phone", name: "Phone", chargePercent: "20" }),
-    createEmptyBelongingRow({ id: "wallet", name: "Wallet", chargePercent: "" }),
-  ];
+export function belongingInputToRow(item: OutingBelongingInput): BelongingFormRow {
+  return createEmptyBelongingRow({
+    id: item.id,
+    name: item.name,
+    chargePercent:
+      item.chargePercent === undefined || item.chargePercent === null
+        ? ""
+        : String(item.chargePercent),
+  });
 }
 
 /** Derive a stable slug id from a display name when id is left blank. */
@@ -61,7 +66,57 @@ export function slugFromName(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/** Build Domain input (structured or free-text envelopes) from the setup form. */
+/**
+ * Structure free text entered in the add-item modal into one or more belongings.
+ * Uses Domain deterministic parser; returns null when LLM would be needed.
+ */
+export function structureBelongingFreeText(freeText: string): OutingBelongingInput[] | null {
+  return parseOutingBelongingsFreeText(freeText);
+}
+
+export type AddBelongingModalDraft = {
+  freeText: string;
+  name: string;
+  id: string;
+  chargePercent: string;
+};
+
+/**
+ * Resolve modal draft → structured rows.
+ * Prefer free-text parse when freeText is non-empty; otherwise use structured fields.
+ */
+export function resolveBelongingModalDraft(draft: AddBelongingModalDraft): BelongingFormRow[] {
+  const free = draft.freeText.trim();
+  if (free) {
+    const parsed = structureBelongingFreeText(free);
+    if (!parsed || parsed.length === 0) {
+      throw new Error(
+        "自由文を構造化できませんでした。例:「Phone 30」や「phone:Phone:30」。または下の項目欄に直接入力してください。",
+      );
+    }
+    return parsed.map(belongingInputToRow);
+  }
+
+  const name = draft.name.trim();
+  if (!name) {
+    throw new Error("自由文か、名前を入力してください");
+  }
+  const id = draft.id.trim() || slugFromName(name);
+  if (!id) {
+    throw new Error("id を入力するか、名前から生成できる文字列にしてください");
+  }
+  const chargeRaw = draft.chargePercent.trim();
+  const row = createEmptyBelongingRow({ id, name, chargePercent: chargeRaw });
+  if (chargeRaw !== "") {
+    const charge = Number(chargeRaw);
+    if (Number.isNaN(charge) || charge < 0 || charge > 100) {
+      throw new Error("充電%は 0〜100 で入力してください");
+    }
+  }
+  return [row];
+}
+
+/** Build Domain input from the multi-field form (belongings always structured). */
 export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
   const departureAt: OutingInput["departureAt"] =
     form.departureMode === "freeText"
@@ -72,44 +127,32 @@ export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
     throw new Error("出発時刻の自由文を入力してください");
   }
 
-  let belongings: OutingInput["belongings"];
-  if (form.belongingsMode === "freeText") {
-    const text = form.belongingsFreeText.trim();
-    if (!text) throw new Error("持ち物の自由文を入力してください");
-    belongings = { freeText: text };
-  } else {
-    const rows = form.belongings
-      .map((row) => ({
-        name: row.name.trim(),
-        id: row.id.trim() || slugFromName(row.name),
-        chargeRaw: row.chargePercent.trim(),
-      }))
-      .filter((row) => row.name.length > 0);
+  const rows = form.belongings
+    .map((row) => ({
+      name: row.name.trim(),
+      id: row.id.trim() || slugFromName(row.name),
+      chargeRaw: row.chargePercent.trim(),
+    }))
+    .filter((row) => row.name.length > 0);
 
-    if (rows.length === 0) {
-      throw new Error("持ち物を1つ以上入力してください");
-    }
-
-    belongings = rows.map((row) => {
-      if (!row.id) {
-        throw new Error(
-          `「${row.name}」の id を入力するか、名前から生成できる文字列にしてください`,
-        );
-      }
-      const item: Extract<OutingInput["belongings"], unknown[]>[number] = {
-        id: row.id,
-        name: row.name,
-      };
-      if (row.chargeRaw !== "") {
-        const charge = Number(row.chargeRaw);
-        if (Number.isNaN(charge) || charge < 0 || charge > 100) {
-          throw new Error(`「${row.name}」の充電%は 0〜100 で入力してください`);
-        }
-        item.chargePercent = charge;
-      }
-      return item;
-    });
+  if (rows.length === 0) {
+    throw new Error("持ち物を1つ以上追加してください");
   }
+
+  const belongings = rows.map((row) => {
+    if (!row.id) {
+      throw new Error(`「${row.name}」の id を確認してください`);
+    }
+    const item: OutingBelongingInput = { id: row.id, name: row.name };
+    if (row.chargeRaw !== "") {
+      const charge = Number(row.chargeRaw);
+      if (Number.isNaN(charge) || charge < 0 || charge > 100) {
+        throw new Error(`「${row.name}」の充電%は 0〜100 です`);
+      }
+      item.chargePercent = charge;
+    }
+    return item;
+  });
 
   return { departureAt, belongings };
 }
