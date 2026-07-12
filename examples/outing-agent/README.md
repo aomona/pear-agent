@@ -86,9 +86,10 @@ Session と独立した Plan を D1 に保存できます（migration `0005_plan
 
 - 自由文の構造化は **常に Gemini**（決定論 free-text パースは使わない）。`GEMINI_API_KEY` 必須（未設定時 503）
 - モデル: **`gemini-3.1-flash-lite-preview`** + **`thinkingBudget: 0`**（reasoning なし・低遅延）
-- 持ち物はモーダル追加で即一覧表示し、裏で Gemini を並行実行
-- 直接入力（名前 / id / 充電%）は Gemini なし
-- Web UI: **一覧 → 入力 → 計画 → 実行** の 4 フェーズ（localStorage で plan/session を保持）
+- 入力: **出発時刻 / 行き先(from-to) / 持ち物 / 準備タスク**
+- 持ち物・タスクはモーダル追加で即一覧表示し、Gemini を並行実行
+- Plan 生成: pack / charge / `task:*` ステップ（行き先は title・instructions に反映）
+- Web UI: **一覧 → 入力 → 計画 → 実行** の 4 フェーズ
 
 ## デプロイ
 

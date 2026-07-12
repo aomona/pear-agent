@@ -22,7 +22,7 @@ import {
 } from "./domain.js";
 
 describe("outingDomain", () => {
-  it("normalizes structured departure time, belongings, and charge state", async () => {
+  it("normalizes structured departure, belongings, tasks, and places", async () => {
     await expect(
       outingDomain.normalizeInput({
         departureAt: "2026-07-11T03:00:00Z",
@@ -30,6 +30,9 @@ describe("outingDomain", () => {
           { id: "phone", name: "Phone", chargePercent: 80 },
           { id: "keys", name: "Keys" },
         ],
+        tasks: [{ id: "weather", title: "Check weather" }],
+        originLabel: "Home",
+        destinationLabel: "Station",
       }),
     ).resolves.toEqual({
       departureAt: "2026-07-11T03:00:00Z",
@@ -37,6 +40,11 @@ describe("outingDomain", () => {
         { id: "phone", name: "Phone", chargePercent: 80 },
         { id: "keys", name: "Keys", chargePercent: null },
       ],
+      tasks: [
+        { id: "weather", title: "Check weather", estimatedDurationSeconds: null, notes: null },
+      ],
+      originLabel: "Home",
+      destinationLabel: "Station",
     });
   });
 
@@ -71,6 +79,9 @@ describe("outingDomain", () => {
     ).resolves.toEqual({
       departureAt: "2026-07-12T00:00:00.000Z",
       belongings: [{ id: "wallet", name: "Wallet", chargePercent: 10 }],
+      tasks: [],
+      originLabel: null,
+      destinationLabel: null,
     });
   });
 
@@ -112,9 +123,12 @@ describe("outingDomain", () => {
         { id: "wallet", name: "Wallet", chargePercent: null },
         { id: "laptop", name: "Laptop", chargePercent: 40 },
       ],
+      tasks: [{ id: "lock", title: "Lock the door", estimatedDurationSeconds: 30, notes: null }],
+      originLabel: "Home",
+      destinationLabel: "Office",
     };
     const plan = buildOutingPlan(normalized);
-    expect(plan.steps.map((s) => s.id)).toEqual(["pack", "charge"]);
+    expect(plan.steps.map((s) => s.id)).toEqual(["pack", "charge", "task:lock"]);
     expect(plan.steps.find((s) => s.id === "pack")?.domainData.belongingIds).toEqual([
       "wallet",
       "laptop",
@@ -128,7 +142,9 @@ describe("outingDomain", () => {
         autoStart: false,
       },
     ]);
-    expect(plan.title).toBe("Outing preparation");
+    expect(plan.steps.find((s) => s.id === "task:lock")?.label).toBe("Lock the door");
+    expect(plan.title).toBe("Home → Office");
+    expect(plan.metadata?.originLabel).toBe("Home");
 
     const world = buildOutingWorldState(normalized, {
       updatedAt: new Date("2026-08-20T00:00:00.000Z"),
@@ -138,6 +154,18 @@ describe("outingDomain", () => {
       packedBelongingIds: [],
       chargeByBelongingId: { wallet: null, laptop: 40 },
     });
+  });
+
+  it("builds task-only plan without belongings", () => {
+    const plan = buildOutingPlan({
+      departureAt: "2026-08-20T09:00:00Z",
+      belongings: [],
+      tasks: [{ id: "shoes", title: "Put on shoes", estimatedDurationSeconds: null, notes: null }],
+      originLabel: null,
+      destinationLabel: null,
+    });
+    expect(plan.steps.map((s) => s.id)).toEqual(["task:shoes"]);
+    expect(plan.title).toBe("Outing preparation");
   });
 
   it("assesses delay events and builds a charge-only patch", () => {

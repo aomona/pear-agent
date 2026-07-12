@@ -1,29 +1,34 @@
-import type { OutingBelongingInput, OutingInput } from "@pear-agent/outing-domain-example";
+import type {
+  OutingBelongingInput,
+  OutingInput,
+  OutingTaskInput,
+} from "@pear-agent/outing-domain-example";
 import { z } from "zod";
 
-/**
- * List item for belongings.
- * - ready: structured, can normalize
- * - pending: optimistic row while Gemini runs (can start more adds in parallel)
- * - error: Gemini failed; user can remove / retry
- */
-export type BelongingFormRow = {
+export type ItemKind = "belonging" | "task";
+
+export type PrepListRow = {
   key: string;
+  kind: ItemKind;
   status: "ready" | "pending" | "error";
-  /** Free-text prompt shown while pending / on error. */
   freeTextPreview?: string | undefined;
   errorMessage?: string | undefined;
+  // belonging fields
   id: string;
   name: string;
-  /** Empty string = no charge requirement. */
   chargePercent: string;
+  // task fields (name/title shared as name for list display when kind=task)
+  estimatedDurationSeconds: string;
+  notes: string;
 };
 
 export type OutingFormState = {
   departureMode: "structured" | "freeText";
   departureLocal: string;
   departureFreeText: string;
-  belongings: BelongingFormRow[];
+  originLabel: string;
+  destinationLabel: string;
+  items: PrepListRow[];
 };
 
 export function defaultDepartureLocal(): string {
@@ -44,45 +49,54 @@ export function createRowKey(): string {
 }
 
 export function createEmptyBelongingRow(
-  partial?: Partial<Omit<BelongingFormRow, "key">>,
-): BelongingFormRow {
+  partial?: Partial<Omit<PrepListRow, "key" | "kind">>,
+): PrepListRow {
   return {
     key: newRowKey(),
+    kind: "belonging",
     status: partial?.status ?? "ready",
     freeTextPreview: partial?.freeTextPreview,
     errorMessage: partial?.errorMessage,
     id: partial?.id ?? "",
     name: partial?.name ?? "",
     chargePercent: partial?.chargePercent ?? "",
+    estimatedDurationSeconds: "",
+    notes: "",
   };
 }
 
-/** Optimistic row shown immediately while Gemini structures free text. */
-export function createPendingBelongingRow(freeText: string): BelongingFormRow {
+export function createEmptyTaskRow(
+  partial?: Partial<Omit<PrepListRow, "key" | "kind">>,
+): PrepListRow {
+  return {
+    key: newRowKey(),
+    kind: "task",
+    status: partial?.status ?? "ready",
+    freeTextPreview: partial?.freeTextPreview,
+    errorMessage: partial?.errorMessage,
+    id: partial?.id ?? "",
+    name: partial?.name ?? "",
+    chargePercent: "",
+    estimatedDurationSeconds: partial?.estimatedDurationSeconds ?? "",
+    notes: partial?.notes ?? "",
+  };
+}
+
+export function createPendingRow(kind: ItemKind, freeText: string): PrepListRow {
   const preview = freeText.trim();
   return {
     key: newRowKey(),
+    kind,
     status: "pending",
     freeTextPreview: preview,
     id: "",
     name: preview,
     chargePercent: "",
+    estimatedDurationSeconds: "",
+    notes: "",
   };
 }
 
-export function belongingInputToRow(item: OutingBelongingInput): BelongingFormRow {
-  return createEmptyBelongingRow({
-    status: "ready",
-    id: item.id,
-    name: item.name,
-    chargePercent:
-      item.chargePercent === undefined || item.chargePercent === null
-        ? ""
-        : String(item.chargePercent),
-  });
-}
-
-/** Derive a stable slug id from a display name when id is left blank. */
 export function slugFromName(name: string): string {
   return name
     .trim()
@@ -91,52 +105,81 @@ export function slugFromName(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-export type AddBelongingModalDraft = {
+export type AddPrepModalDraft = {
+  kind: ItemKind;
   freeText: string;
+  // belonging
   name: string;
   id: string;
   chargePercent: string;
+  // task
+  title: string;
+  taskId: string;
+  estimatedDurationSeconds: string;
+  notes: string;
 };
 
-export type BelongingModalLocalResult =
-  | { kind: "needs_gemini"; freeText: string }
-  | { kind: "structured"; rows: BelongingFormRow[] };
+export type AddPrepLocalResult =
+  | { kind: "needs_gemini"; itemKind: ItemKind; freeText: string }
+  | { kind: "structured"; rows: PrepListRow[] };
 
-/**
- * Classify modal draft at Add time (no free-text parsing here).
- * Free text → always Gemini on the server. Direct fields → ready rows.
- */
-export function resolveBelongingModalDraftLocal(
-  draft: AddBelongingModalDraft,
-): BelongingModalLocalResult {
+export function resolveAddPrepModalLocal(draft: AddPrepModalDraft): AddPrepLocalResult {
   const free = draft.freeText.trim();
   if (free) {
-    return { kind: "needs_gemini", freeText: free };
+    return { kind: "needs_gemini", itemKind: draft.kind, freeText: free };
   }
 
-  const name = draft.name.trim();
-  if (!name) {
-    throw new Error("自由文か、名前を入力してください");
+  if (draft.kind === "belonging") {
+    const name = draft.name.trim();
+    if (!name) throw new Error("自由文か、名前を入力してください");
+    const id = draft.id.trim() || slugFromName(name);
+    if (!id) throw new Error("id を入力するか、名前から生成できる文字列にしてください");
+    const chargeRaw = draft.chargePercent.trim();
+    if (chargeRaw !== "") {
+      const charge = Number(chargeRaw);
+      if (Number.isNaN(charge) || charge < 0 || charge > 100) {
+        throw new Error("充電%は 0〜100 で入力してください");
+      }
+    }
+    return {
+      kind: "structured",
+      rows: [
+        createEmptyBelongingRow({
+          status: "ready",
+          id,
+          name,
+          chargePercent: chargeRaw,
+        }),
+      ],
+    };
   }
-  const id = draft.id.trim() || slugFromName(name);
-  if (!id) {
-    throw new Error("id を入力するか、名前から生成できる文字列にしてください");
-  }
-  const chargeRaw = draft.chargePercent.trim();
-  if (chargeRaw !== "") {
-    const charge = Number(chargeRaw);
-    if (Number.isNaN(charge) || charge < 0 || charge > 100) {
-      throw new Error("充電%は 0〜100 で入力してください");
+
+  const title = draft.title.trim();
+  if (!title) throw new Error("自由文か、タスク名を入力してください");
+  const id = draft.taskId.trim() || slugFromName(title);
+  if (!id) throw new Error("id を入力するか、タイトルから生成できる文字列にしてください");
+  const durRaw = draft.estimatedDurationSeconds.trim();
+  if (durRaw !== "") {
+    const dur = Number(durRaw);
+    if (Number.isNaN(dur) || dur <= 0) {
+      throw new Error("所要秒は正の数で入力してください");
     }
   }
   return {
     kind: "structured",
-    rows: [createEmptyBelongingRow({ status: "ready", id, name, chargePercent: chargeRaw })],
+    rows: [
+      createEmptyTaskRow({
+        status: "ready",
+        id,
+        name: title,
+        estimatedDurationSeconds: durRaw,
+        notes: draft.notes.trim(),
+      }),
+    ],
   };
 }
 
-/** Map server resolve-field value for belongings into ready form rows. */
-export function belongingServerValueToRows(value: unknown): BelongingFormRow[] {
+export function belongingServerValueToRows(value: unknown): PrepListRow[] {
   const items = z
     .array(
       z.object({
@@ -148,34 +191,58 @@ export function belongingServerValueToRows(value: unknown): BelongingFormRow[] {
     .min(1)
     .parse(value);
   return items.map((item) =>
-    belongingInputToRow({
+    createEmptyBelongingRow({
+      status: "ready",
       id: item.id,
       name: item.name,
-      ...(item.chargePercent !== undefined ? { chargePercent: item.chargePercent } : {}),
+      chargePercent: item.chargePercent === undefined ? "" : String(item.chargePercent),
     }),
   );
 }
 
-/** Ready rows only — for Domain normalize. */
-export function readyBelongings(rows: readonly BelongingFormRow[]): BelongingFormRow[] {
+export function taskServerValueToRows(value: unknown): PrepListRow[] {
+  const items = z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        title: z.string().min(1),
+        estimatedDurationSeconds: z.number().positive().optional(),
+        notes: z.string().optional(),
+      }),
+    )
+    .min(1)
+    .parse(value);
+  return items.map((item) =>
+    createEmptyTaskRow({
+      status: "ready",
+      id: item.id,
+      name: item.title,
+      estimatedDurationSeconds:
+        item.estimatedDurationSeconds === undefined ? "" : String(item.estimatedDurationSeconds),
+      notes: item.notes ?? "",
+    }),
+  );
+}
+
+export function readyItems(rows: readonly PrepListRow[]): PrepListRow[] {
   return rows.filter((row) => row.status === "ready");
 }
 
-export function hasInFlightBelongings(rows: readonly BelongingFormRow[]): boolean {
+export function hasInFlightItems(rows: readonly PrepListRow[]): boolean {
   return rows.some((row) => row.status === "pending");
 }
 
-export function hasFailedBelongings(rows: readonly BelongingFormRow[]): boolean {
+export function hasFailedItems(rows: readonly PrepListRow[]): boolean {
   return rows.some((row) => row.status === "error");
 }
 
-/** Build Domain input from the multi-field form (ready belongings only). */
+/** Build Domain input from the multi-field form. */
 export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
-  if (hasInFlightBelongings(form.belongings)) {
-    throw new Error("Gemini で構造化中の持ち物があります。完了を待ってください");
+  if (hasInFlightItems(form.items)) {
+    throw new Error("Gemini で構造化中の項目があります。完了を待ってください");
   }
-  if (hasFailedBelongings(form.belongings)) {
-    throw new Error("構造化に失敗した持ち物があります。削除するか再試行してください");
+  if (hasFailedItems(form.items)) {
+    throw new Error("構造化に失敗した項目があります。削除するか再試行してください");
   }
 
   const departureAt: OutingInput["departureAt"] =
@@ -187,32 +254,64 @@ export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
     throw new Error("出発時刻の自由文を入力してください");
   }
 
-  const rows = readyBelongings(form.belongings)
-    .map((row) => ({
-      name: row.name.trim(),
-      id: row.id.trim() || slugFromName(row.name),
-      chargeRaw: row.chargePercent.trim(),
-    }))
-    .filter((row) => row.name.length > 0);
+  const ready = readyItems(form.items);
+  const belongings: OutingBelongingInput[] = [];
+  const tasks: OutingTaskInput[] = [];
 
-  if (rows.length === 0) {
-    throw new Error("持ち物を1つ以上追加してください");
+  for (const row of ready) {
+    if (row.kind === "belonging") {
+      const name = row.name.trim();
+      if (!name) continue;
+      const id = row.id.trim() || slugFromName(name);
+      if (!id) throw new Error(`「${name}」の id を確認してください`);
+      const item: OutingBelongingInput = { id, name };
+      if (row.chargePercent.trim() !== "") {
+        const charge = Number(row.chargePercent.trim());
+        if (Number.isNaN(charge) || charge < 0 || charge > 100) {
+          throw new Error(`「${name}」の充電%は 0〜100 です`);
+        }
+        item.chargePercent = charge;
+      }
+      belongings.push(item);
+    } else {
+      const title = row.name.trim();
+      if (!title) continue;
+      const id = row.id.trim() || slugFromName(title);
+      if (!id) throw new Error(`「${title}」の id を確認してください`);
+      const task: OutingTaskInput = { id, title };
+      if (row.estimatedDurationSeconds.trim() !== "") {
+        const dur = Number(row.estimatedDurationSeconds.trim());
+        if (Number.isNaN(dur) || dur <= 0) {
+          throw new Error(`「${title}」の所要秒は正の数です`);
+        }
+        task.estimatedDurationSeconds = dur;
+      }
+      if (row.notes.trim() !== "") task.notes = row.notes.trim();
+      tasks.push(task);
+    }
   }
 
-  const belongings = rows.map((row) => {
-    if (!row.id) {
-      throw new Error(`「${row.name}」の id を確認してください`);
-    }
-    const item: OutingBelongingInput = { id: row.id, name: row.name };
-    if (row.chargeRaw !== "") {
-      const charge = Number(row.chargeRaw);
-      if (Number.isNaN(charge) || charge < 0 || charge > 100) {
-        throw new Error(`「${row.name}」の充電%は 0〜100 です`);
-      }
-      item.chargePercent = charge;
-    }
-    return item;
-  });
+  if (belongings.length === 0 && tasks.length === 0) {
+    throw new Error("持ち物またはタスクを1つ以上追加してください");
+  }
 
-  return { departureAt, belongings };
+  const input: OutingInput = {
+    departureAt,
+    belongings,
+    tasks,
+  };
+  if (form.originLabel.trim() !== "") input.originLabel = form.originLabel.trim();
+  if (form.destinationLabel.trim() !== "") {
+    input.destinationLabel = form.destinationLabel.trim();
+  }
+  return input;
 }
+
+// --- Back-compat aliases used by older tests/names ---
+export type BelongingFormRow = PrepListRow;
+export const createPendingBelongingRow = (freeText: string) =>
+  createPendingRow("belonging", freeText);
+export const hasInFlightBelongings = hasInFlightItems;
+export const hasFailedBelongings = hasFailedItems;
+export const readyBelongings = (rows: readonly PrepListRow[]) =>
+  readyItems(rows).filter((r) => r.kind === "belonging");

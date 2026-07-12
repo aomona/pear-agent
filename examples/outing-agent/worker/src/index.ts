@@ -23,6 +23,25 @@ const DEMO_CONTEXT = {
   claims: {} as Record<string, unknown>,
 };
 
+const belongingArraySchema = z.array(
+  z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    chargePercent: z.number().min(0).max(100).optional(),
+  }),
+);
+
+const taskArraySchema = z.array(
+  z.object({
+    id: z.string().min(1),
+    title: z.string().min(1),
+    estimatedDurationSeconds: z.number().positive().optional(),
+    notes: z.string().optional(),
+  }),
+);
+
+const placeLabelSchema = z.string().trim().min(1).max(160);
+
 const worker = createPearWorker({
   authorize,
   planGenerator,
@@ -38,7 +57,7 @@ const worker = createPearWorker({
         context,
       });
     },
-    /** Single-field structure for modal "Add" — always Gemini (no deterministic free-text). */
+    /** Single-field structure — always Gemini (no deterministic free-text). */
     resolveDomainFreeTextField: async ({
       domainId,
       field,
@@ -57,36 +76,44 @@ const worker = createPearWorker({
           { status: 503 as const },
         );
       }
+
+      const base = {
+        domainId,
+        freeTextResolver,
+        context,
+        value: { freeText },
+      };
+
       if (field === "departureAt") {
         return resolveMaybeFreeTextField({
-          domainId,
+          ...base,
           field,
-          value: { freeText },
-          freeTextResolver,
           parse: (value): string => z.iso.datetime().parse(value),
           hint: "ISO-8601 datetime string",
-          context,
         });
       }
       if (field === "belongings") {
         return resolveMaybeFreeTextField({
-          domainId,
+          ...base,
           field,
-          value: { freeText },
-          freeTextResolver,
-          parse: (value) =>
-            z
-              .array(
-                z.object({
-                  id: z.string().min(1),
-                  name: z.string().min(1),
-                  chargePercent: z.number().min(0).max(100).optional(),
-                }),
-              )
-              .min(1)
-              .parse(value),
+          parse: (value) => belongingArraySchema.min(1).parse(value),
           hint: "Array of { id, name, chargePercent? }",
-          context,
+        });
+      }
+      if (field === "tasks") {
+        return resolveMaybeFreeTextField({
+          ...base,
+          field,
+          parse: (value) => taskArraySchema.min(1).parse(value),
+          hint: "Array of { id, title, estimatedDurationSeconds?, notes? }",
+        });
+      }
+      if (field === "originLabel" || field === "destinationLabel") {
+        return resolveMaybeFreeTextField({
+          ...base,
+          field,
+          parse: (value): string => placeLabelSchema.parse(value),
+          hint: "Short place label",
         });
       }
       throw new Error(`Unsupported free-text field: ${field}`);
@@ -101,7 +128,6 @@ const worker = createPearWorker({
       }),
   },
   resolveContext: async (request) => {
-    // Demo only: missing header → default actor. Malformed header still fails closed.
     if (!request.headers.get(PEAR_CONTEXT_HEADER)) {
       return DEMO_CONTEXT;
     }
@@ -115,7 +141,6 @@ export default {
     if (preflight) return preflight;
 
     const response = await worker.fetch(request, env, ctx);
-    // WebSocket upgrades must not be re-wrapped (body/status semantics).
     if (request.headers.get("Upgrade")?.toLowerCase() === "websocket") {
       return response;
     }
