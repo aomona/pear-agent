@@ -1,7 +1,8 @@
 import { useExecutionSession, useRuntimeSnapshot } from "@pear-agent/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { playTimerAlarmBeeps } from "../lib/timer-beep";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -38,6 +39,8 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
   const { snapshot, refetch } = useRuntimeSnapshot(sessionId);
   const session = useExecutionSession(sessionId);
   const [now, setNow] = useState(() => Date.now());
+  /** Timer ids that already played the zero alarm (avoid repeat every tick). */
+  const alarmedIdsRef = useRef(new Set<string>());
 
   const running = snapshot?.activeTimers ?? [];
 
@@ -46,6 +49,14 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [running.length]);
+
+  // Drop alarm memory for timers that left the snapshot (completed / cancelled).
+  useEffect(() => {
+    const live = new Set(running.map((t) => t.id));
+    for (const id of [...alarmedIdsRef.current]) {
+      if (!live.has(id)) alarmedIdsRef.current.delete(id);
+    }
+  }, [running]);
 
   const cards = useMemo(() => {
     return running.map((timer) => {
@@ -65,6 +76,17 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
       };
     });
   }, [running, now, snapshot?.plan]);
+
+  // ピピピピ when a countdown first hits zero.
+  useEffect(() => {
+    for (const card of cards) {
+      if (!card.done) continue;
+      if (alarmedIdsRef.current.has(card.id)) continue;
+      alarmedIdsRef.current.add(card.id);
+      void playTimerAlarmBeeps();
+      toast.message(`${card.label} が終了しました`, { description: "ピピピピ" });
+    }
+  }, [cards]);
 
   if (!sessionId || cards.length === 0) return null;
 
