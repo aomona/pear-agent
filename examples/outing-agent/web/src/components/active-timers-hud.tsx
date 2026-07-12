@@ -89,10 +89,7 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     if (toastedDoneKeyRef.current !== doneKey) {
       toastedDoneKeyRef.current = doneKey;
       const labels = doneCards.map((c) => c.label).join("、");
-      toast.message(`${labels} が終了しました`, {
-        description: "ピピピピ…「完了して」と言うか完了を押すまで、鳴り終わりから1秒後に再鳴",
-        duration: 6_000,
-      });
+      toast.message(`${labels} 終了`);
     }
 
     let cancelled = false;
