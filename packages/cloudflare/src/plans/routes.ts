@@ -232,6 +232,7 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       const versioned: ExecutionPlan = {
         ...nextPlan,
         version: existing.version + 1,
+        ...(body.title !== undefined && body.title !== null ? { title: body.title } : {}),
       };
       const stored = await repository.saveVersionStored({
         artifactId: planId,
@@ -241,13 +242,6 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
         ...(body.status !== undefined ? { status: body.status } : {}),
         ...(body.normalizedInput !== undefined ? { normalizedInput: body.normalizedInput } : {}),
       });
-      if (body.title !== undefined) {
-        const withTitle = await repository.updateMeta({
-          artifactId: planId,
-          title: body.title,
-        });
-        return c.json(artifactJson(withTitle));
-      }
       return c.json(artifactJson(stored));
     }
 
@@ -299,30 +293,18 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       });
     }
 
-    // First real generation from empty draft replaces v1; later gens bump version.
-    const isEmptyDraft = existing.currentPlan.steps.length === 0 && existing.version === 1;
+    // Always bump version (including first generate after empty draft shell).
     const plan: ExecutionPlan = {
       ...generated,
-      version: isEmptyDraft ? 1 : existing.version + 1,
+      version: existing.version + 1,
       id: existing.currentPlan.id,
     };
-
-    if (isEmptyDraft) {
-      const stored = await repository.replaceCurrentPlan({
-        artifactId: planId,
-        plan,
-        changeReason: "initial",
-        summary: "Generated plan",
-        normalizedInput,
-      });
-      return c.json(artifactJson(stored));
-    }
 
     const stored = await repository.saveVersionStored({
       artifactId: planId,
       plan,
       changeReason: "initial",
-      summary: "Regenerated plan",
+      summary: existing.currentPlan.steps.length === 0 ? "Generated plan" : "Regenerated plan",
       normalizedInput,
     });
     return c.json(artifactJson(stored));

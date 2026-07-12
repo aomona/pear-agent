@@ -277,65 +277,6 @@ export class D1PlanRepository implements PlanRepository {
     return updated;
   }
 
-  /**
-   * Replace the current plan snapshot without bumping version.
-   * Used for first generate on an empty draft (v1 shell → real plan).
-   */
-  async replaceCurrentPlan(input: {
-    artifactId: string;
-    plan: ExecutionPlan;
-    changeReason?: PlanChangeReason;
-    summary?: string;
-    normalizedInput?: unknown;
-    status?: PlanArtifactStatus;
-  }): Promise<StoredPlanArtifact> {
-    const existing = await this.getStored(input.artifactId);
-    if (!existing) throw new PlanArtifactNotFoundError(input.artifactId);
-
-    const plan = planSchema.parse(input.plan);
-    if (plan.version !== existing.version) {
-      throw new PlanArtifactConflictError(
-        `replaceCurrentPlan requires plan.version === ${existing.version}`,
-      );
-    }
-
-    const now = new Date().toISOString();
-    const status = input.status ?? existing.status;
-    const normalizedInput =
-      input.normalizedInput !== undefined ? input.normalizedInput : existing.normalizedInput;
-
-    await this.db
-      .update(planArtifacts)
-      .set({
-        status,
-        title: plan.title ?? existing.title ?? null,
-        goalJson: serializeJson(plan.goal),
-        currentPlanJson: serializeJson(plan),
-        version: plan.version,
-        normalizedInputJson: normalizedInput === undefined ? null : serializeJson(normalizedInput),
-        updatedAt: now,
-      })
-      .where(eq(planArtifacts.id, input.artifactId));
-
-    await this.db
-      .update(planArtifactVersions)
-      .set({
-        planJson: serializeJson(plan),
-        changeReason: input.changeReason ?? "initial",
-        summary: input.summary ?? null,
-      })
-      .where(
-        and(
-          eq(planArtifactVersions.artifactId, input.artifactId),
-          eq(planArtifactVersions.version, plan.version),
-        ),
-      );
-
-    const updated = await this.getStored(input.artifactId);
-    if (!updated) throw new PlanArtifactNotFoundError(input.artifactId);
-    return updated;
-  }
-
   async getVersionHistory(artifactId: string): Promise<PlanVersionRecord[]> {
     const existing = await this.getStored(artifactId);
     if (!existing) throw new PlanArtifactNotFoundError(artifactId);

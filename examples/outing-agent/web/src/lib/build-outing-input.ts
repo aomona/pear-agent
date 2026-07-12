@@ -6,21 +6,31 @@ import type {
 import { z } from "zod";
 
 export type ItemKind = "belonging" | "task";
+export type RowStatus = "ready" | "pending" | "error";
 
-export type PrepListRow = {
+type RowBase = {
   key: string;
-  kind: ItemKind;
-  status: "ready" | "pending" | "error";
+  status: RowStatus;
   freeTextPreview?: string | undefined;
   errorMessage?: string | undefined;
-  // belonging fields
+};
+
+export type BelongingListRow = RowBase & {
+  kind: "belonging";
   id: string;
   name: string;
   chargePercent: string;
-  // task fields (name/title shared as name for list display when kind=task)
+};
+
+export type TaskListRow = RowBase & {
+  kind: "task";
+  id: string;
+  title: string;
   estimatedDurationSeconds: string;
   notes: string;
 };
+
+export type PrepListRow = BelongingListRow | TaskListRow;
 
 export type OutingFormState = {
   departureMode: "structured" | "freeText";
@@ -44,13 +54,17 @@ function newRowKey(): string {
   return `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function createRowKey(): string {
-  return newRowKey();
+export function slugFromName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 export function createEmptyBelongingRow(
-  partial?: Partial<Omit<PrepListRow, "key" | "kind">>,
-): PrepListRow {
+  partial?: Partial<Omit<BelongingListRow, "key" | "kind">>,
+): BelongingListRow {
   return {
     key: newRowKey(),
     kind: "belonging",
@@ -60,14 +74,12 @@ export function createEmptyBelongingRow(
     id: partial?.id ?? "",
     name: partial?.name ?? "",
     chargePercent: partial?.chargePercent ?? "",
-    estimatedDurationSeconds: "",
-    notes: "",
   };
 }
 
 export function createEmptyTaskRow(
-  partial?: Partial<Omit<PrepListRow, "key" | "kind">>,
-): PrepListRow {
+  partial?: Partial<Omit<TaskListRow, "key" | "kind">>,
+): TaskListRow {
   return {
     key: newRowKey(),
     kind: "task",
@@ -75,8 +87,7 @@ export function createEmptyTaskRow(
     freeTextPreview: partial?.freeTextPreview,
     errorMessage: partial?.errorMessage,
     id: partial?.id ?? "",
-    name: partial?.name ?? "",
-    chargePercent: "",
+    title: partial?.title ?? "",
     estimatedDurationSeconds: partial?.estimatedDurationSeconds ?? "",
     notes: partial?.notes ?? "",
   };
@@ -84,35 +95,30 @@ export function createEmptyTaskRow(
 
 export function createPendingRow(kind: ItemKind, freeText: string): PrepListRow {
   const preview = freeText.trim();
-  return {
-    key: newRowKey(),
-    kind,
+  if (kind === "belonging") {
+    return createEmptyBelongingRow({
+      status: "pending",
+      freeTextPreview: preview,
+      name: preview,
+    });
+  }
+  return createEmptyTaskRow({
     status: "pending",
     freeTextPreview: preview,
-    id: "",
-    name: preview,
-    chargePercent: "",
-    estimatedDurationSeconds: "",
-    notes: "",
-  };
+    title: preview,
+  });
 }
 
-export function slugFromName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-+|-+$/g, "");
+export function displayName(row: PrepListRow): string {
+  return row.kind === "belonging" ? row.name : row.title;
 }
 
 export type AddPrepModalDraft = {
   kind: ItemKind;
   freeText: string;
-  // belonging
   name: string;
   id: string;
   chargePercent: string;
-  // task
   title: string;
   taskId: string;
   estimatedDurationSeconds: string;
@@ -143,14 +149,7 @@ export function resolveAddPrepModalLocal(draft: AddPrepModalDraft): AddPrepLocal
     }
     return {
       kind: "structured",
-      rows: [
-        createEmptyBelongingRow({
-          status: "ready",
-          id,
-          name,
-          chargePercent: chargeRaw,
-        }),
-      ],
+      rows: [createEmptyBelongingRow({ status: "ready", id, name, chargePercent: chargeRaw })],
     };
   }
 
@@ -171,7 +170,7 @@ export function resolveAddPrepModalLocal(draft: AddPrepModalDraft): AddPrepLocal
       createEmptyTaskRow({
         status: "ready",
         id,
-        name: title,
+        title,
         estimatedDurationSeconds: durRaw,
         notes: draft.notes.trim(),
       }),
@@ -179,7 +178,7 @@ export function resolveAddPrepModalLocal(draft: AddPrepModalDraft): AddPrepLocal
   };
 }
 
-export function belongingServerValueToRows(value: unknown): PrepListRow[] {
+export function belongingServerValueToRows(value: unknown): BelongingListRow[] {
   const items = z
     .array(
       z.object({
@@ -200,7 +199,7 @@ export function belongingServerValueToRows(value: unknown): PrepListRow[] {
   );
 }
 
-export function taskServerValueToRows(value: unknown): PrepListRow[] {
+export function taskServerValueToRows(value: unknown): TaskListRow[] {
   const items = z
     .array(
       z.object({
@@ -216,7 +215,7 @@ export function taskServerValueToRows(value: unknown): PrepListRow[] {
     createEmptyTaskRow({
       status: "ready",
       id: item.id,
-      name: item.title,
+      title: item.title,
       estimatedDurationSeconds:
         item.estimatedDurationSeconds === undefined ? "" : String(item.estimatedDurationSeconds),
       notes: item.notes ?? "",
@@ -236,7 +235,6 @@ export function hasFailedItems(rows: readonly PrepListRow[]): boolean {
   return rows.some((row) => row.status === "error");
 }
 
-/** Build Domain input from the multi-field form. */
 export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
   if (hasInFlightItems(form.items)) {
     throw new Error("Gemini で構造化中の項目があります。完了を待ってください");
@@ -254,11 +252,10 @@ export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
     throw new Error("出発時刻の自由文を入力してください");
   }
 
-  const ready = readyItems(form.items);
   const belongings: OutingBelongingInput[] = [];
   const tasks: OutingTaskInput[] = [];
 
-  for (const row of ready) {
+  for (const row of readyItems(form.items)) {
     if (row.kind === "belonging") {
       const name = row.name.trim();
       if (!name) continue;
@@ -274,7 +271,7 @@ export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
       }
       belongings.push(item);
     } else {
-      const title = row.name.trim();
+      const title = row.title.trim();
       if (!title) continue;
       const id = row.id.trim() || slugFromName(title);
       if (!id) throw new Error(`「${title}」の id を確認してください`);
@@ -295,23 +292,10 @@ export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
     throw new Error("持ち物またはタスクを1つ以上追加してください");
   }
 
-  const input: OutingInput = {
-    departureAt,
-    belongings,
-    tasks,
-  };
+  const input: OutingInput = { departureAt, belongings, tasks };
   if (form.originLabel.trim() !== "") input.originLabel = form.originLabel.trim();
   if (form.destinationLabel.trim() !== "") {
     input.destinationLabel = form.destinationLabel.trim();
   }
   return input;
 }
-
-// --- Back-compat aliases used by older tests/names ---
-export type BelongingFormRow = PrepListRow;
-export const createPendingBelongingRow = (freeText: string) =>
-  createPendingRow("belonging", freeText);
-export const hasInFlightBelongings = hasInFlightItems;
-export const hasFailedBelongings = hasFailedItems;
-export const readyBelongings = (rows: readonly PrepListRow[]) =>
-  readyItems(rows).filter((r) => r.kind === "belonging");

@@ -13,6 +13,17 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
+export {
+  isOutingFreeTextField,
+  outingFreeTextGeminiSchemas,
+  outingFreeTextHints,
+  outingFreeTextParse,
+  unwrapOutingFreeTextGeminiResult,
+  OUTING_FREE_TEXT_FIELDS,
+  type OutingFreeTextField,
+} from "./free-text-fields.js";
+import { outingFreeTextHints, outingFreeTextParse } from "./free-text-fields.js";
+
 const belongingInputSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -46,7 +57,9 @@ const outingWorldStateFactsSchema = z.object({
 
 /**
  * Each list/scalar field accepts structured data OR free-text (`{ freeText }`).
- * Free text is resolved via host freeTextResolver (Gemini) in normalizeInput.
+ * Free text is resolved only via host freeTextResolver (typically Gemini) —
+ * see {@link outingFreeTextParse} / free-text-fields registry. No Domain-side
+ * deterministic free-text path.
  */
 const outingInputSchema = z
   .object({
@@ -108,61 +121,6 @@ export type OutingBelongingInput = z.infer<typeof belongingInputSchema>;
 export type OutingTaskInput = z.infer<typeof taskInputSchema>;
 export type OutingTask = z.infer<typeof taskSchema>;
 
-/** Deterministic free-text → ISO datetime (optional host helper; Domain free-text uses Gemini). */
-export function parseOutingDepartureFreeText(freeText: string): string | null {
-  const trimmed = freeText.trim();
-  const ms = Date.parse(trimmed);
-  if (!Number.isNaN(ms)) return new Date(ms).toISOString();
-  return null;
-}
-
-/**
- * Deterministic free-text belongings (optional host helper).
- * Supports lines / commas: `id:name[:charge%]` or `name charge%` / bare `name`.
- */
-export function parseOutingBelongingsFreeText(freeText: string): OutingBelongingInput[] | null {
-  const trimmed = freeText.trim();
-  if (!/[:\d%]/.test(trimmed) && trimmed.split(/\s+/).length > 3) {
-    return null;
-  }
-
-  const tokens = trimmed
-    .split(/[\n,]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (tokens.length === 0) return null;
-
-  const belongings: OutingBelongingInput[] = [];
-  for (const token of tokens) {
-    const colonParts = token.split(":").map((p) => p.trim());
-    if (colonParts.length >= 2 && colonParts[0] && colonParts[1]) {
-      const item: OutingBelongingInput = { id: colonParts[0], name: colonParts[1] };
-      if (colonParts[2] !== undefined && colonParts[2] !== "") {
-        const charge = Number(colonParts[2]);
-        if (Number.isNaN(charge)) return null;
-        item.chargePercent = charge;
-      }
-      belongings.push(item);
-      continue;
-    }
-
-    const chargeMatch = token.match(/^(.*?)\s+(\d{1,3})\s*%?$/);
-    if (chargeMatch?.[1] && chargeMatch[2] !== undefined) {
-      const name = chargeMatch[1].trim();
-      const charge = Number(chargeMatch[2]);
-      if (!name || Number.isNaN(charge) || charge > 100) return null;
-      const id = name.toLowerCase().replace(/\s+/g, "-");
-      belongings.push({ id, name, chargePercent: charge });
-      continue;
-    }
-
-    const id = token.toLowerCase().replace(/\s+/g, "-");
-    belongings.push({ id, name: token });
-  }
-
-  return belongings.length > 0 ? belongings : null;
-}
-
 async function resolveOptionalLabel(
   field: "originLabel" | "destinationLabel",
   value: string | { freeText: string } | undefined,
@@ -173,13 +131,13 @@ async function resolveOptionalLabel(
   },
 ): Promise<string | null> {
   if (value === undefined) return null;
-  if (typeof value === "string") return placeLabelSchema.parse(value);
+  if (typeof value === "string") return outingFreeTextParse[field](value);
   return resolveMaybeFreeTextField({
     ...fieldOpts,
     field,
     value,
-    parse: (v): string => placeLabelSchema.parse(v),
-    hint: "Short place label, e.g. Shibuya Station",
+    parse: outingFreeTextParse[field],
+    hint: outingFreeTextHints[field],
   });
 }
 
@@ -206,8 +164,8 @@ export const outingDomain = defineDomain({
       ...fieldOpts,
       field: "departureAt",
       value: input.departureAt,
-      parse: (value): string => z.iso.datetime().parse(value),
-      hint: "ISO-8601 datetime string",
+      parse: outingFreeTextParse.departureAt,
+      hint: outingFreeTextHints.departureAt,
     });
 
     const belongingsRaw = input.belongings ?? [];
@@ -215,8 +173,8 @@ export const outingDomain = defineDomain({
       ...fieldOpts,
       field: "belongings",
       value: belongingsRaw,
-      parse: (value): OutingBelongingInput[] => belongingInputSchema.array().parse(value),
-      hint: "Array of { id, name, chargePercent? }",
+      parse: outingFreeTextParse.belongings,
+      hint: outingFreeTextHints.belongings,
     });
 
     const tasksRaw = input.tasks ?? [];
@@ -224,8 +182,8 @@ export const outingDomain = defineDomain({
       ...fieldOpts,
       field: "tasks",
       value: tasksRaw,
-      parse: (value): OutingTaskInput[] => taskInputSchema.array().parse(value),
-      hint: "Array of { id, title, estimatedDurationSeconds?, notes? }",
+      parse: outingFreeTextParse.tasks,
+      hint: outingFreeTextHints.tasks,
     });
 
     const originLabel = await resolveOptionalLabel("originLabel", input.originLabel, fieldOpts);
@@ -266,7 +224,7 @@ export const outingDomain = defineDomain({
 
 export const outingGoal: ExecutionGoal = {
   id: "ready-to-leave",
-  description: "必要な持ち物・充電・準備タスクを終え、出発できる",
+  description: "必要な持ち物を揃え、機器を充電して出発できる（準備タスクは step 完了で追跡）",
   successCriteria: [
     {
       id: "packed",
@@ -278,7 +236,6 @@ export const outingGoal: ExecutionGoal = {
       description: "必要な機器が充電済みである",
       evaluator: { type: "state_rule" },
     },
-    // Task completion is tracked via step status (task:*), not a separate criterion.
   ],
   completionPolicy: "automatic",
 };

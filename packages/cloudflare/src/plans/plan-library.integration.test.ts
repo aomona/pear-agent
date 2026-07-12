@@ -58,8 +58,9 @@ describe("plan library (CE-11)", () => {
       };
     };
     // Test worker uses static outingPlan fixture (not buildOutingPlan from input).
+    // First generate always bumps past the empty draft shell (v1 → v2).
     expect(generated.artifact.currentPlan.steps.length).toBeGreaterThan(0);
-    expect(generated.artifact.version).toBe(1);
+    expect(generated.artifact.version).toBe(2);
 
     const readyRes = await fetchApi(`/plans/${planId}`, {
       method: "PATCH",

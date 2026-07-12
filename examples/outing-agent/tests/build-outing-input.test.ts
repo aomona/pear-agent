@@ -27,20 +27,6 @@ describe("resolveAddPrepModalLocal", () => {
         notes: "",
       }),
     ).toEqual({ kind: "needs_gemini", itemKind: "belonging", freeText: "phone 20" });
-
-    expect(
-      resolveAddPrepModalLocal({
-        kind: "task",
-        freeText: "lock door",
-        name: "",
-        id: "",
-        chargePercent: "",
-        title: "",
-        taskId: "",
-        estimatedDurationSeconds: "",
-        notes: "",
-      }),
-    ).toEqual({ kind: "needs_gemini", itemKind: "task", freeText: "lock door" });
   });
 
   it("structures direct task fields", () => {
@@ -60,7 +46,7 @@ describe("resolveAddPrepModalLocal", () => {
       expect(result.rows[0]).toMatchObject({
         kind: "task",
         status: "ready",
-        name: "Check weather",
+        title: "Check weather",
         id: "check-weather",
         estimatedDurationSeconds: "45",
         notes: "App",
@@ -81,7 +67,7 @@ describe("buildOutingInputFromForm", () => {
         createEmptyBelongingRow({ id: "keys", name: "Keys", chargePercent: "" }),
         createEmptyTaskRow({
           id: "lock",
-          name: "Lock door",
+          title: "Lock door",
           estimatedDurationSeconds: "30",
           notes: "",
         }),
@@ -100,7 +86,7 @@ describe("buildOutingInputFromForm", () => {
       departureFreeText: "",
       originLabel: "",
       destinationLabel: "",
-      items: [createEmptyTaskRow({ id: "shoes", name: "Shoes", estimatedDurationSeconds: "" })],
+      items: [createEmptyTaskRow({ id: "shoes", title: "Shoes", estimatedDurationSeconds: "" })],
     });
     expect(input.belongings).toEqual([]);
     expect(input.tasks).toEqual([{ id: "shoes", title: "Shoes" }]);
@@ -141,7 +127,7 @@ describe("server value mappers", () => {
     });
     expect(taskServerValueToRows([{ id: "t", title: "Todo" }])[0]).toMatchObject({
       kind: "task",
-      name: "Todo",
+      title: "Todo",
     });
   });
 });

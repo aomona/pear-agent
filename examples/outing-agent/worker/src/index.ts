@@ -5,8 +5,12 @@ import {
   resolvePearContextFromHeader,
 } from "@pear-agent/cloudflare";
 import { resolveMaybeFreeTextField } from "@pear-agent/core";
-import { outingDomain } from "@pear-agent/outing-domain-example";
-import { z } from "zod";
+import {
+  isOutingFreeTextField,
+  outingDomain,
+  outingFreeTextHints,
+  outingFreeTextParse,
+} from "@pear-agent/outing-domain-example";
 
 import { authorize } from "./authorize.js";
 import { handleCorsPreflight, withCors } from "./cors.js";
@@ -23,25 +27,6 @@ const DEMO_CONTEXT = {
   claims: {} as Record<string, unknown>,
 };
 
-const belongingArraySchema = z.array(
-  z.object({
-    id: z.string().min(1),
-    name: z.string().min(1),
-    chargePercent: z.number().min(0).max(100).optional(),
-  }),
-);
-
-const taskArraySchema = z.array(
-  z.object({
-    id: z.string().min(1),
-    title: z.string().min(1),
-    estimatedDurationSeconds: z.number().positive().optional(),
-    notes: z.string().optional(),
-  }),
-);
-
-const placeLabelSchema = z.string().trim().min(1).max(160);
-
 const worker = createPearWorker({
   authorize,
   planGenerator,
@@ -57,7 +42,7 @@ const worker = createPearWorker({
         context,
       });
     },
-    /** Single-field structure — always Gemini (no deterministic free-text). */
+    /** Single-field structure — always Gemini via Domain free-text registry. */
     resolveDomainFreeTextField: async ({
       domainId,
       field,
@@ -76,47 +61,18 @@ const worker = createPearWorker({
           { status: 503 as const },
         );
       }
-
-      const base = {
+      if (!isOutingFreeTextField(field)) {
+        throw new Error(`Unsupported free-text field: ${field}`);
+      }
+      return resolveMaybeFreeTextField({
         domainId,
-        freeTextResolver,
-        context,
+        field,
         value: { freeText },
-      };
-
-      if (field === "departureAt") {
-        return resolveMaybeFreeTextField({
-          ...base,
-          field,
-          parse: (value): string => z.iso.datetime().parse(value),
-          hint: "ISO-8601 datetime string",
-        });
-      }
-      if (field === "belongings") {
-        return resolveMaybeFreeTextField({
-          ...base,
-          field,
-          parse: (value) => belongingArraySchema.min(1).parse(value),
-          hint: "Array of { id, name, chargePercent? }",
-        });
-      }
-      if (field === "tasks") {
-        return resolveMaybeFreeTextField({
-          ...base,
-          field,
-          parse: (value) => taskArraySchema.min(1).parse(value),
-          hint: "Array of { id, title, estimatedDurationSeconds?, notes? }",
-        });
-      }
-      if (field === "originLabel" || field === "destinationLabel") {
-        return resolveMaybeFreeTextField({
-          ...base,
-          field,
-          parse: (value): string => placeLabelSchema.parse(value),
-          hint: "Short place label",
-        });
-      }
-      throw new Error(`Unsupported free-text field: ${field}`);
+        freeTextResolver,
+        parse: (value: unknown) => outingFreeTextParse[field](value),
+        hint: outingFreeTextHints[field],
+        context,
+      });
     },
     createFreeTextResolver: (env) =>
       createGeminiFreeTextResolver({

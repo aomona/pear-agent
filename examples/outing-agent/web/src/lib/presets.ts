@@ -32,13 +32,13 @@ export const OUTING_PRESETS: OutingPreset[] = [
         createEmptyBelongingRow({ id: "wallet", name: "Wallet", chargePercent: "" }),
         createEmptyTaskRow({
           id: "weather",
-          name: "Check weather",
+          title: "Check weather",
           estimatedDurationSeconds: "30",
           notes: "",
         }),
         createEmptyTaskRow({
           id: "lock",
-          name: "Lock the door",
+          title: "Lock the door",
           estimatedDurationSeconds: "20",
           notes: "",
         }),
@@ -62,13 +62,13 @@ export const OUTING_PRESETS: OutingPreset[] = [
         createEmptyBelongingRow({ id: "earbuds", name: "Earbuds", chargePercent: "60" }),
         createEmptyTaskRow({
           id: "tickets",
-          name: "Check tickets",
+          title: "Check tickets",
           estimatedDurationSeconds: "60",
           notes: "App boarding pass",
         }),
         createEmptyTaskRow({
           id: "trash",
-          name: "Take out trash",
+          title: "Take out trash",
           estimatedDurationSeconds: "120",
           notes: "",
         }),
@@ -91,7 +91,7 @@ export const OUTING_PRESETS: OutingPreset[] = [
         createEmptyBelongingRow({ id: "phone", name: "Phone", chargePercent: "50" }),
         createEmptyTaskRow({
           id: "locker",
-          name: "Pack locker bag",
+          title: "Pack locker bag",
           estimatedDurationSeconds: "90",
           notes: "Towel + clothes",
         }),

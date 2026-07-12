@@ -1,4 +1,4 @@
-import { readyItems, type OutingFormState } from "../lib/build-outing-input";
+import { displayName, readyItems, type OutingFormState } from "../lib/build-outing-input";
 import { Badge } from "./ui/badge";
 
 type InputSummaryProps = {
@@ -40,7 +40,7 @@ export function InputSummary({ form }: InputSummaryProps) {
       </div>
       {ready.length > 0 ? (
         <p className="mt-1 truncate text-xs text-muted-foreground">
-          {ready.map((r) => r.name).join(" · ")}
+          {ready.map((r) => displayName(r)).join(" · ")}
         </p>
       ) : (
         <p className="mt-1 text-xs text-muted-foreground">
