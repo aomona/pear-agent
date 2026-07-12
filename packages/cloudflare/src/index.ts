@@ -67,7 +67,15 @@ export {
   executionContinuations,
   planVersions,
   planPatches,
+  planArtifacts,
+  planArtifactVersions,
 } from "./d1/schema.js";
+export {
+  D1PlanRepository,
+  PlanArtifactConflictError,
+  PlanArtifactNotFoundError,
+  type StoredPlanArtifact,
+} from "./d1/plan-repository.js";
 export type { PearEnv } from "./env.js";
 export {
   ContinuationConflictError,
@@ -117,14 +125,18 @@ export {
   summarizeSnapshotForVoice,
   voiceToolAuthorizeEventType,
   type BuiltinVoiceToolName,
+  type VoiceRuntimeSummary,
+  type VoiceStepSummary,
   type VoiceToolAuthorizeEventType,
   type VoiceToolDeclaration,
   type VoiceToolResult,
 } from "./voice/tools.js";
 export {
   createStaticPlanGenerator,
+  resolvePlanGenerator,
   type PlanGenerator,
   type PlanGeneratorInput,
+  type PlanGeneratorOptions,
 } from "./planner.js";
 export {
   DEFAULT_MAX_RAW_INPUT_BYTES,

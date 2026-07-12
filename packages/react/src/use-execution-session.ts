@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { AppendEventResult, RuntimeEvent } from "@pear-agent/core";
 
@@ -47,6 +47,9 @@ export type UseExecutionSessionResult = {
  *
  * Concurrent actions share a single `status` / `error` (last write wins). Prefer
  * not overlapping mutations from the same hook instance.
+ *
+ * Note: `create()` then `startSession()` in the same async function is safe —
+ * the session id is kept in a ref so it is available before the next render.
  */
 export function useExecutionSession(sessionId?: string | null): UseExecutionSessionResult {
   const { client } = usePearContext();
@@ -55,7 +58,21 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
   const [status, setStatus] = useState<AsyncStatus>("idle");
   const [error, setError] = useState<Error | null>(null);
 
-  const boundSessionId = controlled ? sessionId : unboundSessionId;
+  /**
+   * Sync source of truth for the active session id within the same tick as
+   * create/setSessionId. React state alone is too late for:
+   *   await create(...); await startSession();
+   */
+  const sessionIdRef = useRef<string | null>(null);
+
+  // Keep ref aligned with controlled prop (or unbound state after re-render).
+  if (controlled) {
+    sessionIdRef.current = sessionId ?? null;
+  } else if (unboundSessionId !== null && sessionIdRef.current === null) {
+    sessionIdRef.current = unboundSessionId;
+  }
+
+  const boundSessionId = controlled ? sessionId : (sessionIdRef.current ?? unboundSessionId);
 
   const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
     setStatus("loading");
@@ -73,11 +90,12 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
   }, []);
 
   const requireSessionId = useCallback((): string => {
-    if (!boundSessionId) {
+    const id = sessionIdRef.current ?? (controlled ? sessionId : unboundSessionId);
+    if (!id) {
       throw new Error("No sessionId bound. Call create() or setSessionId() first.");
     }
-    return boundSessionId;
-  }, [boundSessionId]);
+    return id;
+  }, [controlled, sessionId, unboundSessionId]);
 
   const setSessionId = useCallback(
     (next: string | null) => {
@@ -86,6 +104,7 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
           "useExecutionSession is controlled by a string sessionId prop; change the prop instead of setSessionId()",
         );
       }
+      sessionIdRef.current = next;
       setUnboundSessionId(next);
     },
     [controlled],
@@ -96,6 +115,8 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
       return run(async () => {
         const result = await client.createSession(input);
         if (!controlled) {
+          // Write ref before setState so immediate follow-up actions see the id.
+          sessionIdRef.current = result.sessionId;
           setUnboundSessionId(result.sessionId);
         }
         return result;

@@ -29,13 +29,46 @@ export type ExecutionSessionSyncState = {
 
 export type AsyncStatus = "idle" | "loading" | "success" | "error";
 
+/**
+ * Create an Execution Session either by generating a plan (goal + normalizedInput)
+ * or by starting from a ready plan library artifact (`planArtifactId`).
+ */
 export type CreateSessionInput = {
-  sessionId?: string;
+  sessionId?: string | undefined;
   domainId: string;
   actorIds: string[];
+  /** Required unless `planArtifactId` is set (artifact supplies goal). */
+  goal?: unknown;
+  /** Required unless stored on the plan artifact. */
+  normalizedInput?: unknown;
+  worldState?: import("@pear-agent/core").WorldState | undefined;
+  /** Ready CE-11 plan artifact — skips PlanGenerator. */
+  planArtifactId?: string | undefined;
+};
+
+export type PlanListItem = {
+  id: string;
+  domainId: string;
+  status: "draft" | "ready" | "archived";
+  title?: string | undefined;
+  version: number;
+  goalId: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type PlanArtifactDetail = {
+  id: string;
+  domainId: string;
+  status: "draft" | "ready" | "archived";
+  title?: string | undefined;
+  version: number;
   goal: unknown;
-  normalizedInput: unknown;
-  worldState?: import("@pear-agent/core").WorldState;
+  currentPlan: import("@pear-agent/core").ExecutionPlan;
+  createdAt: Date;
+  updatedAt: Date;
+  normalizedInput?: unknown;
+  ownerActorId?: string | null | undefined;
 };
 
 export type AppendEventInput = {

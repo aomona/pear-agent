@@ -80,6 +80,7 @@ describe("cloudflare replan integration", () => {
     );
     expect(body.state.plan.steps.find(({ id }) => id === "pack")).toEqual(packBefore);
     expect(body.state.plan.steps.find(({ id }) => id === "charge")?.domainData).toEqual({
+      kind: "charge",
       belongingIds: ["phone"],
     });
     expect(body.state.worldState.resources).toContainEqual({
@@ -124,7 +125,8 @@ describe("cloudflare replan integration", () => {
     expect(parsedSnapshot.latestPlanChange?.patch.summary).toContain("Extend charging");
     expect(summarizeSnapshotForVoice(parsedSnapshot).latestPlanChange).toMatchObject({
       status: "applied",
-      updatedStepIds: ["charge"],
+      effect: "applied",
+      summary: expect.stringContaining("Extend charging"),
     });
   });
 
@@ -718,7 +720,6 @@ describe("cloudflare replan integration", () => {
     expect(summarizeSnapshotForVoice(failedSnapshot).latestPlanChange).toMatchObject({
       effect: "rejected",
       failureReason: expect.stringContaining("Unknown cause event"),
-      causeEventIds: ["missing-event"],
     });
 
     const direct = await exports.default.fetch(

@@ -14,6 +14,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePearContext } from "./provider.js";
 import { attachBrowserVoiceMedia, type BrowserVoiceMediaHandle } from "./voice/browser-media.js";
 import { GeminiLiveVoiceProvider } from "./voice/gemini-live-provider.js";
+import { createResumeHandleSync, type ResumeHandleSync } from "./voice/resume-handle-sync.js";
+
+/**
+ * Gemini Live emits sessionResumptionUpdate very frequently.
+ * Debounce PUT /voice/resume-handle so CF only sees quiet-period updates;
+ * always flush on disconnect / suspend.
+ */
+export const RESUME_HANDLE_DEBOUNCE_MS = 2_000;
 
 export type UseVoiceSessionOptions = {
   /**
@@ -114,6 +122,7 @@ export function useVoiceSession(
   const toolQueueRef = useRef(Promise.resolve());
   const disconnectingRef = useRef(false);
   const connectingRef = useRef(false);
+  const resumeSyncRef = useRef<ResumeHandleSync | null>(null);
 
   const stopBrowserMedia = useCallback(() => {
     mediaRef.current?.stop();
@@ -121,6 +130,33 @@ export function useVoiceSession(
   }, []);
 
   const isCurrent = useCallback((epoch: number) => epochRef.current === epoch, []);
+
+  /** One sync controller for the currently bound voice session. */
+  const ensureResumeSync = useCallback(
+    (sid: string, epoch: number): ResumeHandleSync => {
+      resumeSyncRef.current?.dispose();
+      const sync = createResumeHandleSync({
+        debounceMs: RESUME_HANDLE_DEBOUNCE_MS,
+        put: async (handle) => {
+          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle);
+          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
+          setLease(nextLease);
+        },
+        onOptimistic: (handle) => {
+          if (!isCurrent(epoch)) return;
+          setLease((prev) =>
+            prev && prev.providerResumeHandle !== handle
+              ? { ...prev, providerResumeHandle: handle }
+              : prev,
+          );
+        },
+        isCurrent: () => isCurrent(epoch) && boundSessionIdRef.current === sid,
+      });
+      resumeSyncRef.current = sync;
+      return sync;
+    },
+    [isCurrent],
+  );
 
   const clearSubscriptions = useCallback(() => {
     for (const unsub of unsubscribersRef.current) {
@@ -206,13 +242,7 @@ export function useVoiceSession(
           appendTranscript(entry);
         }),
         conn.on("resumeHandle", (handle) => {
-          void clientRef.current
-            .setVoiceResumeHandle(sid, handle)
-            .then((nextLease) => {
-              if (!isCurrent(epoch)) return;
-              setLease(nextLease);
-            })
-            .catch(() => undefined);
+          resumeSyncRef.current?.schedule(handle);
         }),
         conn.on("toolCall", (calls) => {
           toolQueueRef.current = toolQueueRef.current
@@ -238,6 +268,12 @@ export function useVoiceSession(
     try {
       stopBrowserMedia();
       clearSubscriptions();
+      // Persist latest Live resumption handle before releasing the lease.
+      if (sid) {
+        await resumeSyncRef.current?.flush();
+      }
+      resumeSyncRef.current?.dispose();
+      resumeSyncRef.current = null;
       const conn = connectionRef.current;
       connectionRef.current = null;
       if (isCurrent(epoch)) {
@@ -315,6 +351,8 @@ export function useVoiceSession(
         setLease(acquired);
         // Pin lease owner before WS open so cleanup can release on failure paths.
         boundSessionIdRef.current = sid;
+        const resumeSync = ensureResumeSync(sid, epoch);
+        resumeSync.noteKnown(acquired.providerResumeHandle ?? null);
 
         const resume = input.continuationId
           ? await clientRef.current.claimContinuationResume(sid, input.continuationId)
@@ -340,8 +378,7 @@ export function useVoiceSession(
           if (!resumeHandle) throw caught;
           // Provider handles are advisory. Clear the stale handle, mint a token
           // without resumption constraints, and reconnect as a new Voice Session.
-          const cleared = await clientRef.current.setVoiceResumeHandle(sid, null);
-          if (isCurrent(epoch)) setLease(cleared);
+          await resumeSync.clearRemote();
           minted = await clientRef.current.mintVoiceToken(sid);
           conn = await providerRef.current.connect({
             credentials: { token: minted.token, model: minted.model },
@@ -453,7 +490,7 @@ export function useVoiceSession(
         }
       }
     },
-    [appendTranscript, bindConnection, disconnect, isCurrent, stopBrowserMedia],
+    [appendTranscript, bindConnection, disconnect, ensureResumeSync, isCurrent, stopBrowserMedia],
   );
 
   const refetchLease = useCallback(async () => {
@@ -466,6 +503,9 @@ export function useVoiceSession(
     const next = await clientRef.current.getVoiceLease(sid);
     if (isCurrent(epoch)) {
       setLease(next);
+      if (next) {
+        resumeSyncRef.current?.noteKnown(next.providerResumeHandle ?? null);
+      }
     }
   }, [isCurrent]);
 
@@ -478,6 +518,8 @@ export function useVoiceSession(
     }): Promise<ExecutionContinuation> => {
       const sid = sessionIdRef.current;
       if (!sid) throw new Error("sessionId is required to suspend voice");
+      // Continuation checkpoint should capture the latest Live handle.
+      await resumeSyncRef.current?.flush();
       const continuation = await clientRef.current.suspendContinuation(sid, input);
       await disconnect();
       return continuation;
@@ -504,6 +546,8 @@ export function useVoiceSession(
 
     return () => {
       epochRef.current += 1;
+      resumeSyncRef.current?.dispose();
+      resumeSyncRef.current = null;
       void disconnect();
     };
   }, [sessionId, disconnect]);

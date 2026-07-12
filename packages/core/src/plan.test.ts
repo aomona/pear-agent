@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   executionPlanSchema,
   executionStepSchema,
+  timerDefinitionSchema,
   validatePlanGraph,
   wakeConditionSchema,
 } from "./plan.js";
@@ -182,5 +183,93 @@ describe("execution plan schemas", () => {
     for (const domainData of [() => "not cloneable", Symbol("not cloneable")]) {
       expect(schema.safeParse({ ...plan, steps: [{ ...step, domainData }] }).success).toBe(false);
     }
+  });
+
+  it("accepts optional presentation fields, title, metadata, and timer definitions", () => {
+    const schema = executionPlanSchema(z.object({}));
+    const result = schema.safeParse({
+      id: "morning",
+      version: 1,
+      title: "Leave for work",
+      metadata: { source: "demo" },
+      goal,
+      steps: [
+        {
+          id: "pack",
+          label: "Pack",
+          instructions: "Gather belongings",
+          notes: ["Check weather"],
+          executor: { type: "human" },
+          after: [],
+          requirements: [],
+          estimatedDurationSeconds: 60,
+          timers: [{ id: "pack-timer", durationSeconds: 60, autoStart: false }],
+          domainData: {},
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects empty label and duplicate timer ids across the plan", () => {
+    const schema = executionPlanSchema(z.object({}));
+    expect(
+      schema.safeParse({
+        id: "morning",
+        version: 1,
+        goal,
+        steps: [
+          {
+            id: "a",
+            label: "   ",
+            executor: { type: "human" },
+            after: [],
+            requirements: [],
+            estimatedDurationSeconds: 1,
+            timers: [],
+            domainData: {},
+          },
+        ],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      schema.safeParse({
+        id: "morning",
+        version: 1,
+        goal,
+        steps: [
+          {
+            id: "a",
+            executor: { type: "human" },
+            after: [],
+            requirements: [],
+            estimatedDurationSeconds: 1,
+            timers: [{ id: "t1", durationSeconds: 1 }],
+            domainData: {},
+          },
+          {
+            id: "b",
+            executor: { type: "human" },
+            after: [],
+            requirements: [],
+            estimatedDurationSeconds: 1,
+            timers: [{ id: "t1", durationSeconds: 2 }],
+            domainData: {},
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses timer definitions", () => {
+    expect(
+      timerDefinitionSchema.safeParse({
+        id: "charge-wait",
+        durationSeconds: 300,
+        label: "Charge",
+        autoStart: true,
+      }).success,
+    ).toBe(true);
   });
 });

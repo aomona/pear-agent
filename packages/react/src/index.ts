@@ -28,9 +28,15 @@ export {
   useVoiceSession,
   FakeVoiceProvider,
   GeminiLiveVoiceProvider,
+  RESUME_HANDLE_DEBOUNCE_MS,
   type UseVoiceSessionOptions,
   type UseVoiceSessionResult,
 } from "./use-voice-session.js";
+export {
+  createResumeHandleSync,
+  type ResumeHandleSync,
+  type ResumeHandleSyncOptions,
+} from "./voice/resume-handle-sync.js";
 export {
   attachBrowserVoiceMedia,
   downsampleMono,
@@ -52,6 +58,8 @@ export type {
   ExecutionSessionSyncState,
   ParsedSyncPulse,
   PearClientContext,
+  PlanArtifactDetail,
+  PlanListItem,
   StepActionInput,
   TimerActionInput,
   TimerStartInput,

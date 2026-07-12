@@ -63,6 +63,38 @@ const result = validatePlanGraph([
 ]);
 ```
 
+## 自由文 Input（フィールド単位）
+
+```ts
+import { freeTextValueSchema, resolveMaybeFreeTextField, z } from "@pear-agent/core";
+
+// input schema: structured OR free text per field
+departureAt: z.union([z.iso.datetime(), freeTextValueSchema]);
+
+// in normalizeInput(input, ctx):
+const departureAt = await resolveMaybeFreeTextField({
+  domainId: "outing",
+  field: "departureAt",
+  value: input.departureAt,
+  freeTextResolver: ctx?.freeTextResolver, // often LLM
+  parseDeterministic: (text) => {
+    /* Date.parse ... */ return null;
+  },
+});
+```
+
+## Plan foundation（Waves A+B）
+
+- Step: `label` / `summary` / `instructions` / `notes`、構造化 `timers`、`resourceRequirements`（量付き・推奨）、`requirements`（id 列挙・後方互換）、`timeline`
+- DAG ヘルパは `plan-graph`（`validatePlanGraph` / `topologicalOrder` / critical path）に集約
+- Plan: `title` / `metadata`
+- `buildPlanPresentation` — レーン・critical path・ready/blocked
+- `schedulePlan` — 依存 + 資源 capacity で timeline を埋める
+- `diffPlans` — 2 plan の structural diff
+- `PlanGenerator` / `PlanImprover` / `PlanRepository` Ports
+- `PlanArtifact` / `PlanVersionRecord` モデル
+- `assertPlanMatchesGoal` / `GoalEvaluator` helpers
+
 ## Step状態導出
 
 `deriveStepStatuses()`は依存Stepが`completed`または`skipped`になるまでStepを`blocked`に保ち、実行可能になると`ready`を導出します。`transitionStep()`は許可された状態遷移だけを適用します。

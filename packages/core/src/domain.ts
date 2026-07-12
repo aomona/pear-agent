@@ -6,6 +6,7 @@ import {
   type CapabilityDefinition,
   type ExecutionMode,
 } from "./actor.js";
+import type { NormalizeInputContext } from "./free-text.js";
 import { executionGoalSchema } from "./goal.js";
 import type { ExecutionGoal } from "./goal.js";
 import type { JsonValue } from "./world-state.js";
@@ -28,8 +29,14 @@ export interface ExecutionDomainDefinition<
   id: TId;
   version: TVersion;
   schemas: TSchemas;
+  /**
+   * Coerce Domain input → normalizedInput.
+   * Fields may arrive as free-text envelopes; use `ctx.freeTextResolver` (often LLM)
+   * plus deterministic parsers. Output is always re-validated by {@link defineDomain}.
+   */
   normalizeInput(
     input: z.output<TSchemas["input"]>,
+    ctx?: NormalizeInputContext,
   ): Promise<z.output<TSchemas["normalizedInput"]>>;
   planning: {
     instructions: string;
@@ -99,8 +106,8 @@ export function defineDomain<
 
   return {
     ...definition,
-    normalizeInput: async (input) => {
-      const normalizedInput = await definition.normalizeInput(input);
+    normalizeInput: async (input, ctx) => {
+      const normalizedInput = await definition.normalizeInput(input, ctx);
       return definition.schemas.normalizedInput.parseAsync(normalizedInput) as Promise<
         z.output<TSchemas["normalizedInput"]>
       >;
