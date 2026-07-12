@@ -3,11 +3,13 @@ import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 import {
+  copyCloudflareMigrations,
   copyTemplate,
   defaultTemplateDir,
   isInsideWorkspace,
   resolvePearAgentRoot,
   rewritePackageJson,
+  rewriteWranglerMigrationsDir,
 } from "./copy-template.mjs";
 
 function printHelp() {
@@ -81,12 +83,22 @@ function main() {
   copyTemplate(templateDir, targetDir);
 
   const mode = isInsideWorkspace(targetDir, pearAgentRoot) ? "workspace" : "file";
+  const resolvedRoot =
+    pearAgentRoot ?? (mode === "workspace" ? path.resolve(templateDir, "../..") : null);
+
+  // Always materialize migrations next to the app so generated projects are self-contained.
+  // Monorepo sample uses packages/cloudflare/migrations via wrangler relative path;
+  // scaffolds rewrite wrangler to ./migrations after copy.
+  if (resolvedRoot) {
+    copyCloudflareMigrations(resolvedRoot, targetDir);
+    rewriteWranglerMigrationsDir(targetDir);
+  }
+
   rewritePackageJson({
     targetDir,
     projectName,
     mode,
-    pearAgentRoot:
-      pearAgentRoot ?? (mode === "workspace" ? path.resolve(templateDir, "../..") : null),
+    pearAgentRoot: resolvedRoot,
   });
 
   console.log(`

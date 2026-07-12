@@ -1,40 +1,44 @@
 import { createStaticReplanGenerator, type ReplanRuntime } from "@pear-agent/cloudflare";
+import type { RuntimeEvent } from "@pear-agent/core";
 import {
   assessOutingDelayReplan,
   buildOutingDelayPatch,
   outingDomain,
   reconcileOutingWorldState,
+  type OutingReplanEventLike,
 } from "@pear-agent/outing-domain-example";
+
+function toOutingReplanEvents(events: readonly RuntimeEvent[]): OutingReplanEventLike[] {
+  return events.map((event) => {
+    if (event.type === "domain_event") {
+      return {
+        id: event.id,
+        type: event.type,
+        domainType: event.domainType,
+        payload: event.payload,
+      };
+    }
+    return { id: event.id, type: event.type };
+  });
+}
 
 export const replanRuntime: ReplanRuntime = {
   generator: createStaticReplanGenerator({
     assessment: (input) =>
       assessOutingDelayReplan({
-        recentEvents: input.recentEvents.map((event) => ({
-          id: event.id,
-          type: event.type,
-          ...(event.type === "domain_event"
-            ? { domainType: event.domainType, payload: event.payload }
-            : {}),
-        })),
+        recentEvents: toOutingReplanEvents(input.recentEvents),
       }),
     patch: (input) =>
       buildOutingDelayPatch({
         plan: input.plan,
         assessment: input.assessment,
         affectedStepIds: input.affectedStepIds,
-        recentEvents: input.recentEvents.map((event) => ({
-          id: event.id,
-          type: event.type,
-          ...(event.type === "domain_event"
-            ? { domainType: event.domainType, payload: event.payload }
-            : {}),
-        })),
+        recentEvents: toOutingReplanEvents(input.recentEvents),
         patchId: `patch-${crypto.randomUUID()}`,
       }),
   }),
   resolveConfiguration: async (domainId) => {
-    if (domainId !== outingDomain.id && domainId !== "outing") {
+    if (domainId !== outingDomain.id) {
       throw new Error(`Unknown domain for replan: ${domainId}`);
     }
     return {

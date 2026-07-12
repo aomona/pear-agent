@@ -40,7 +40,8 @@ export {
   type AttachBrowserVoiceMediaOptions,
   type BrowserVoiceMediaHandle,
 } from "./voice/browser-media.js";
-export { DEFAULT_GEMINI_LIVE_MODEL } from "./voice/live-model.js";
+// Re-export model constant from Core (single source of truth).
+export { DEFAULT_GEMINI_LIVE_MODEL } from "@pear-agent/core";
 export type {
   AppendEventInput,
   AsyncStatus,

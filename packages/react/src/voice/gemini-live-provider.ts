@@ -1,5 +1,6 @@
 import {
   createVoiceEventBus,
+  DEFAULT_GEMINI_LIVE_MODEL,
   type VoiceConnectOptions,
   type VoiceConnection,
   type VoiceConnectionEvent,
@@ -8,8 +9,6 @@ import {
   type VoiceSessionStatus,
   type VoiceToolResponse,
 } from "@pear-agent/core";
-
-import { DEFAULT_GEMINI_LIVE_MODEL } from "./live-model.js";
 
 /** Subset of @google/genai Live session used by this provider. */
 type LiveSessionLike = {

@@ -1,4 +1,7 @@
-/** Browser demo UI (Vite) is cross-origin from the Worker; handle preflight + headers. */
+/**
+ * Browser demo UI (Vite) is cross-origin from the Worker; handle preflight + headers.
+ * Insecure-by-design for local sample: reflects any Origin. Do not use as a production template.
+ */
 
 const DEFAULT_ALLOW_HEADERS = [
   "Content-Type",

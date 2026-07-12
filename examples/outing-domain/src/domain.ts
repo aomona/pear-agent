@@ -111,6 +111,9 @@ export function buildOutingPlan(
   options?: { planId?: string; version?: number },
 ): ExecutionPlan<OutingStepData> {
   const packIds = normalizedInput.belongings.map((b) => b.id);
+  if (packIds.length === 0) {
+    throw new Error("Outing plan requires at least one belonging");
+  }
   const chargeIds = normalizedInput.belongings
     .filter((b) => b.chargePercent !== null)
     .map((b) => b.id);
@@ -123,7 +126,7 @@ export function buildOutingPlan(
       requirements: [],
       estimatedDurationSeconds: DEFAULT_PACK_SECONDS,
       timers: [],
-      domainData: { belongingIds: packIds.length > 0 ? packIds : ["keys"] },
+      domainData: { belongingIds: packIds },
     },
   ];
 
@@ -264,7 +267,8 @@ export function buildOutingDelayPatch(input: {
           typeof timer === "object" &&
           timer !== null &&
           !Array.isArray(timer) &&
-          (timer as { id?: unknown }).id === OUTING_CHARGE_TIMER_ID
+          "id" in timer &&
+          timer.id === OUTING_CHARGE_TIMER_ID
         ) {
           return { ...timer, durationSeconds: nextDuration };
         }
@@ -272,8 +276,14 @@ export function buildOutingDelayPatch(input: {
       })
     : charge.timers;
 
+  const patchId =
+    input.patchId ??
+    (typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? `outing-delay-patch-${crypto.randomUUID()}`
+      : `outing-delay-patch-${Math.random().toString(36).slice(2)}`);
+
   return {
-    id: input.patchId ?? `outing-delay-patch-${Date.now()}`,
+    id: patchId,
     basePlanId: input.plan.id,
     basePlanVersion: input.plan.version,
     baseLastEventId,

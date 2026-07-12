@@ -23,7 +23,8 @@
       "binding": "DB",
       "database_name": "pear-outing-execution",
       "database_id": "local-pear-outing-execution",
-      "migrations_dir": "migrations",
+      // Single source of truth: packages/cloudflare/migrations (do not fork SQL here).
+      "migrations_dir": "../../packages/cloudflare/migrations",
     },
   ],
   "r2_buckets": [

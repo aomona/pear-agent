@@ -6,7 +6,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, afterEach } from "vitest";
 
 // Runtime implementation is ESM JS (Node bin); tests import the same module.
-import { copyTemplate, defaultTemplateDir, rewritePackageJson } from "./copy-template.mjs";
+import {
+  copyCloudflareMigrations,
+  copyTemplate,
+  defaultTemplateDir,
+  rewritePackageJson,
+  rewriteWranglerMigrationsDir,
+} from "./copy-template.mjs";
 
 const temps: string[] = [];
 
@@ -23,17 +29,21 @@ describe("create-pear-agent scaffold", () => {
     temps.push(target);
     const projectDir = path.join(target, "my-agent");
 
+    const pearRoot = path.resolve(fileURLToPath(import.meta.url), "../../../../");
     copyTemplate(defaultTemplateDir(), projectDir);
+    copyCloudflareMigrations(pearRoot, projectDir);
+    rewriteWranglerMigrationsDir(projectDir);
     rewritePackageJson({
       targetDir: projectDir,
       projectName: "my-agent",
       mode: "workspace",
-      pearAgentRoot: path.resolve(fileURLToPath(import.meta.url), "../../../../"),
+      pearAgentRoot: pearRoot,
     });
 
     expect(existsSync(path.join(projectDir, "wrangler.jsonc"))).toBe(true);
     expect(existsSync(path.join(projectDir, "worker/src/index.ts"))).toBe(true);
     expect(existsSync(path.join(projectDir, "web/src/App.tsx"))).toBe(true);
+    // Scaffold copies migrations from packages/cloudflare (single source of truth).
     expect(existsSync(path.join(projectDir, "migrations/0001_init.sql"))).toBe(true);
     expect(existsSync(path.join(projectDir, ".env.example"))).toBe(true);
     expect(existsSync(path.join(projectDir, "web/src/components/ui/button.tsx"))).toBe(true);

@@ -94,12 +94,12 @@ Web は別途 Vite build + Pages/Assets へ載せるか、当面はローカル 
 
 ## パッケージ境界
 
-| パス                                | 役割                                        |
-| ----------------------------------- | ------------------------------------------- |
-| `worker/`                           | `createPearWorker` ホスト                   |
-| `web/`                              | React + shadcn デモ UI                      |
-| `migrations/`                       | D1 SQL（cloudflare package と同内容を同梱） |
-| `@pear-agent/outing-domain-example` | Domain / Plan / Replan helpers              |
+| パス                                | 役割                                                      |
+| ----------------------------------- | --------------------------------------------------------- |
+| `worker/`                           | `createPearWorker` ホスト                                 |
+| `web/`                              | React + shadcn デモ UI                                    |
+| D1 migrations                       | `packages/cloudflare/migrations` を参照（二重管理しない） |
+| `@pear-agent/outing-domain-example` | Domain / Plan / Replan helpers                            |
 
 ## 依存について
 

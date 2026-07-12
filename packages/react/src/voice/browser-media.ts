@@ -1,103 +1,37 @@
 import type { VoiceConnection } from "@pear-agent/core";
 
-/** Gemini Live input expects 16 kHz mono PCM. */
-export const GEMINI_LIVE_INPUT_SAMPLE_RATE = 16_000;
-/** Gemini Live native-audio output is typically 24 kHz mono PCM. */
-export const GEMINI_LIVE_OUTPUT_SAMPLE_RATE = 24_000;
+import {
+  downsampleMono,
+  floatToPcm16Bytes,
+  GEMINI_LIVE_INPUT_SAMPLE_RATE,
+  GEMINI_LIVE_OUTPUT_SAMPLE_RATE,
+  nextPlaybackStartTime,
+  pcm16BytesToFloat32,
+} from "./pcm.js";
+
+export {
+  downsampleMono,
+  floatToPcm16Bytes,
+  GEMINI_LIVE_INPUT_SAMPLE_RATE,
+  GEMINI_LIVE_OUTPUT_SAMPLE_RATE,
+  nextPlaybackStartTime,
+  PLAYBACK_LOOKAHEAD_SEC,
+} from "./pcm.js";
 
 /**
  * Target mic chunk duration before send (Google Live: ~20–40 ms).
- * Larger ScriptProcessor buffers (e.g. 4096 @ 48 kHz ≈ 85 ms) add avoidable latency.
  */
 export const TARGET_INPUT_CHUNK_MS = 40;
-/** Small look-ahead so the first sample is not late for the audio thread. */
-export const PLAYBACK_LOOKAHEAD_SEC = 0.02;
 
 export type BrowserVoiceMediaHandle = {
   stop: () => void;
 };
 
 export type AttachBrowserVoiceMediaOptions = {
-  /** Called when getUserMedia or AudioContext fails. */
   onError?: (error: Error) => void;
   inputSampleRate?: number;
   outputSampleRate?: number;
 };
-
-/**
- * Downsample mono float32 audio (linear interpolation).
- * Exported for unit tests.
- */
-export function downsampleMono(
-  input: Float32Array,
-  fromRate: number,
-  toRate: number,
-): Float32Array {
-  if (fromRate === toRate || input.length === 0) {
-    return input;
-  }
-  if (fromRate < toRate) {
-    return input;
-  }
-  const ratio = fromRate / toRate;
-  const outLength = Math.max(1, Math.floor(input.length / ratio));
-  const output = new Float32Array(outLength);
-  for (let i = 0; i < outLength; i++) {
-    const src = i * ratio;
-    const idx = Math.floor(src);
-    const frac = src - idx;
-    const a = input[idx] ?? 0;
-    const b = input[idx + 1] ?? a;
-    output[i] = a + (b - a) * frac;
-  }
-  return output;
-}
-
-/** Convert float32 [-1, 1] samples to little-endian PCM16 bytes. */
-export function floatToPcm16Bytes(input: Float32Array): Uint8Array {
-  const buffer = new ArrayBuffer(input.length * 2);
-  const view = new DataView(buffer);
-  for (let i = 0; i < input.length; i++) {
-    const s = Math.max(-1, Math.min(1, input[i] ?? 0));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-  return new Uint8Array(buffer);
-}
-
-function pcm16BytesToFloat32(pcm: Uint8Array): Float32Array {
-  const aligned =
-    pcm.byteOffset % 2 === 0
-      ? pcm
-      : (() => {
-          const copy = new Uint8Array(pcm.byteLength);
-          copy.set(pcm);
-          return copy;
-        })();
-  const view = new DataView(aligned.buffer, aligned.byteOffset, aligned.byteLength);
-  const samples = Math.floor(aligned.byteLength / 2);
-  const out = new Float32Array(samples);
-  for (let i = 0; i < samples; i++) {
-    out[i] = view.getInt16(i * 2, true) / 0x8000;
-  }
-  return out;
-}
-
-/**
- * Strict gapless schedule: always append after the previous chunk.
- * Never resets the cursor mid-stream (that stacks every chunk at "now" → overlapping voices).
- * Exported for unit tests.
- */
-export function nextPlaybackStartTime(input: {
-  now: number;
-  nextPlayTime: number;
-  durationSec: number;
-  lookaheadSec?: number;
-}): { startAt: number; nextPlayTime: number } {
-  const lookahead = input.lookaheadSec ?? PLAYBACK_LOOKAHEAD_SEC;
-  // If the queue is empty / behind the clock, start slightly after now.
-  const startAt = Math.max(input.now + lookahead, input.nextPlayTime);
-  return { startAt, nextPlayTime: startAt + input.durationSec };
-}
 
 const CAPTURE_WORKLET = `
 class PearCaptureProcessor extends AudioWorkletProcessor {
@@ -116,9 +50,7 @@ registerProcessor("pear-capture", PearCaptureProcessor);
  * Browser mic capture → `connection.sendAudio` (16 kHz PCM16) and
  * `connection` audio events → speaker playback (24 kHz PCM16).
  *
- * Playback is **strictly sequential** (gapless). Overlapping "all voices at once"
- * was caused by resetting the schedule cursor when the queue was "too far ahead".
- * Interrupt / stop still clears active BufferSource nodes.
+ * Playback is strictly sequential (gapless). Interrupt/stop clears active sources.
  */
 export async function attachBrowserVoiceMedia(
   connection: VoiceConnection,
@@ -141,9 +73,7 @@ export async function attachBrowserVoiceMedia(
   let silent: GainNode | null = null;
   let unsubAudio: (() => void) | null = null;
   let unsubInterrupted: (() => void) | null = null;
-  /** End time (AudioContext time) of the last scheduled chunk. */
   let nextPlayTime = 0;
-  /** Active sources so interrupt/stop can silence them immediately. */
   const activeSources = new Set<AudioBufferSourceNode>();
   let pendingCapture: Float32Array[] = [];
   let pendingCaptureSamples = 0;
@@ -167,11 +97,7 @@ export async function attachBrowserVoiceMedia(
 
   const flushPlaybackQueue = () => {
     stopActiveSources();
-    if (playCtx) {
-      nextPlayTime = playCtx.currentTime;
-    } else {
-      nextPlayTime = 0;
-    }
+    nextPlayTime = playCtx?.currentTime ?? 0;
   };
 
   const stop = () => {
@@ -319,11 +245,6 @@ export async function attachBrowserVoiceMedia(
         const samples = pcm16BytesToFloat32(chunk);
         if (samples.length === 0) return;
 
-        // Odd-length PCM would produce incomplete last sample; drop trailing byte.
-        if (chunk.byteLength % 2 !== 0) {
-          // pcm16BytesToFloat32 already floors; keep going.
-        }
-
         const buffer = playCtx.createBuffer(1, samples.length, outputRate);
         buffer.getChannelData(0).set(samples);
 
@@ -354,7 +275,6 @@ export async function attachBrowserVoiceMedia(
       }
     });
 
-    // Barge-in: stop currently playing + queued sources (not just reset the cursor).
     unsubInterrupted = connection.on("interrupted", () => {
       flushPlaybackQueue();
     });

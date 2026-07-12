@@ -1,13 +1,9 @@
-import type { RuntimeSnapshot, VoiceLease } from "@pear-agent/core";
+import { DEFAULT_GEMINI_LIVE_MODEL, type RuntimeSnapshot, type VoiceLease } from "@pear-agent/core";
 
 import { VoiceTokenUnavailableError } from "../errors.js";
 import { listVoiceToolDeclarations, summarizeSnapshotForVoice } from "./tools.js";
 
-/**
- * Recommended Live API model (gemini-live-api-dev skill).
- * Deprecated: gemini-2.5-flash-native-audio-preview-12-2025
- */
-export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview";
+export { DEFAULT_GEMINI_LIVE_MODEL };
 
 /** Client-facing mint result — never includes system instructions / tool config. */
 export type VoiceEphemeralTokenResult = {

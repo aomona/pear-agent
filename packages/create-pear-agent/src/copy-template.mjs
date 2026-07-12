@@ -62,6 +62,30 @@ export function copyTemplate(templateDir, targetDir) {
   }
 }
 
+/**
+ * Copy D1 SQL from the monorepo cloudflare package (single source of truth).
+ * Generated apps outside the monorepo get a local migrations/ copy.
+ */
+export function copyCloudflareMigrations(pearAgentRoot, targetDir) {
+  const migrationsSrc = path.join(pearAgentRoot, "packages/cloudflare/migrations");
+  if (!existsSync(migrationsSrc)) {
+    throw new Error(`Cloudflare migrations not found: ${migrationsSrc}`);
+  }
+  const migrationsDest = path.join(targetDir, "migrations");
+  cpSync(migrationsSrc, migrationsDest, { recursive: true });
+}
+
+/**
+ * Point wrangler migrations_dir at local ./migrations after scaffold copy.
+ */
+export function rewriteWranglerMigrationsDir(targetDir) {
+  const wranglerPath = path.join(targetDir, "wrangler.jsonc");
+  if (!existsSync(wranglerPath)) return;
+  let text = readFileSync(wranglerPath, "utf8");
+  text = text.replace(/"migrations_dir"\s*:\s*"[^"]*"/, '"migrations_dir": "migrations"');
+  writeFileSync(wranglerPath, text);
+}
+
 export function rewritePackageJson(options) {
   const pkgPath = path.join(options.targetDir, "package.json");
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));

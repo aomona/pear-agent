@@ -1,6 +1,7 @@
 import {
   createPearWorker,
   ExecutionSessionAgent,
+  PEAR_CONTEXT_HEADER,
   resolvePearContextFromHeader,
 } from "@pear-agent/cloudflare";
 
@@ -11,21 +12,22 @@ import { replanRuntime } from "./replan-runtime.js";
 
 export { ExecutionSessionAgent };
 
+const DEMO_CONTEXT = {
+  actorId: "demo-user",
+  roles: ["owner"] as string[],
+  claims: {} as Record<string, unknown>,
+};
+
 const worker = createPearWorker({
   authorize,
   planGenerator,
   replanRuntime,
   resolveContext: async (request) => {
-    try {
-      return await resolvePearContextFromHeader(request);
-    } catch {
-      // Demo default when the React client always sends context; keep a fallback actor.
-      return {
-        actorId: "demo-user",
-        roles: ["owner"],
-        claims: {},
-      };
+    // Demo only: missing header → default actor. Malformed header still fails closed.
+    if (!request.headers.get(PEAR_CONTEXT_HEADER)) {
+      return DEMO_CONTEXT;
     }
+    return resolvePearContextFromHeader(request);
   },
 });
 

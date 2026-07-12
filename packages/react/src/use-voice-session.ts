@@ -30,7 +30,7 @@ export type UseVoiceSessionOptions = {
    * Optional text turn after media is ready (forces a model response).
    * Default: omitted — pure mic audio is lower latency for Live conversations.
    */
-  openingText?: string | null;
+  openingText?: string;
 };
 
 export type UseVoiceSessionResult = {
@@ -353,57 +353,55 @@ export function useVoiceSession(
           throw new Error("Voice connection superseded");
         }
 
-        if (resume) {
-          try {
-            const attemptId = resume.continuation.resumeAttemptId;
-            if (!attemptId) throw new Error("Claimed continuation has no resume attempt id");
-            await clientRef.current.completeContinuation(sid, resume.continuation.id, attemptId);
-            claimedContinuationId = null;
-            claimedAttemptId = null;
-          } catch (caught) {
-            await conn.disconnect();
-            throw caught;
-          }
-        }
+        // Media before completeContinuation so a failed mic does not leave a completed resume.
         bindConnection(sid, conn, epoch);
 
         const enableMedia =
           enableBrowserMediaRef.current ??
           (typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia));
         if (enableMedia) {
+          stopBrowserMedia();
           try {
-            stopBrowserMedia();
             mediaRef.current = await attachBrowserVoiceMedia(conn, {
               onError: (mediaError) => {
                 if (!isCurrent(epoch)) return;
                 setError(mediaError);
               },
             });
-            if (!isCurrent(epoch)) {
-              stopBrowserMedia();
-              await conn.disconnect();
-              throw new Error("Voice connection superseded");
-            }
-            appendTranscript({
-              role: "status",
-              text: "Microphone on — speak to the assistant.",
-            });
           } catch (mediaCaught) {
-            // Connection can stay up for tool/text, but conversation needs mic.
             const mediaError =
               mediaCaught instanceof Error ? mediaCaught : new Error(String(mediaCaught));
-            if (isCurrent(epoch)) {
-              setError(
-                new Error(
-                  `Voice linked but microphone failed: ${mediaError.message}. Allow mic permission and reconnect.`,
-                ),
-              );
-            }
+            await conn.disconnect();
+            throw new Error(
+              `Microphone failed: ${mediaError.message}. Allow mic permission and reconnect.`,
+            );
+          }
+          if (!isCurrent(epoch)) {
+            stopBrowserMedia();
+            await conn.disconnect();
+            throw new Error("Voice connection superseded");
+          }
+          appendTranscript({
+            role: "status",
+            text: "Microphone on — speak to the assistant.",
+          });
+        }
+
+        if (resume) {
+          const attemptId = resume.continuation.resumeAttemptId;
+          if (!attemptId) throw new Error("Claimed continuation has no resume attempt id");
+          try {
+            await clientRef.current.completeContinuation(sid, resume.continuation.id, attemptId);
+            claimedContinuationId = null;
+            claimedAttemptId = null;
+          } catch (caught) {
+            stopBrowserMedia();
+            await conn.disconnect();
+            throw caught;
           }
         }
 
-        // Optional text kickstart only when host sets openingText (null/undefined = skip).
-        // Default skip: a full text turn adds first-response latency; pure audio is lower lag.
+        // Optional text kickstart when host sets openingText.
         const opening = openingTextRef.current;
         if (opening && conn.sendText) {
           try {
