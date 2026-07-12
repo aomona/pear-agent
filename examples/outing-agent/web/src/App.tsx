@@ -3,14 +3,12 @@ import { PearProvider, usePearContext, type PlanArtifactDetail } from "@pear-age
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { DelayReplanPanel } from "./components/delay-replan-panel";
-import { NextActionHero } from "./components/next-action-hero";
+import { ExecuteScreen } from "./components/execute-screen";
 import { PhaseStepper } from "./components/phase-stepper";
 import { PlanDraftPanel } from "./components/plan-draft-panel";
 import { PlanInputPanel } from "./components/plan-input-panel";
 import { PlanListPanel } from "./components/plan-list-panel";
-import { PlanStepsPanel } from "./components/plan-steps-panel";
-import { VoiceContinuationPanel } from "./components/voice-continuation-panel";
+import { VoiceDock } from "./components/voice-dock";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import {
@@ -179,53 +177,48 @@ function DemoShell() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-5xl gap-6 px-4 py-6 md:grid-cols-2">
+      <main
+        className={
+          phase === "execute"
+            ? "mx-auto flex max-w-5xl flex-col px-4 py-4 pb-28"
+            : "mx-auto grid max-w-5xl gap-6 px-4 py-6"
+        }
+        style={phase === "execute" ? { minHeight: "calc(100dvh - 7.5rem)" } : undefined}
+      >
         {phase === "list" ? (
-          <div className="md:col-span-2">
-            <PlanListPanel
-              onOpenPlan={(id) => void openPlan(id)}
-              onCreatedPlan={(id) => void onCreatedPlan(id)}
-            />
-          </div>
+          <PlanListPanel
+            onOpenPlan={(id) => void openPlan(id)}
+            onCreatedPlan={(id) => void onCreatedPlan(id)}
+          />
         ) : null}
 
         {phase === "input" && planId ? (
-          <div className="md:col-span-2">
-            {loadingPlan && !artifact ? (
-              <p className="text-sm text-muted-foreground">読み込み中…</p>
-            ) : (
-              <PlanInputPanel
-                planId={planId}
-                artifact={artifact}
-                onPlanBuilt={onPlanBuilt}
-                onBack={goList}
-              />
-            )}
-          </div>
+          loadingPlan && !artifact ? (
+            <p className="text-sm text-muted-foreground">読み込み中…</p>
+          ) : (
+            <PlanInputPanel
+              planId={planId}
+              artifact={artifact}
+              onPlanBuilt={onPlanBuilt}
+              onBack={goList}
+            />
+          )
         ) : null}
 
         {phase === "plan" && planId && artifact ? (
-          <div className="md:col-span-2">
-            <PlanDraftPanel
-              planId={planId}
-              artifact={artifact}
-              onArtifactChange={setArtifact}
-              onBackToInput={() => setPhase("input")}
-              onSessionStarted={(id) => onSessionStarted(id, planId)}
-            />
-          </div>
+          <PlanDraftPanel
+            planId={planId}
+            artifact={artifact}
+            onArtifactChange={setArtifact}
+            onBackToInput={() => setPhase("input")}
+            onSessionStarted={(id) => onSessionStarted(id, planId)}
+          />
         ) : null}
 
         {phase === "execute" ? (
           <>
-            <div className="md:col-span-2">
-              <NextActionHero sessionId={sessionForCurrentPlan} />
-            </div>
-            <PlanStepsPanel sessionId={sessionForCurrentPlan} />
-            <VoiceContinuationPanel sessionId={sessionForCurrentPlan} />
-            <div className="md:col-span-2">
-              <DelayReplanPanel sessionId={sessionForCurrentPlan} />
-            </div>
+            <ExecuteScreen sessionId={sessionForCurrentPlan} />
+            <VoiceDock sessionId={sessionForCurrentPlan} />
           </>
         ) : null}
       </main>
