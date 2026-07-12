@@ -238,6 +238,23 @@ export class D1ContinuationStore {
     ) {
       return null;
     }
+    const ordering = await this.d1
+      .prepare(
+        `SELECT current_event.rowid AS event_rowid, checkpoint.rowid AS checkpoint_rowid
+         FROM runtime_events AS current_event
+         LEFT JOIN runtime_events AS checkpoint
+           ON checkpoint.session_id = current_event.session_id AND checkpoint.id = ?
+         WHERE current_event.session_id = ? AND current_event.id = ?`,
+      )
+      .bind(active.checkpointLastEventId, event.sessionId, event.id)
+      .first<{ event_rowid: number; checkpoint_rowid: number | null }>();
+    if (
+      !ordering ||
+      (active.checkpointLastEventId !== null &&
+        (ordering.checkpoint_rowid === null || ordering.event_rowid <= ordering.checkpoint_rowid))
+    ) {
+      return null;
+    }
     return this.wake(event.sessionId, active.id);
   }
 

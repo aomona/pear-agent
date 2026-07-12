@@ -18,7 +18,11 @@ export type PearOperation =
   | { type: "continuation.read"; sessionId: string }
   | { type: "continuation.resume"; sessionId: string; continuationId: string }
   | { type: "continuation.complete"; sessionId: string; continuationId: string }
-  | { type: "continuation.failResume"; sessionId: string; continuationId: string };
+  | { type: "continuation.failResume"; sessionId: string; continuationId: string }
+  | { type: "replan.preflight"; sessionId: string }
+  | { type: "replan.request"; sessionId: string; mode: "automatic" | "confirm" | "suggest" }
+  | { type: "replan.confirm"; sessionId: string; patchId: string }
+  | { type: "replan.read"; sessionId: string };
 
 /**
  * Host-supplied authorization hook. Throw {@link AuthorizationError} (or any

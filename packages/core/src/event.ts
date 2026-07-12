@@ -25,8 +25,22 @@ const goalCompletionConfirmedPayloadSchema = z.object({ goalId: z.string().min(1
 const worldStateFactsPatchedPayloadSchema = z
   .object({ facts: z.record(z.string(), jsonValueSchema) })
   .strict();
-const planUpdatedPayloadSchema = z.object({ plan: executionPlanSchema(z.unknown()) }).strict();
+const planUpdatedPayloadSchema = z
+  .object({
+    plan: executionPlanSchema(z.unknown()),
+    patchId: z.string().min(1).optional(),
+    summary: z.string().min(1).optional(),
+    confirmedActiveStepIds: z.array(z.string().min(1)).optional(),
+    worldState: worldStateSchema.optional(),
+  })
+  .strict();
 const continuationPayloadSchema = z.object({ continuationId: z.string().min(1) }).strict();
+const replanProposedPayloadSchema = z
+  .object({ patchId: z.string().min(1), mode: z.enum(["automatic", "confirm", "suggest"]) })
+  .strict();
+const replanFailedPayloadSchema = z
+  .object({ patchId: z.string().min(1), reason: z.string().min(1) })
+  .strict();
 
 function coreEventSchema<TType extends string, TPayload extends z.ZodType>(
   type: TType,
@@ -82,6 +96,8 @@ const continuationExpiredEventSchema = coreEventSchema(
   "continuation_expired",
   continuationPayloadSchema,
 );
+const replanProposedEventSchema = coreEventSchema("replan_proposed", replanProposedPayloadSchema);
+const replanFailedEventSchema = coreEventSchema("replan_failed", replanFailedPayloadSchema);
 
 const coreEventSchemas = [
   sessionStartedEventSchema,
@@ -107,6 +123,8 @@ const coreEventSchemas = [
   continuationCompletedEventSchema,
   continuationResumeFailedEventSchema,
   continuationExpiredEventSchema,
+  replanProposedEventSchema,
+  replanFailedEventSchema,
 ] as const;
 
 export const coreRuntimeEventSchema = z.discriminatedUnion("type", coreEventSchemas);

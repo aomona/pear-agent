@@ -1,6 +1,8 @@
 import {
   executionPlanSchema,
   executionSessionSchema,
+  affectedSubgraphSchema,
+  replanAssessmentSchema,
   runtimeEventSchema,
   stepStatesSchema,
   type AppendEventResult,
@@ -13,6 +15,10 @@ import {
   type RuntimeSnapshot,
   type StepStates,
   type VoiceLease,
+  type PlanChange,
+  type ReplanAssessment,
+  type ReplanMode,
+  type AffectedSubgraph,
 } from "@pear-agent/core";
 import { z } from "zod";
 
@@ -25,6 +31,7 @@ import {
   parseVoiceLease,
   parseVoiceLeaseOrNull,
   parseExecutionContinuation,
+  parsePlanChange,
 } from "./parse.js";
 import type {
   AppendEventInput,
@@ -50,6 +57,16 @@ export type CreateSessionResult = {
   plan: ExecutionPlan;
   stepStates: StepStates;
 };
+
+export type RequestReplanResult =
+  | { kind: "not_needed"; assessment: ReplanAssessment }
+  | {
+      kind: "applied" | "pending_confirmation" | "suggested" | "failed";
+      assessment: ReplanAssessment;
+      affectedSubgraph: AffectedSubgraph;
+      planChange: PlanChange;
+      state: MaterializedExecutionState;
+    };
 
 const createSessionResultSchema = z.object({
   sessionId: z.string().min(1),
@@ -349,6 +366,58 @@ export class PearClient {
       { method: "POST", body: { attemptId } },
     );
     return parseExecutionContinuation(body.continuation);
+  }
+
+  // --- Partial Replanning (Issue #8) ---
+
+  async requestReplan(sessionId: string, mode?: ReplanMode): Promise<RequestReplanResult> {
+    const body = await this.requestJson<Record<string, unknown>>(`/sessions/${sessionId}/replans`, {
+      method: "POST",
+      body: mode === undefined ? {} : { mode },
+    });
+    if (body.kind === "not_needed") {
+      return {
+        kind: "not_needed",
+        assessment: replanAssessmentSchema.parse(body.assessment),
+      };
+    }
+    return {
+      kind: z.enum(["applied", "pending_confirmation", "suggested", "failed"]).parse(body.kind),
+      assessment: replanAssessmentSchema.parse(body.assessment),
+      affectedSubgraph: affectedSubgraphSchema.parse(body.affectedSubgraph),
+      planChange: parsePlanChange(body.planChange),
+      state: parseMaterializedState(body.state),
+    };
+  }
+
+  async confirmPlanPatch(
+    sessionId: string,
+    patchId: string,
+  ): Promise<{
+    kind: "applied" | "pending_confirmation" | "failed";
+    planChange: PlanChange;
+    state: MaterializedExecutionState;
+  }> {
+    const body = await this.requestJson<{
+      kind: string;
+      planChange: unknown;
+      state: unknown;
+    }>(`/sessions/${sessionId}/plan-patches/${patchId}/confirm`, {
+      method: "POST",
+      body: { confirmed: true },
+    });
+    return {
+      kind: z.enum(["applied", "pending_confirmation", "failed"]).parse(body.kind),
+      planChange: parsePlanChange(body.planChange),
+      state: parseMaterializedState(body.state),
+    };
+  }
+
+  async getLatestPlanChange(sessionId: string): Promise<PlanChange | null> {
+    const body = await this.requestJson<{ planChange: unknown | null }>(
+      `/sessions/${sessionId}/plan-patches/latest`,
+    );
+    return body.planChange === null ? null : parsePlanChange(body.planChange);
   }
 
   private async appendBuiltEvent(

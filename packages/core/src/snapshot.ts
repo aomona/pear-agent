@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { executionContinuationSchema, type ExecutionContinuation } from "./continuation.js";
+import { planChangeSchema, type PlanChange } from "./replan.js";
 import { dateSchema } from "./date.js";
 import { runtimeEventSchema, type RuntimeEvent } from "./event.js";
 import { executionPlanSchema, type ExecutionPlan } from "./plan.js";
@@ -25,6 +26,7 @@ export const runtimeSnapshotSchema = z.object({
   activeStepIds: z.array(z.string().min(1)),
   blockedStepIds: z.array(z.string().min(1)),
   continuation: executionContinuationSchema.nullable().default(null),
+  latestPlanChange: planChangeSchema.nullable().default(null),
   generatedAt: dateSchema,
 });
 
@@ -36,6 +38,7 @@ export type CreateRuntimeSnapshotInput<TStepData = unknown> = {
   recentEvents: readonly RuntimeEvent[];
   generatedAt?: Date;
   continuation?: ExecutionContinuation | null;
+  latestPlanChange?: PlanChange | null;
 };
 
 function structurallyEqual(left: unknown, right: unknown): boolean {
@@ -78,6 +81,7 @@ export function createRuntimeSnapshot<TStepData = unknown>({
   recentEvents,
   generatedAt = new Date(),
   continuation = null,
+  latestPlanChange = null,
 }: CreateRuntimeSnapshotInput<TStepData>): RuntimeSnapshot {
   const parsedPlan = executionPlanSchema(z.unknown()).parse(plan);
   const parsedState = materializedExecutionStateSchema.parse(state);
@@ -129,6 +133,7 @@ export function createRuntimeSnapshot<TStepData = unknown>({
     activeStepIds,
     blockedStepIds,
     continuation,
+    latestPlanChange,
     generatedAt,
   });
 }

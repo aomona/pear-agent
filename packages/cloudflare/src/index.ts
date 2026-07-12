@@ -15,6 +15,9 @@ export {
   agentClaimContinuationResume,
   agentCompleteContinuation,
   agentFailContinuationResume,
+  agentProposeReplan,
+  agentConfirmReplan,
+  agentGetLatestPlanChange,
   getExecutionSessionAgent,
 } from "./agent/client.js";
 export {
@@ -62,6 +65,8 @@ export {
   runtimeEvents,
   voiceLeases,
   executionContinuations,
+  planVersions,
+  planPatches,
 } from "./d1/schema.js";
 export type { PearEnv } from "./env.js";
 export {
@@ -75,6 +80,16 @@ export {
   VoiceTokenUnavailableError,
 } from "./errors.js";
 export { D1ContinuationStore } from "./continuation/store.js";
+export { D1ReplanStore, type ReplanMutationResult } from "./replan/store.js";
+export {
+  createStaticReplanGenerator,
+  validateReplanConfiguration,
+  type ReplanAssessInput,
+  type ReplanConfiguration,
+  type ReplanGeneratePatchInput,
+  type ReplanGenerator,
+  type ReplanRuntime,
+} from "./replan/engine.js";
 export {
   createPearApp,
   stubVoiceTokenMinter,

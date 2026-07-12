@@ -4,11 +4,13 @@ import {
   runtimeSnapshotSchema,
   voiceLeaseSchema,
   executionContinuationSchema,
+  planChangeSchema,
   type AppendEventResult,
   type MaterializedExecutionState,
   type RuntimeEvent,
   type RuntimeSnapshot,
   type VoiceLease,
+  type PlanChange,
 } from "@pear-agent/core";
 import { z } from "zod";
 
@@ -64,4 +66,8 @@ export function parseVoiceLeaseOrNull(value: unknown): VoiceLease | null {
 
 export function parseExecutionContinuation(value: unknown): ExecutionContinuationStub {
   return executionContinuationSchema.parse(value);
+}
+
+export function parsePlanChange(value: unknown): PlanChange {
+  return planChangeSchema.parse(value);
 }

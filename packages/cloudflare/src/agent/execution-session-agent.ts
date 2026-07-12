@@ -1,21 +1,29 @@
-import type {
-  AppendEventResult,
-  GetSnapshotOptions,
-  MaterializedExecutionState,
-  RuntimeEvent,
-  RuntimeSnapshot,
-  VoiceLease,
-  ContinuationWakeCondition,
-  ExecutionContinuation,
+import {
+  runtimeEventSchema,
+  type AppendEventResult,
+  type GetSnapshotOptions,
+  type MaterializedExecutionState,
+  type RuntimeEvent,
+  type RuntimeSnapshot,
+  type VoiceLease,
+  type ContinuationWakeCondition,
+  type ExecutionContinuation,
+  type PlanChange,
+  type PlanPatch,
+  type ReplanCapabilityPolicy,
+  type ReplanMode,
+  type WorldState,
 } from "@pear-agent/core";
 import { Agent, type Connection, type ConnectionContext } from "agents";
 
 import { D1ExecutionStateRepository } from "../d1/repository.js";
 import type { PearEnv } from "../env.js";
+import { parseRuntimeEvent } from "../serialize.js";
 import { createVoiceLeaseStore } from "../voice/lease-store.js";
 import { D1ContinuationStore, type ContinuationClaimResult } from "../continuation/store.js";
 import type { VoiceLeaseResult } from "../voice/results.js";
 import { EMPTY_SYNC_STATE, type ExecutionSessionSyncState } from "./sync-state.js";
+import { D1ReplanStore, type ReplanMutationResult } from "../replan/store.js";
 
 const RESUME_CLAIM_TIMEOUT_SECONDS = 120;
 
@@ -84,6 +92,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   async createSession(input: {
     initialState: MaterializedExecutionState;
     domainId: string;
+    domainVersion: number;
     normalizedInput?: unknown;
   }): Promise<{ ok: true }> {
     const sessionId = this.sessionId();
@@ -96,6 +105,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     return this.runExclusive(async () => {
       await this.repository().createWithDomain(input.initialState, {
         domainId: input.domainId,
+        domainVersion: input.domainVersion,
         ...(input.normalizedInput === undefined ? {} : { normalizedInput: input.normalizedInput }),
       });
       this.bumpPulse(null);
@@ -113,15 +123,36 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
 
   async appendEvent(event: RuntimeEvent): Promise<AppendEventResult> {
     this.assertSession(event.sessionId);
-    return this.runExclusive(async () => {
-      const result = await this.repository().appendEvent(event);
-      const continuation =
-        result.kind === "applied"
-          ? await new D1ContinuationStore(this.env.DB).wakeForEvent(result.event)
-          : null;
-      this.bumpPulse(result.event.id, continuation ?? undefined);
-      return result;
-    });
+    if (
+      event.type === "plan_updated" ||
+      event.type === "replan_proposed" ||
+      event.type === "replan_failed"
+    ) {
+      throw new Error(`${event.type} is Runtime-managed and cannot be appended directly`);
+    }
+    return this.runExclusive(() => this.appendAndPublishEvent(event));
+  }
+
+  /** Runtime-owned audit path that cannot mutate the active Plan. */
+  async appendReplanFailure(input: {
+    actorId: string;
+    attemptId: string;
+    reason: string;
+  }): Promise<AppendEventResult> {
+    return this.runExclusive(() =>
+      this.appendAndPublishEvent(
+        runtimeEventSchema.parse({
+          id: `${this.sessionId()}-replan-failed-${input.attemptId}`,
+          sessionId: this.sessionId(),
+          idempotencyKey: `replan-failed:${input.attemptId}`,
+          actorId: input.actorId,
+          origin: "replan",
+          type: "replan_failed",
+          payload: { patchId: input.attemptId, reason: input.reason.slice(0, 2_000) },
+          occurredAt: new Date(),
+        }),
+      ),
+    );
   }
 
   async getSnapshot(options?: GetSnapshotOptions): Promise<RuntimeSnapshot | null> {
@@ -129,7 +160,8 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
       const snapshot = await this.repository().getSnapshot(this.sessionId(), options);
       if (!snapshot) return null;
       const continuation = await new D1ContinuationStore(this.env.DB).getActive(this.sessionId());
-      return { ...snapshot, continuation };
+      const latestPlanChange = await new D1ReplanStore(this.env.DB).getLatest(this.sessionId());
+      return { ...snapshot, continuation, latestPlanChange };
     });
   }
 
@@ -147,6 +179,16 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     return this.runExclusive(async () => {
       const payload = await this.repository().getNormalizedInput(this.sessionId());
       return payload === undefined ? null : payload;
+    });
+  }
+
+  async getNormalizedInputRecord(): Promise<{
+    payload: unknown;
+    revision: number;
+  } | null> {
+    return this.runExclusive(async () => {
+      const record = await this.repository().getNormalizedInputRecord(this.sessionId());
+      return record ?? null;
     });
   }
 
@@ -337,6 +379,107 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
       );
       if (continuation) this.bumpPulse(null, continuation);
     });
+  }
+
+  // --- Partial Replanning (Issue #8) ---
+
+  async proposeReplan(input: {
+    actorId: string;
+    mode: ReplanMode;
+    patch: PlanPatch;
+    candidateWorldState: WorldState;
+    expectedCauseEventIds: string[];
+    expectedAffectedStepIds: string[];
+    domainVersion: number;
+    normalizedInputRevision: number | null;
+    capabilityPolicies: ReplanCapabilityPolicy[];
+  }): Promise<ReplanMutationResult> {
+    return this.runExclusive(async () => {
+      const result = await new D1ReplanStore(this.env.DB).propose({
+        sessionId: this.sessionId(),
+        actorId: input.actorId,
+        mode: input.mode,
+        patch: input.patch,
+        candidateWorldState: input.candidateWorldState,
+        expectedCauseEventIds: input.expectedCauseEventIds,
+        expectedAffectedStepIds: input.expectedAffectedStepIds,
+        domainVersion: input.domainVersion,
+        normalizedInputRevision: input.normalizedInputRevision,
+        capabilityPolicies: input.capabilityPolicies,
+      });
+      const continuation = result.event
+        ? await new D1ContinuationStore(this.env.DB).wakeForEvent(result.event)
+        : null;
+      const responseState = continuation
+        ? ((await this.repository().get(this.sessionId())) ?? result.state)
+        : result.state;
+      this.bumpPulse(
+        responseState.appliedEventIds[responseState.appliedEventIds.length - 1] ?? null,
+        continuation ?? undefined,
+      );
+      return { ...result, state: responseState };
+    });
+  }
+
+  async confirmReplan(input: {
+    actorId: string;
+    patchId: string;
+    humanConfirmed: boolean;
+    domainVersion: number;
+    capabilityPolicies: ReplanCapabilityPolicy[];
+  }): Promise<ReplanMutationResult> {
+    return this.runExclusive(async () => {
+      const result = await new D1ReplanStore(this.env.DB).activatePending({
+        sessionId: this.sessionId(),
+        actorId: input.actorId,
+        patchId: input.patchId,
+        humanConfirmed: input.humanConfirmed,
+        domainVersion: input.domainVersion,
+        capabilityPolicies: input.capabilityPolicies,
+      });
+      const continuation = result.event
+        ? await new D1ContinuationStore(this.env.DB).wakeForEvent(result.event)
+        : null;
+      const responseState = continuation
+        ? ((await this.repository().get(this.sessionId())) ?? result.state)
+        : result.state;
+      this.bumpPulse(
+        responseState.appliedEventIds[responseState.appliedEventIds.length - 1] ?? null,
+        continuation ?? undefined,
+      );
+      return { ...result, state: responseState };
+    });
+  }
+
+  async getLatestPlanChange(): Promise<PlanChange | null> {
+    return this.runExclusive(() => new D1ReplanStore(this.env.DB).getLatest(this.sessionId()));
+  }
+
+  private async appendAndPublishEvent(event: RuntimeEvent): Promise<AppendEventResult> {
+    const result = await this.repository().appendEvent(event);
+    const deliveryEvent =
+      result.kind === "applied"
+        ? result.event
+        : await this.env.DB.prepare(
+            `SELECT event_json FROM runtime_events
+             WHERE session_id = ? AND id = ? AND idempotency_key = ?`,
+          )
+            .bind(event.sessionId, event.id, event.idempotencyKey)
+            .first<{ event_json: string }>()
+            .then((row) => (row ? parseRuntimeEvent(row.event_json) : null));
+    const continuation = deliveryEvent
+      ? await new D1ContinuationStore(this.env.DB).wakeForEvent(deliveryEvent)
+      : null;
+    const responseState = continuation
+      ? ((await this.repository().get(this.sessionId())) ?? result.state)
+      : result.state;
+    this.bumpPulse(
+      responseState.appliedEventIds[responseState.appliedEventIds.length - 1] ??
+        deliveryEvent?.id ??
+        result.event.id,
+      continuation ?? undefined,
+    );
+    return { ...result, state: responseState };
   }
 
   /**

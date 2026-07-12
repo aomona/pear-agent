@@ -1,4 +1,4 @@
-import { executionGoalSchema } from "@pear-agent/core";
+import { executionGoalSchema, worldStateSchema } from "@pear-agent/core";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -30,6 +30,8 @@ import {
   VoiceTokenUnavailableError,
 } from "../errors.js";
 import type { PlanGenerator } from "../planner.js";
+import { registerReplanRoutes } from "../replan/routes.js";
+import { validateReplanConfiguration, type ReplanRuntime } from "../replan/engine.js";
 import { DEFAULT_MAX_RAW_INPUT_BYTES, R2RawInputStore } from "../r2/raw-input-store.js";
 import { parseRuntimeEventValue, toJsonValue } from "../serialize.js";
 import { buildInitialExecutionState } from "../session/build-initial-state.js";
@@ -60,6 +62,8 @@ export type CreatePearAppOptions = {
    * Inject token minter (tests). Default: Google GenAI when key present.
    */
   voiceTokenMinter?: VoiceTokenMinter;
+  /** Host-injected Assess/Replan runtime, normally backed by AI SDK. */
+  replanRuntime?: ReplanRuntime;
 };
 
 /** Raw JSON body — Domain `normalizedInput` is left un-revived. */
@@ -69,6 +73,7 @@ const createSessionBodySchema = z.object({
   actorIds: z.array(z.string().min(1)).min(1),
   goal: z.unknown(),
   normalizedInput: z.unknown(),
+  worldState: worldStateSchema.optional(),
 });
 
 export type PearApp = Hono<{ Bindings: PearEnv; Variables: PearAppVariables }>;
@@ -104,8 +109,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     if (error instanceof z.ZodError) {
       return c.json({ error: error.message }, 400);
     }
-    const message = error instanceof Error ? error.message : "Internal error";
-    return c.json({ error: message }, 500);
+    return c.json({ error: "Internal error" }, 500);
   });
 
   app.use("*", async (c, next) => {
@@ -130,6 +134,10 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     await options.authorize({ type: "session.create", domainId: body.domainId }, context);
 
     const sessionId = body.sessionId ?? crypto.randomUUID();
+    const domainVersion = options.replanRuntime
+      ? validateReplanConfiguration(await options.replanRuntime.resolveConfiguration(body.domainId))
+          .domainVersion
+      : 0;
     const plan = await options.planGenerator.generatePlan({
       domainId: body.domainId,
       goal: body.goal,
@@ -147,11 +155,13 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       sessionId,
       plan,
       actorIds: body.actorIds,
+      ...(body.worldState === undefined ? {} : { worldState: body.worldState }),
     });
 
     await agentCreateSession(c.env, {
       sessionId,
       domainId: body.domainId,
+      domainVersion,
       initialState,
       normalizedInput: body.normalizedInput,
     });
@@ -207,6 +217,15 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     const event = parseRuntimeEventValue(await c.req.json());
     if (event.sessionId !== sessionId) {
       throw new HTTPException(400, { message: "event.sessionId must match path sessionId" });
+    }
+    if (
+      event.type === "plan_updated" ||
+      event.type === "replan_proposed" ||
+      event.type === "replan_failed"
+    ) {
+      throw new HTTPException(400, {
+        message: `${event.type} is Runtime-managed and cannot be appended directly`,
+      });
     }
     await options.authorize(
       { type: "session.appendEvent", sessionId, eventType: event.type },
@@ -289,6 +308,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     ...(options.geminiLiveModel === undefined ? {} : { geminiLiveModel: options.geminiLiveModel }),
   });
   registerContinuationRoutes(app, options.authorize);
+  registerReplanRoutes(app, options.authorize, options.replanRuntime);
 
   return app;
 }

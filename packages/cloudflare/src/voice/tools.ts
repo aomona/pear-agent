@@ -272,6 +272,32 @@ export function voiceToolAuthorizeEventType(
 }
 
 export function summarizeSnapshotForVoice(snapshot: RuntimeSnapshot): Record<string, unknown> {
+  const planChange = snapshot.latestPlanChange;
+  const planDiff = planChange
+    ? {
+        status: planChange.status,
+        effect:
+          planChange.status === "applied"
+            ? "applied"
+            : planChange.status === "failed"
+              ? "rejected"
+              : "proposed",
+        mode: planChange.mode,
+        summary: planChange.patch.summary,
+        causeEventIds: planChange.patch.causeEventIds,
+        targetPlanVersion: planChange.targetPlanVersion,
+        failureReason: planChange.failureReason,
+        addedStepIds: planChange.patch.operations
+          .filter((operation) => operation.type === "add_step")
+          .map((operation) => operation.step.id),
+        updatedStepIds: planChange.patch.operations
+          .filter((operation) => operation.type === "update_step")
+          .map((operation) => operation.stepId),
+        removedStepIds: planChange.patch.operations
+          .filter((operation) => operation.type === "remove_step")
+          .map((operation) => operation.stepId),
+      }
+    : null;
   return {
     sessionId: snapshot.session.id,
     sessionStatus: snapshot.session.status,
@@ -286,6 +312,7 @@ export function summarizeSnapshotForVoice(snapshot: RuntimeSnapshot): Record<str
       remainingSeconds: t.remainingSeconds,
     })),
     recentEventTypes: snapshot.recentEvents.slice(-6).map((e) => e.type),
+    latestPlanChange: planDiff,
     generatedAt: snapshot.generatedAt.toISOString(),
   };
 }

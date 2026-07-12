@@ -216,6 +216,7 @@ export function applyRuntimeEvent(
     session = applied.session;
     stepStates = applied.stepStates;
     criterionEvaluations = applied.criterionEvaluations;
+    worldState = event.payload.worldState ?? state.worldState;
   }
 
   if (event.type === "session_started") {

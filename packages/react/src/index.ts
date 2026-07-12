@@ -1,4 +1,9 @@
-export { PearClient, type CreateSessionResult, type PearClientOptions } from "./client.js";
+export {
+  PearClient,
+  type CreateSessionResult,
+  type PearClientOptions,
+  type RequestReplanResult,
+} from "./client.js";
 export {
   PEAR_CONTEXT_HEADER,
   PEAR_CONTEXT_QUERY_KEY,
@@ -44,6 +49,7 @@ export {
   parseAppendEventResult,
   parseExecutionContinuation,
   parseMaterializedState,
+  parsePlanChange,
   parseRuntimeEvent,
   parseRuntimeSnapshot,
   parseSyncState,

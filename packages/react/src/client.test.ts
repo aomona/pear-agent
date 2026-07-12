@@ -118,6 +118,66 @@ describe("PearClient", () => {
     } satisfies Partial<PearClientError>);
   });
 
+  it("requests a partial replan and parses the affected diff", async () => {
+    const patch = {
+      id: "patch-1",
+      basePlanId: sampleSnapshot.plan.id,
+      basePlanVersion: sampleSnapshot.plan.version,
+      baseLastEventId: null,
+      causeEventIds: ["delay-1"],
+      affectedStepIds: ["pack"],
+      operations: [
+        {
+          type: "update_step" as const,
+          stepId: "pack",
+          step: { ...sampleSnapshot.plan.steps[0], estimatedDurationSeconds: 90 },
+        },
+      ],
+      summary: "Allow more packing time",
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://worker.example/sessions/s1/replans");
+      expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ mode: "confirm" });
+      return jsonResponse({
+        kind: "pending_confirmation",
+        assessment: {
+          needsReplan: true,
+          causeEventIds: ["delay-1"],
+          directlyAffectedStepIds: ["pack"],
+          reason: "Departure moved",
+        },
+        affectedSubgraph: { rootStepIds: ["pack"], stepIds: ["pack"] },
+        planChange: {
+          patch,
+          mode: "confirm",
+          status: "pending_confirmation",
+          targetPlanVersion: null,
+          failureReason: null,
+          activeStepIdsAtProposal: [],
+          validationDomainVersion: 1,
+          validationNormalizedInputRevision: 1,
+          createdAt: "2026-07-11T00:02:00.000Z",
+          updatedAt: "2026-07-11T00:02:00.000Z",
+        },
+        state: sampleMaterializedState(),
+      });
+    });
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const result = await client.requestReplan("s1", "confirm");
+
+    expect(result.kind).toBe("pending_confirmation");
+    if (result.kind === "not_needed") throw new Error("Expected a plan change");
+    expect(result.affectedSubgraph.stepIds).toEqual(["pack"]);
+    expect(result.planChange.createdAt).toBeInstanceOf(Date);
+    expect(result.planChange.patch.summary).toBe("Allow more packing time");
+  });
+
   it("setGetContext updates the resolver without a new client instance", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
