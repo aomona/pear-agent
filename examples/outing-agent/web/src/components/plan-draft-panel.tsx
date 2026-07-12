@@ -6,6 +6,7 @@ import { useExecutionSession, usePearContext, type PlanArtifactDetail } from "@p
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { generateSuccessMessage, orderBadgeLabel, orderMeta } from "../lib/order-meta";
 import { PlanLanes } from "./plan-lanes";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -27,44 +28,6 @@ const IMPROVE_CHIPS = [
   { label: "タイトル明確に", request: "plan title を行き先が分かる短文にして" },
 ] as const;
 
-function orderMeta(plan: PlanArtifactDetail["currentPlan"]) {
-  const meta = plan.metadata ?? {};
-  return {
-    refined: meta.orderRefined === true,
-    reason: typeof meta.orderRefineReason === "string" ? meta.orderRefineReason : undefined,
-  };
-}
-
-function generateSuccessMessage(plan: PlanArtifactDetail["currentPlan"]): string {
-  const { refined, reason } = orderMeta(plan);
-  if (refined) return "計画を生成（順序を Gemini が調整）";
-  switch (reason) {
-    case "no_api_key":
-      return "計画を生成（並列のまま — GEMINI_API_KEY 未設定）";
-    case "single_step":
-      return "計画を生成（1 step のため順序調整なし）";
-    case "parse_failed":
-      return "計画を生成（順序調整に失敗 — 並列のまま）";
-    case "disabled":
-      return "計画を生成（順序調整オフ）";
-    default:
-      return reason
-        ? `計画を生成（並列のまま — ${reason.slice(0, 80)}）`
-        : "計画を生成（並列のまま）";
-  }
-}
-
-function orderBadgeLabel(plan: PlanArtifactDetail["currentPlan"]): string | null {
-  if (plan.steps.length === 0) return null;
-  const { refined, reason } = orderMeta(plan);
-  if (refined) return "順序: Gemini 調整済";
-  if (reason === "no_api_key") return "順序: 並列（キー無し）";
-  if (reason === "single_step") return "順序: 1 step";
-  if (reason === "disabled") return "順序: 調整オフ";
-  if (reason) return "順序: 並列（調整失敗）";
-  return "順序: 未調整 / 並列";
-}
-
 export function PlanDraftPanel({
   planId,
   artifact,
@@ -79,7 +42,7 @@ export function PlanDraftPanel({
 
   const steps = artifact.currentPlan.steps;
   const hasSteps = steps.length > 0;
-  const canStart = artifact.status === "ready" && hasSteps;
+  const canStart = hasSteps;
   const normalized = artifact.normalizedInput as OutingNormalizedInput | undefined;
   const orderLabel = orderBadgeLabel(artifact.currentPlan);
 
@@ -96,7 +59,7 @@ export function PlanDraftPanel({
     }
   }
 
-  async function handleGenerate() {
+  async function handleRegenerate() {
     setBusy(true);
     try {
       const next = await client.generatePlanArtifact(planId);
@@ -109,22 +72,33 @@ export function PlanDraftPanel({
     }
   }
 
+  /** Main path: ready (if needed) + create session + start. */
   async function handleStart() {
     setBusy(true);
     try {
       if (!normalized) {
-        throw new Error("normalizedInput missing; go back and normalize first");
+        throw new Error("入力がありません。入力へ戻って「計画をつくる」を押してください");
       }
+      if (!hasSteps) {
+        throw new Error("ステップがありません。入力から計画をつくってください");
+      }
+
+      let current = artifact;
+      if (current.status !== "ready") {
+        current = await client.updatePlan(planId, { status: "ready" });
+        onArtifactChange(current);
+      }
+
       const worldState = buildOutingWorldState(normalized);
       const created = await session.create({
-        domainId: artifact.domainId,
+        domainId: current.domainId,
         actorIds: ["demo-user"],
         planArtifactId: planId,
         worldState,
       });
       await session.startSession();
       onSessionStarted(created.sessionId);
-      toast.success("Session started from saved plan");
+      toast.success("実行を開始しました");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -137,14 +111,14 @@ export function PlanDraftPanel({
       <CardHeader>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <CardTitle>3. Execution plan</CardTitle>
+            <CardTitle>3. 実行計画</CardTitle>
             <CardDescription>
-              生成時に Gemini が step の順序（after）を整えます。レーンで並列を確認 → ready → 実行。
+              レーンで順序を確認 →「実行を開始」。必要ならかんたん改善や再生成。
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant={artifact.status === "ready" ? "success" : "secondary"}>
-              {artifact.status}
+              {artifact.status === "ready" ? "実行可" : artifact.status}
             </Badge>
             <Badge variant="outline">v{artifact.version}</Badge>
             {orderLabel ? (
@@ -168,46 +142,35 @@ export function PlanDraftPanel({
             <Badge variant="outline">タスク {normalized.tasks.length}</Badge>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            normalizedInput がありません。入力へ戻ってください。
-          </p>
+          <p className="text-sm text-muted-foreground">入力がありません。入力へ戻ってください。</p>
         )}
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            disabled={busy || artifact.normalizedInput === undefined}
-            onClick={() => void handleGenerate()}
-          >
-            計画を生成
-          </Button>
-          <p className="w-full text-xs text-muted-foreground">
-            ステップ本体は Domain が決め、依存関係（after）だけ LLM
-            が差し替えます。成功/フォールバックはバッジとトーストで表示します。
+        {!hasSteps ? (
+          <p className="text-sm text-muted-foreground">
+            まだ steps がありません。入力で「計画をつくる」を押してください。
           </p>
+        ) : (
+          <PlanLanes plan={artifact.currentPlan} />
+        )}
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <Button size="lg" disabled={busy || !canStart} onClick={() => void handleStart()}>
+            {busy ? "開始中…" : "実行を開始"}
+          </Button>
           <Button
             variant="outline"
-            disabled={busy || !hasSteps}
-            onClick={() =>
-              void run("実行可能にしました", () => client.updatePlan(planId, { status: "ready" }))
-            }
+            disabled={busy || !normalized}
+            onClick={() => void handleRegenerate()}
           >
-            実行可能にする
+            計画を再生成
           </Button>
-          {artifact.status === "ready" ? (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() =>
-                void run("下書きに戻しました", () => client.updatePlan(planId, { status: "draft" }))
-              }
-            >
-              下書きに戻す
-            </Button>
-          ) : null}
         </div>
+        <p className="text-xs text-muted-foreground">
+          未 ready でも開始時に自動で実行可能にします。再生成すると順序を Gemini が付け直します。
+        </p>
 
-        <div className="space-y-2">
-          <Label>かんたん改善</Label>
+        <div className="space-y-2 rounded-lg border p-3">
+          <Label className="text-muted-foreground">かんたん改善（任意）</Label>
           <div className="flex flex-wrap gap-2">
             {IMPROVE_CHIPS.map((chip) => (
               <Button
@@ -235,32 +198,15 @@ export function PlanDraftPanel({
               variant="outline"
               disabled={busy || !hasSteps || !improveRequest.trim()}
               onClick={() =>
-                void run("Plan improved", () =>
+                void run("改善しました", () =>
                   client.improvePlan(planId, { request: improveRequest.trim() }),
                 )
               }
             >
-              Improve
+              改善を適用
             </Button>
           </div>
         </div>
-
-        {!hasSteps ? (
-          <p className="text-sm text-muted-foreground">
-            まだ steps がありません。「計画を生成」を押してください。
-          </p>
-        ) : (
-          <PlanLanes plan={artifact.currentPlan} />
-        )}
-
-        <Button disabled={busy || !canStart} onClick={() => void handleStart()}>
-          {busy ? "Starting…" : "この計画で実行を開始"}
-        </Button>
-        {!canStart && hasSteps ? (
-          <p className="text-xs text-muted-foreground">
-            実行前に「実行可能にする」を押してください。
-          </p>
-        ) : null}
       </CardContent>
     </Card>
   );

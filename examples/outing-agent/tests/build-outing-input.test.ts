@@ -7,6 +7,7 @@ import {
   createEmptyTaskRow,
   createPendingRow,
   defaultDepartureLocal,
+  formStateFromNormalized,
   hasInFlightItems,
   resolveAddPrepModalLocal,
   taskServerValueToRows,
@@ -129,5 +130,23 @@ describe("server value mappers", () => {
       kind: "task",
       title: "Todo",
     });
+  });
+});
+
+describe("formStateFromNormalized", () => {
+  it("hydrates structured form fields from saved input", () => {
+    const form = formStateFromNormalized({
+      departureAt: "2026-07-12T01:00:00.000Z",
+      belongings: [{ id: "keys", name: "Keys", chargePercent: null }],
+      tasks: [{ id: "weather", title: "Check weather", estimatedDurationSeconds: 30, notes: null }],
+      originLabel: "Home",
+      destinationLabel: "Office",
+    });
+    expect(form.departureMode).toBe("structured");
+    expect(form.originLabel).toBe("Home");
+    expect(form.destinationLabel).toBe("Office");
+    expect(form.items).toHaveLength(2);
+    expect(form.items[0]).toMatchObject({ kind: "belonging", id: "keys", status: "ready" });
+    expect(form.items[1]).toMatchObject({ kind: "task", id: "weather", status: "ready" });
   });
 });

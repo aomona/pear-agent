@@ -20,7 +20,7 @@ import {
   storePlanId,
   type DemoPhase,
 } from "./lib/plan-storage";
-import { loadStoredSessionId, storeSessionId } from "./lib/session-storage";
+import { loadStoredSession, storeSession, type StoredSession } from "./lib/session-storage";
 
 const API_BASE = import.meta.env.VITE_PEAR_API_BASE ?? "http://127.0.0.1:8787";
 const ACTOR_ID = "demo-user";
@@ -30,8 +30,11 @@ function DemoShell() {
   const [phase, setPhase] = useState<DemoPhase>(() => loadStoredPhase() ?? "list");
   const [planId, setPlanId] = useState<string | null>(() => loadStoredPlanId());
   const [artifact, setArtifact] = useState<PlanArtifactDetail | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(() => loadStoredSessionId());
+  const [session, setSession] = useState<StoredSession | null>(() => loadStoredSession());
   const [loadingPlan, setLoadingPlan] = useState(false);
+
+  const sessionForCurrentPlan =
+    session !== null && planId !== null && session.planId === planId ? session.sessionId : null;
 
   useEffect(() => {
     storePhase(phase);
@@ -42,8 +45,8 @@ function DemoShell() {
   }, [planId]);
 
   useEffect(() => {
-    storeSessionId(sessionId);
-  }, [sessionId]);
+    storeSession(session);
+  }, [session]);
 
   const loadArtifact = useCallback(
     async (id: string) => {
@@ -77,11 +80,18 @@ function DemoShell() {
     (): Partial<Record<DemoPhase, boolean>> => ({
       list: true,
       input: Boolean(planId),
-      plan: Boolean(planId && artifact?.normalizedInput !== undefined),
-      execute: Boolean(sessionId),
+      plan: Boolean(planId && artifact && artifact.currentPlan.steps.length > 0),
+      execute: Boolean(sessionForCurrentPlan),
     }),
-    [planId, artifact, sessionId],
+    [planId, artifact, sessionForCurrentPlan],
   );
+
+  const leaveSession = () => {
+    setSession(null);
+    if (planId && artifact && artifact.currentPlan.steps.length > 0) setPhase("plan");
+    else if (planId) setPhase("input");
+    else setPhase("list");
+  };
 
   const goList = () => {
     setPhase("list");
@@ -104,14 +114,17 @@ function DemoShell() {
   const openPlan = async (id: string) => {
     const next = await loadArtifact(id);
     if (!next) return;
-    if (sessionId) {
+
+    // Only resume execute when the stored session belongs to this plan.
+    if (session?.sessionId && session.planId === id) {
       setPhase("execute");
       return;
     }
-    if (next.normalizedInput === undefined) {
-      setPhase("input");
-    } else {
+
+    if (next.currentPlan.steps.length > 0) {
       setPhase("plan");
+    } else {
+      setPhase("input");
     }
   };
 
@@ -120,13 +133,13 @@ function DemoShell() {
     setPhase("input");
   };
 
-  const onNormalized = (next: PlanArtifactDetail) => {
+  const onPlanBuilt = (next: PlanArtifactDetail) => {
     setArtifact(next);
     setPhase("plan");
   };
 
-  const onSessionStarted = (id: string) => {
-    setSessionId(id);
+  const onSessionStarted = (id: string, fromPlanId: string) => {
+    setSession({ sessionId: id, planId: fromPlanId });
     setPhase("execute");
   };
 
@@ -138,7 +151,7 @@ function DemoShell() {
             <div>
               <h1 className="text-lg font-semibold tracking-tight">PEAR Outing Agent</h1>
               <p className="text-xs text-muted-foreground">
-                一覧 → 入力 → 計画 → 実行 · 迷わず進められるデモ UI
+                一覧 → 入力 → 計画 → 実行 · 主ボタンは「計画をつくる」「実行を開始」
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -147,27 +160,18 @@ function DemoShell() {
                   plan {planId.slice(0, 8)}…
                 </Badge>
               ) : null}
-              {sessionId ? (
+              {sessionForCurrentPlan ? (
                 <>
                   <Badge variant="outline" className="font-mono text-xs max-w-[140px] truncate">
-                    sess {sessionId.slice(0, 8)}…
+                    sess {sessionForCurrentPlan.slice(0, 8)}…
                   </Badge>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setSessionId(null);
-                      if (planId && artifact?.normalizedInput !== undefined) setPhase("plan");
-                      else if (planId) setPhase("input");
-                      else setPhase("list");
-                    }}
-                  >
-                    Leave session
+                  <Button size="sm" variant="outline" onClick={leaveSession}>
+                    実行を離れる
                   </Button>
                 </>
               ) : null}
               <Button size="sm" variant="ghost" onClick={goList}>
-                Plans
+                一覧
               </Button>
             </div>
           </div>
@@ -188,12 +192,12 @@ function DemoShell() {
         {phase === "input" && planId ? (
           <div className="md:col-span-2">
             {loadingPlan && !artifact ? (
-              <p className="text-sm text-muted-foreground">Loading plan…</p>
+              <p className="text-sm text-muted-foreground">読み込み中…</p>
             ) : (
               <PlanInputPanel
                 planId={planId}
                 artifact={artifact}
-                onNormalized={onNormalized}
+                onPlanBuilt={onPlanBuilt}
                 onBack={goList}
               />
             )}
@@ -207,7 +211,7 @@ function DemoShell() {
               artifact={artifact}
               onArtifactChange={setArtifact}
               onBackToInput={() => setPhase("input")}
-              onSessionStarted={onSessionStarted}
+              onSessionStarted={(id) => onSessionStarted(id, planId)}
             />
           </div>
         ) : null}
@@ -215,12 +219,12 @@ function DemoShell() {
         {phase === "execute" ? (
           <>
             <div className="md:col-span-2">
-              <NextActionHero sessionId={sessionId} />
+              <NextActionHero sessionId={sessionForCurrentPlan} />
             </div>
-            <PlanStepsPanel sessionId={sessionId} />
-            <VoiceContinuationPanel sessionId={sessionId} />
+            <PlanStepsPanel sessionId={sessionForCurrentPlan} />
+            <VoiceContinuationPanel sessionId={sessionForCurrentPlan} />
             <div className="md:col-span-2">
-              <DelayReplanPanel sessionId={sessionId} />
+              <DelayReplanPanel sessionId={sessionForCurrentPlan} />
             </div>
           </>
         ) : null}

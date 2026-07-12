@@ -4,9 +4,9 @@ import { Button } from "./ui/button";
 
 const PHASES: { id: DemoPhase; label: string; hint: string }[] = [
   { id: "list", label: "1. 一覧", hint: "Plan を選ぶ" },
-  { id: "input", label: "2. 入力", hint: "準備内容" },
-  { id: "plan", label: "3. 計画", hint: "生成・ready" },
-  { id: "execute", label: "4. 実行", hint: "Steps / Voice" },
+  { id: "input", label: "2. 入力", hint: "準備を書く" },
+  { id: "plan", label: "3. 計画", hint: "確認して開始" },
+  { id: "execute", label: "4. 実行", hint: "いまやること" },
 ];
 
 type PhaseStepperProps = {

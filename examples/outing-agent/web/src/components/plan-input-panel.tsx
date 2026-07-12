@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { usePearContext, type PlanArtifactDetail } from "@pear-agent/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -8,6 +8,7 @@ import {
   buildOutingInputFromForm,
   createPendingRow,
   defaultDepartureLocal,
+  formStateFromNormalized,
   hasFailedItems,
   hasInFlightItems,
   readyItems,
@@ -16,6 +17,7 @@ import {
   type OutingFormState,
   type PrepListRow,
 } from "../lib/build-outing-input";
+import { generateSuccessMessage } from "../lib/order-meta";
 import { OUTING_PRESETS } from "../lib/presets";
 import { AddPrepModal, type AddPrepSubmit } from "./add-prep-modal";
 import { InputSummary } from "./input-summary";
@@ -24,12 +26,12 @@ import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Separator } from "./ui/separator";
 
 type PlanInputPanelProps = {
   planId: string;
   artifact: PlanArtifactDetail | null;
-  onNormalized: (artifact: PlanArtifactDetail) => void;
+  /** Called after normalize + generate succeed. */
+  onPlanBuilt: (artifact: PlanArtifactDetail) => void;
   onBack: () => void;
 };
 
@@ -39,7 +41,7 @@ type StructureVariables = {
   freeText: string;
 };
 
-export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanInputPanelProps) {
+export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanInputPanelProps) {
   const { client } = usePearContext();
   const [form, setForm] = useState<OutingFormState>({
     departureMode: "structured",
@@ -50,8 +52,36 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
     items: [],
   });
   const [addOpen, setAddOpen] = useState(false);
-  const [normalizeBusy, setNormalizeBusy] = useState(false);
+  const [buildBusy, setBuildBusy] = useState(false);
   const [placeBusy, setPlaceBusy] = useState<"origin" | "destination" | null>(null);
+  const hydratedPlanId = useRef<string | null>(null);
+
+  // Reset hydrate guard when switching plans.
+  useEffect(() => {
+    hydratedPlanId.current = null;
+    setForm({
+      departureMode: "structured",
+      departureLocal: defaultDepartureLocal(),
+      departureFreeText: "tomorrow morning 10:00",
+      originLabel: "",
+      destinationLabel: "",
+      items: [],
+    });
+  }, [planId]);
+
+  // Resume editing from saved normalizedInput once artifact is loaded for this plan.
+  useEffect(() => {
+    if (artifact === null) return;
+    if (hydratedPlanId.current === planId) return;
+    hydratedPlanId.current = planId;
+    const saved = artifact.normalizedInput;
+    if (!saved || typeof saved !== "object") return;
+    try {
+      setForm(formStateFromNormalized(saved as Parameters<typeof formStateFromNormalized>[0]));
+    } catch {
+      // keep defaults if shape is unexpected
+    }
+  }, [planId, artifact]);
 
   const structureMutation = useMutation({
     mutationKey: ["outing", "structure-prep", planId],
@@ -67,7 +97,7 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
         ...f,
         items: f.items.flatMap((row) => (row.key === variables.pendingKey ? rows : [row])),
       }));
-      toast.success(rows.length === 1 ? "構造化完了" : `構造化完了（${rows.length} 件）`);
+      toast.success(rows.length === 1 ? "追加しました" : `${rows.length} 件追加しました`);
     },
     onError: (error, variables) => {
       const message = error instanceof Error ? error.message : String(error);
@@ -143,7 +173,7 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
       setForm((f) =>
         which === "origin" ? { ...f, originLabel: label } : { ...f, destinationLabel: label },
       );
-      toast.success(`${which === "origin" ? "出発地" : "目的地"}を構造化しました`);
+      toast.success(`${which === "origin" ? "出発地" : "目的地"}を整えました`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
@@ -151,24 +181,26 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
     }
   }
 
-  async function handleNormalize() {
-    setNormalizeBusy(true);
+  /** Main path: save input + generate ordered plan in one action. */
+  async function handleBuildPlan() {
+    setBuildBusy(true);
     try {
       const input = buildOutingInputFromForm(form);
-      const next = await client.normalizePlanInput(planId, input);
-      toast.success("Input normalized and saved on plan");
-      onNormalized(next);
+      await client.normalizePlanInput(planId, input);
+      const generated = await client.generatePlanArtifact(planId);
+      toast.success(generateSuccessMessage(generated.currentPlan));
+      onPlanBuilt(generated);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
     } finally {
-      setNormalizeBusy(false);
+      setBuildBusy(false);
     }
   }
 
   const inFlight = hasInFlightItems(form.items);
   const hasFailed = hasFailedItems(form.items);
   const readyCount = readyItems(form.items).length;
-  const canNormalize = readyCount > 0 && !inFlight && !hasFailed && !normalizeBusy;
+  const canBuild = readyCount > 0 && !inFlight && !hasFailed && !buildBusy;
 
   return (
     <>
@@ -176,14 +208,14 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <CardTitle>2. What to prepare</CardTitle>
+              <CardTitle>2. 準備内容</CardTitle>
               <CardDescription>
-                出発・行き先・持ち物・準備タスク。リスト項目は並行で Gemini 構造化できます。
-                {artifact?.normalizedInput ? " 保存済み normalizedInput あり。" : ""}
+                出発・行き先・持ち物・タスクを入れて「計画をつくる」。リストの自由文は並行で構造化します。
+                {artifact?.normalizedInput ? " 保存済みの内容を読み込んでいます。" : ""}
               </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={onBack}>
-              Back to list
+              一覧へ
             </Button>
           </div>
         </CardHeader>
@@ -268,7 +300,7 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
                     disabled={placeBusy !== null}
                     onClick={() => void resolvePlace("origin")}
                   >
-                    {placeBusy === "origin" ? "…" : "AI"}
+                    {placeBusy === "origin" ? "…" : "整える"}
                   </Button>
                 </div>
               </div>
@@ -288,7 +320,7 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
                     disabled={placeBusy !== null}
                     onClick={() => void resolvePlace("destination")}
                   >
-                    {placeBusy === "destination" ? "…" : "AI"}
+                    {placeBusy === "destination" ? "…" : "整える"}
                   </Button>
                 </div>
               </div>
@@ -328,22 +360,22 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
             )}
           </section>
 
-          {artifact?.normalizedInput !== undefined ? (
-            <>
-              <Separator />
-              <pre className="max-h-40 overflow-auto rounded-md bg-muted p-2 text-xs">
-                {JSON.stringify(artifact.normalizedInput, null, 2)}
-              </pre>
-            </>
-          ) : null}
-
-          <Button disabled={!canNormalize} onClick={() => void handleNormalize()}>
-            {normalizeBusy
-              ? "Normalizing…"
-              : inFlight
-                ? "生成完了を待っています…"
-                : "Normalize & continue"}
-          </Button>
+          <div className="space-y-2">
+            <Button
+              className="w-full sm:w-auto"
+              disabled={!canBuild}
+              onClick={() => void handleBuildPlan()}
+            >
+              {buildBusy
+                ? "計画を作成中…"
+                : inFlight
+                  ? "項目の構造化を待っています…"
+                  : "計画をつくる"}
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              入力を保存し、ステップ生成と順序調整まで一気に行います。
+            </p>
+          </div>
         </CardContent>
       </Card>
 

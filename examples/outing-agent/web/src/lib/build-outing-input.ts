@@ -235,6 +235,61 @@ export function hasFailedItems(rows: readonly PrepListRow[]): boolean {
   return rows.some((row) => row.status === "error");
 }
 
+/** ISO datetime → `datetime-local` value (local wall clock). */
+export function isoToDatetimeLocal(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return defaultDepartureLocal();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Rebuild the input form from a saved normalized plan input (structured only). */
+export function formStateFromNormalized(input: {
+  departureAt: string;
+  belongings: Array<{ id: string; name: string; chargePercent?: number | null }>;
+  tasks: Array<{
+    id: string;
+    title: string;
+    estimatedDurationSeconds?: number | null;
+    notes?: string | null;
+  }>;
+  originLabel?: string | null;
+  destinationLabel?: string | null;
+}): OutingFormState {
+  const items: PrepListRow[] = [
+    ...input.belongings.map((b) =>
+      createEmptyBelongingRow({
+        status: "ready",
+        id: b.id,
+        name: b.name,
+        chargePercent:
+          b.chargePercent === null || b.chargePercent === undefined ? "" : String(b.chargePercent),
+      }),
+    ),
+    ...input.tasks.map((t) =>
+      createEmptyTaskRow({
+        status: "ready",
+        id: t.id,
+        title: t.title,
+        estimatedDurationSeconds:
+          t.estimatedDurationSeconds === null || t.estimatedDurationSeconds === undefined
+            ? ""
+            : String(t.estimatedDurationSeconds),
+        notes: t.notes ?? "",
+      }),
+    ),
+  ];
+
+  return {
+    departureMode: "structured",
+    departureLocal: isoToDatetimeLocal(input.departureAt),
+    departureFreeText: "",
+    originLabel: input.originLabel ?? "",
+    destinationLabel: input.destinationLabel ?? "",
+    items,
+  };
+}
+
 export function buildOutingInputFromForm(form: OutingFormState): OutingInput {
   if (hasInFlightItems(form.items)) {
     throw new Error("Gemini で構造化中の項目があります。完了を待ってください");
