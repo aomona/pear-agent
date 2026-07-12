@@ -33,6 +33,62 @@ afterEach(() => {
 });
 
 describe("react hooks", () => {
+  it("useExecutionSession create then startSession works without waiting for re-render", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/sessions") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            sessionId: "s-create-start",
+            session: sampleSnapshot.session,
+            plan: sampleSnapshot.plan,
+            stepStates: sampleSnapshot.stepStates,
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/events") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return new Response(
+          JSON.stringify({
+            kind: "applied",
+            event: body,
+            state: sampleMaterializedState({
+              appliedIdempotencyKeys: [body.idempotencyKey],
+            }),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result } = renderHook(() => useExecutionSession(), {
+      wrapper: createWrapper(client),
+    });
+
+    // Same async tick as PlanDraftPanel: create then startSession without a re-render between.
+    await act(async () => {
+      await result.current.create({
+        domainId: "outing",
+        actorIds: ["traveler"],
+        goal: sampleSnapshot.plan.goal,
+        normalizedInput: {},
+      });
+      await result.current.startSession();
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.sessionId).toBe("s-create-start");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/events"))).toBe(true);
+  });
+
   it("useExecutionSession creates a session and completes a step", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
