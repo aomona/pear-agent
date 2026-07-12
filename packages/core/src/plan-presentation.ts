@@ -15,6 +15,8 @@ export type PlanPresentationNode = {
   after: string[];
   status?: string;
   depth: number;
+  startOffsetSeconds?: number;
+  endOffsetSeconds?: number;
 };
 
 export type PlanPresentationEdge = {
@@ -88,6 +90,10 @@ export function buildPlanPresentation(
     if (step.summary !== undefined) node.summary = step.summary;
     if (step.instructions !== undefined) node.instructions = step.instructions;
     if (status !== undefined) node.status = status;
+    if (step.timeline) {
+      node.startOffsetSeconds = step.timeline.startOffsetSeconds;
+      node.endOffsetSeconds = step.timeline.endOffsetSeconds;
+    }
     return node;
   });
 

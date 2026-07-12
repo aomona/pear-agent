@@ -63,12 +63,16 @@ const result = validatePlanGraph([
 ]);
 ```
 
-## Plan 表示・Planner Port（Wave A）
+## Plan foundation（Waves A+B）
 
-- Step は optional の `label` / `summary` / `instructions` / `notes` と構造化 `timers`（`TimerDefinition`）を持てます
-- Plan は optional の `title` / `metadata` を持てます
-- `buildPlanPresentation(plan, stepStates?)` はレーン・クリティカルパス・ready/blocked を純関数で返します
-- `PlanGenerator` / `createStaticPlanGenerator` は Core の Port（Cloudflare Adapter が host context 付きで再 export）
+- Step: `label` / `summary` / `instructions` / `notes`、構造化 `timers`、`resourceRequirements`、`timeline`
+- Plan: `title` / `metadata`
+- `buildPlanPresentation` — レーン・critical path・ready/blocked
+- `schedulePlan` — 依存 + 資源 capacity で timeline を埋める
+- `diffPlans` — 2 plan の structural diff
+- `PlanGenerator` / `PlanImprover` / `PlanRepository` Ports
+- `PlanArtifact` / `PlanVersionRecord` モデル
+- `assertPlanMatchesGoal` / `GoalEvaluator` helpers
 
 ## Step状態導出
 

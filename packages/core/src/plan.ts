@@ -30,6 +30,41 @@ export const timerDefinitionSchema = z.object({
 
 export type TimerDefinition = z.infer<typeof timerDefinitionSchema>;
 
+/** CE-03: quantity-bearing resource need (optional; complements requirements[]). */
+export const resourceRequirementSchema = z.object({
+  resourceId: z.string().min(1),
+  quantity: z.number().positive(),
+});
+
+export type ResourceRequirement = z.infer<typeof resourceRequirementSchema>;
+
+/** CE-04: relative schedule window from plan t=0. */
+export const stepTimelineSchema = z
+  .object({
+    startOffsetSeconds: z.number().nonnegative(),
+    endOffsetSeconds: z.number().nonnegative(),
+  })
+  .superRefine((value, context) => {
+    if (value.endOffsetSeconds <= value.startOffsetSeconds) {
+      context.addIssue({
+        code: "custom",
+        message: "timeline.endOffsetSeconds must be greater than startOffsetSeconds",
+        path: ["endOffsetSeconds"],
+      });
+    }
+  });
+
+export type StepTimeline = z.infer<typeof stepTimelineSchema>;
+
+/** CE-16: concurrent capacity of a resource for scheduling. */
+export const resourceCapacitySchema = z.object({
+  id: z.string().min(1),
+  capacity: z.number().positive(),
+  mode: z.enum(["exclusive", "shared"]).optional(),
+});
+
+export type ResourceCapacity = z.infer<typeof resourceCapacitySchema>;
+
 const nonEmptyTrimmed = (max: number) => z.string().trim().min(1).max(max);
 
 export type ExecutionStep<TStepData = unknown> = {
@@ -48,6 +83,10 @@ export type ExecutionStep<TStepData = unknown> = {
   instructions?: string;
   /** CE-01: optional notes (tips, cautions). */
   notes?: string[];
+  /** CE-03: quantity requirements (preferred over requirements[] when present). */
+  resourceRequirements?: ResourceRequirement[];
+  /** CE-04: relative timeline window. */
+  timeline?: StepTimeline;
 };
 
 export type ExecutionPlan<TStepData = unknown> = {
@@ -95,6 +134,8 @@ export function executionStepSchema<TStepDataSchema extends z.ZodType>(
     summary: nonEmptyTrimmed(280).optional(),
     instructions: nonEmptyTrimmed(2_000).optional(),
     notes: z.array(nonEmptyTrimmed(200)).max(20).optional(),
+    resourceRequirements: z.array(resourceRequirementSchema).max(50).optional(),
+    timeline: stepTimelineSchema.optional(),
   }) as unknown as z.ZodType<ExecutionStep<z.output<TStepDataSchema>>>;
 }
 
@@ -140,8 +181,45 @@ export function executionPlanSchema<TStepDataSchema extends z.ZodType>(
             });
           }
         }
+
+        if (step.resourceRequirements) {
+          const seen = new Set<string>();
+          for (const [reqIndex, req] of step.resourceRequirements.entries()) {
+            if (seen.has(req.resourceId)) {
+              context.addIssue({
+                code: "custom",
+                message: `Duplicate resourceId in resourceRequirements: ${req.resourceId}`,
+                path: ["steps", stepIndex, "resourceRequirements", reqIndex, "resourceId"],
+              });
+            }
+            seen.add(req.resourceId);
+          }
+        }
+
+        if (step.timeline) {
+          const duration = step.timeline.endOffsetSeconds - step.timeline.startOffsetSeconds;
+          // Allow small float noise; durations are typically whole seconds.
+          if (Math.abs(duration - step.estimatedDurationSeconds) > 0.001) {
+            context.addIssue({
+              code: "custom",
+              message:
+                "timeline duration must match estimatedDurationSeconds (end - start === estimated)",
+              path: ["steps", stepIndex, "timeline"],
+            });
+          }
+        }
       });
     }) as unknown as z.ZodType<ExecutionPlan<z.output<TStepDataSchema>>>;
+}
+
+/** Resolve quantity requirements for scheduling (CE-03). */
+export function effectiveResourceRequirements(
+  step: Pick<ExecutionStep, "requirements" | "resourceRequirements">,
+): ResourceRequirement[] {
+  if (step.resourceRequirements && step.resourceRequirements.length > 0) {
+    return step.resourceRequirements;
+  }
+  return step.requirements.map((resourceId) => ({ resourceId, quantity: 1 }));
 }
 
 export type PlanGraphNode = {

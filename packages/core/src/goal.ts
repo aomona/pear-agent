@@ -86,3 +86,62 @@ export function evaluateGoalCompletion(
     ? "satisfied"
     : "incomplete";
 }
+
+/** CE-17: plan.goal must match the requested goal identity and criteria set. */
+export type PlanGoalMatch = { ok: true } | { ok: false; reason: string };
+
+export function assertPlanMatchesGoal(
+  plan: { goal: ExecutionGoal },
+  goal: ExecutionGoal,
+): PlanGoalMatch {
+  if (plan.goal.id !== goal.id) {
+    return { ok: false, reason: `goal id mismatch: plan=${plan.goal.id} requested=${goal.id}` };
+  }
+  if (plan.goal.completionPolicy !== goal.completionPolicy) {
+    return {
+      ok: false,
+      reason: `completionPolicy mismatch: plan=${plan.goal.completionPolicy} requested=${goal.completionPolicy}`,
+    };
+  }
+  const planCriteria = new Set(plan.goal.successCriteria.map(({ id }) => id));
+  const requestedCriteria = new Set(goal.successCriteria.map(({ id }) => id));
+  if (planCriteria.size !== requestedCriteria.size) {
+    return { ok: false, reason: "successCriteria id set size mismatch" };
+  }
+  for (const id of requestedCriteria) {
+    if (!planCriteria.has(id)) {
+      return { ok: false, reason: `missing successCriteria id on plan: ${id}` };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * CE-18: Domain/host evaluates a single criterion against runtime state.
+ * Core does not interpret Domain facts; hosts supply this function.
+ */
+export type GoalEvaluatorContext = {
+  goal: ExecutionGoal;
+  plan: unknown;
+  worldState: unknown;
+  stepStates: unknown;
+  now?: Date;
+};
+
+export type GoalEvaluator = {
+  evaluateCriterion(
+    criterionId: string,
+    context: GoalEvaluatorContext,
+  ): CriterionEvaluation | Promise<CriterionEvaluation>;
+};
+
+export async function evaluateAllCriteria(
+  evaluator: GoalEvaluator,
+  context: GoalEvaluatorContext,
+): Promise<CriterionEvaluation[]> {
+  const results: CriterionEvaluation[] = [];
+  for (const { id } of context.goal.successCriteria) {
+    results.push(await evaluator.evaluateCriterion(id, context));
+  }
+  return results;
+}
