@@ -9,11 +9,17 @@ import {
   type VoiceToolResponse,
 } from "@pear-agent/core";
 
+import { DEFAULT_GEMINI_LIVE_MODEL } from "./live-model.js";
+
+/** Subset of @google/genai Live session used by this provider. */
 type LiveSessionLike = {
   close: () => void;
-  sendRealtimeInput?: (input: { audio: { data: string; mimeType: string } }) => void;
-  sendClientContent?: (input: unknown) => void;
-  sendToolResponse?: (input: { functionResponses: unknown[] }) => void;
+  /**
+   * Real-time user input (audio / video / text / stream control).
+   * Per gemini-live-api-dev: use this for ALL conversational input.
+   * Do not use `media` — use specific keys: audio, video, text, audioStreamEnd.
+   */
+  sendRealtimeInput?: (input: Record<string, unknown>) => void;
 };
 
 type GenAiCtor = new (opts: { apiKey: string; httpOptions?: { apiVersion: string } }) => {
@@ -33,8 +39,14 @@ type GenAiCtor = new (opts: { apiKey: string; httpOptions?: { apiVersion: string
 
 /**
  * Gemini Live VoiceProvider using `@google/genai` (browser / client-to-server).
- * Credentials must be short-lived ephemeral tokens from the PEAR Worker.
- * System instructions / tools are locked into the token server-side.
+ *
+ * Follows gemini-live-api-dev:
+ * - Model: gemini-3.1-flash-live-preview
+ * - Ephemeral tokens only (never long-lived API keys in the browser)
+ * - sendRealtimeInput for audio and text
+ * - audioStreamEnd when the mic is paused
+ * - Clear playback on serverContent.interrupted
+ * - Process every part of each server event
  */
 export class GeminiLiveVoiceProvider implements VoiceProvider {
   async connect(options: VoiceConnectOptions): Promise<VoiceConnection> {
@@ -58,14 +70,16 @@ class GeminiLiveVoiceConnection implements VoiceConnection {
 
   async open(): Promise<void> {
     this.setStatus("connecting");
-    const model = this.options.credentials.model ?? "gemini-2.5-flash-native-audio-preview-12-2025";
+    const model = this.options.credentials.model ?? DEFAULT_GEMINI_LIVE_MODEL;
+
+    // Ephemeral token acts as the API key (v1alpha Live only).
     const ai = new this.GoogleGenAI({
       apiKey: this.options.credentials.token,
       httpOptions: { apiVersion: "v1alpha" },
     });
 
-    // Live systemInstruction/tools are locked into the ephemeral token server-side.
-    // Client only supplies session resumption when reconnecting.
+    // System instruction / tools / modalities are locked into the ephemeral token
+    // server-side. Client only supplies session resumption when reconnecting.
     const config: Record<string, unknown> = this.options.resumeHandle
       ? { sessionResumption: { handle: this.options.resumeHandle } }
       : {};
@@ -98,23 +112,31 @@ class GeminiLiveVoiceConnection implements VoiceConnection {
   sendAudio(chunk: ArrayBuffer | Uint8Array): void {
     if (!this.session?.sendRealtimeInput || this.muted || this.status === "disconnected") return;
     const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
-    const data = bytesToBase64(bytes);
     this.session.sendRealtimeInput({
-      audio: { data, mimeType: "audio/pcm;rate=16000" },
+      audio: {
+        data: bytesToBase64(bytes),
+        mimeType: "audio/pcm;rate=16000",
+      },
     });
   }
 
+  /**
+   * Conversational text during a Live session (not history seeding).
+   * Skill: use sendRealtimeInput({ text }) — not sendClientContent.
+   */
   sendText(text: string): void {
-    if (!this.session?.sendClientContent) return;
-    this.session.sendClientContent({
-      turns: [{ role: "user", parts: [{ text }] }],
-      turnComplete: true,
-    });
+    if (!this.session?.sendRealtimeInput || this.status === "disconnected") return;
+    this.session.sendRealtimeInput({ text });
   }
 
   sendToolResponse(responses: VoiceToolResponse[]): void {
-    if (!this.session?.sendToolResponse) return;
-    this.session.sendToolResponse({
+    if (!this.session) return;
+    // Synchronous tool responses — Live tool use is sync only (skill).
+    const session = this.session as LiveSessionLike & {
+      sendToolResponse?: (input: { functionResponses: unknown[] }) => void;
+    };
+    if (!session.sendToolResponse) return;
+    session.sendToolResponse({
       functionResponses: responses.map((r) => ({
         id: r.id,
         name: r.name,
@@ -125,6 +147,8 @@ class GeminiLiveVoiceConnection implements VoiceConnection {
 
   mute(): void {
     this.muted = true;
+    // When the audio stream is paused, flush server-side cached audio (VAD).
+    this.session?.sendRealtimeInput?.({ audioStreamEnd: true });
     if (this.status === "connected") this.setStatus("muted");
   }
 
@@ -134,6 +158,13 @@ class GeminiLiveVoiceConnection implements VoiceConnection {
   }
 
   async disconnect(): Promise<void> {
+    try {
+      if (this.session?.sendRealtimeInput) {
+        this.session.sendRealtimeInput({ audioStreamEnd: true });
+      }
+    } catch {
+      // ignore flush errors on teardown
+    }
     this.session?.close();
     this.session = null;
     this.setStatus("disconnected");
@@ -154,6 +185,14 @@ class GeminiLiveVoiceConnection implements VoiceConnection {
       this.bus.emit("resumeHandle", resumption.newHandle);
     }
 
+    // GoAway / session lifecycle signals (session management skill notes).
+    if (message.goAway) {
+      this.bus.emit("transcript", {
+        role: "status",
+        text: "Live session will close soon (GoAway) — prepare to reconnect.",
+      });
+    }
+
     const toolCall = message.toolCall as
       | { functionCalls?: { id?: string; name?: string; args?: Record<string, unknown> }[] }
       | undefined;
@@ -172,33 +211,49 @@ class GeminiLiveVoiceConnection implements VoiceConnection {
       }
     }
 
+    // A single server event can contain multiple content parts at once —
+    // always process ALL of them (audio + transcripts + interrupt).
     const serverContent = message.serverContent as
       | {
+          interrupted?: boolean;
+          turnComplete?: boolean;
           inputTranscription?: { text?: string };
           outputTranscription?: { text?: string };
-          modelTurn?: { parts?: { inlineData?: { data?: string } }[] };
+          modelTurn?: {
+            parts?: {
+              inlineData?: { data?: string; mimeType?: string };
+              text?: string;
+            }[];
+          };
         }
       | undefined;
 
-    if (serverContent?.inputTranscription?.text) {
+    if (!serverContent) return;
+
+    if (serverContent.interrupted === true) {
+      // Barge-in: stop playback and clear client audio queues.
+      this.bus.emit("interrupted", true);
+    }
+
+    if (serverContent.inputTranscription?.text) {
       this.bus.emit("transcript", {
         role: "user",
         text: serverContent.inputTranscription.text,
       });
     }
-    if (serverContent?.outputTranscription?.text) {
+    if (serverContent.outputTranscription?.text) {
       this.bus.emit("transcript", {
         role: "assistant",
         text: serverContent.outputTranscription.text,
       });
     }
 
-    for (const part of serverContent?.modelTurn?.parts ?? []) {
+    for (const part of serverContent.modelTurn?.parts ?? []) {
       if (part.inlineData?.data) {
         try {
           this.bus.emit("audio", base64ToBytes(part.inlineData.data));
         } catch {
-          // ignore decode errors
+          // ignore decode errors on individual parts
         }
       }
     }

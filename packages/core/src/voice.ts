@@ -115,6 +115,8 @@ export type VoiceConnectionEventMap = {
   toolCall: VoiceToolCall[];
   error: Error;
   resumeHandle: string;
+  /** Model interrupted playback (user barge-in); clients should flush audio queues. */
+  interrupted: true;
 };
 
 export type VoiceConnectionEvent = keyof VoiceConnectionEventMap;
@@ -158,6 +160,7 @@ export function createVoiceEventBus(): VoiceEventBus {
     toolCall: new Set(),
     error: new Set(),
     resumeHandle: new Set(),
+    interrupted: new Set(),
   };
 
   return {

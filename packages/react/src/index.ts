@@ -31,6 +31,16 @@ export {
   type UseVoiceSessionOptions,
   type UseVoiceSessionResult,
 } from "./use-voice-session.js";
+export {
+  attachBrowserVoiceMedia,
+  downsampleMono,
+  floatToPcm16Bytes,
+  GEMINI_LIVE_INPUT_SAMPLE_RATE,
+  GEMINI_LIVE_OUTPUT_SAMPLE_RATE,
+  type AttachBrowserVoiceMediaOptions,
+  type BrowserVoiceMediaHandle,
+} from "./voice/browser-media.js";
+export { DEFAULT_GEMINI_LIVE_MODEL } from "./voice/live-model.js";
 export type {
   AppendEventInput,
   AsyncStatus,

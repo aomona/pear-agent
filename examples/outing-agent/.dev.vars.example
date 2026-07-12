@@ -1,0 +1,3 @@
+# Server-only Gemini API key for Live ephemeral token minting.
+# Optional: without it, Continuation / Plan / Replan still work; Voice token mint fails.
+GEMINI_API_KEY=

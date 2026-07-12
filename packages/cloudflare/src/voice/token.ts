@@ -3,7 +3,11 @@ import type { RuntimeSnapshot, VoiceLease } from "@pear-agent/core";
 import { VoiceTokenUnavailableError } from "../errors.js";
 import { listVoiceToolDeclarations, summarizeSnapshotForVoice } from "./tools.js";
 
-export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
+/**
+ * Recommended Live API model (gemini-live-api-dev skill).
+ * Deprecated: gemini-2.5-flash-native-audio-preview-12-2025
+ */
+export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 
 /** Client-facing mint result — never includes system instructions / tool config. */
 export type VoiceEphemeralTokenResult = {
@@ -24,7 +28,10 @@ export type MintVoiceTokenInput = {
  */
 export type VoiceTokenMinter = (input: MintVoiceTokenInput) => Promise<VoiceEphemeralTokenResult>;
 
-/** Server-only Live config locked into the ephemeral token (not returned to clients). */
+/**
+ * Server-only Live config locked into the ephemeral token (not returned to clients).
+ * Aligns with gemini-live-api-dev + ephemeral token constraints.
+ */
 export function buildVoiceLiveConfig(input: {
   snapshot: RuntimeSnapshot;
   lease: VoiceLease;
@@ -54,7 +61,22 @@ export function buildVoiceLiveConfig(input: {
   }
 
   return {
+    // Live sessions are AUDIO XOR TEXT — native audio uses AUDIO only.
     responseModalities: ["AUDIO"],
+    // Bidirectional transcription for UI + quality (Live guide).
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
+    speechConfig: {
+      voiceConfig: {
+        prebuiltVoiceConfig: { voiceName: "Kore" },
+      },
+    },
+    // Gemini 3.1 Live: thinkingLevel (not thinkingBudget). minimal = lowest latency.
+    thinkingConfig: {
+      thinkingLevel: "minimal",
+    },
+    // Automatic VAD is on by default; keep defaults for natural barge-in.
+    // Client must send audioStreamEnd when the mic is paused (mute).
     sessionResumption,
     systemInstruction: {
       parts: [{ text: systemInstruction }],
@@ -84,7 +106,8 @@ export const stubVoiceTokenMinter: VoiceTokenMinter = async (input) => {
 
 /**
  * Create a minter that calls `@google/genai` authTokens.create when available.
- * Live config is locked into the token server-side and not returned to clients.
+ * Live config is locked into the token server-side and not returned to clients
+ * (ephemeral token best practice — never ship systemInstruction/tools to browser).
  */
 export function createGoogleGenaiTokenMinter(): VoiceTokenMinter {
   return async (input) => {

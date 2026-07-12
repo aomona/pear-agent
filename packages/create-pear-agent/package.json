@@ -1,0 +1,19 @@
+{
+  "name": "create-pear-agent",
+  "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "create-pear-agent": "./bin/create-pear-agent.mjs"
+  },
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "test": "vitest run --config ../../vitest.config.ts src"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

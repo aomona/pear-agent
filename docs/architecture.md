@@ -19,6 +19,8 @@ Cloudflare Adapter / AI Provider Adapter
 - `@pear-agent/react`
 - `create-pear-agent`
 
+cook-agent 相当の計画体験に向けた **Core 拡張候補**（Step 表示、timeline、scheduler、Planner Port など）は [core-extensions-for-cook-parity.md](./core-extensions-for-cook-parity.md) を参照。
+
 ## Cloudflareの責務
 
 - **Workers**：HTTP API、認証、Tool Call、AI SDK呼び出し、D1アクセス

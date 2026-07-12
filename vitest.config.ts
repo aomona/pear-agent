@@ -8,7 +8,11 @@ import { defineConfig } from "vitest/config";
  */
 export default defineConfig({
   test: {
-    include: ["packages/*/src/**/*.test.ts", "examples/**/src/**/*.test.ts"],
+    include: [
+      "packages/*/src/**/*.test.ts",
+      "examples/**/src/**/*.test.ts",
+      "examples/**/tests/**/*.test.ts",
+    ],
     exclude: [
       "**/node_modules/**",
       "**/.worktrees/**",

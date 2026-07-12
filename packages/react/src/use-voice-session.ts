@@ -12,6 +12,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { usePearContext } from "./provider.js";
+import { attachBrowserVoiceMedia, type BrowserVoiceMediaHandle } from "./voice/browser-media.js";
 import { GeminiLiveVoiceProvider } from "./voice/gemini-live-provider.js";
 
 export type UseVoiceSessionOptions = {
@@ -20,6 +21,16 @@ export type UseVoiceSessionOptions = {
    * Default: {@link GeminiLiveVoiceProvider}.
    */
   provider?: VoiceProvider;
+  /**
+   * Capture microphone + play model audio in the browser after connect.
+   * Default: true when `navigator.mediaDevices` exists (skipped in unit tests).
+   */
+  enableBrowserMedia?: boolean;
+  /**
+   * Optional text turn after media is ready (forces a model response).
+   * Default: omitted — pure mic audio is lower latency for Live conversations.
+   */
+  openingText?: string | null;
 };
 
 export type UseVoiceSessionResult = {
@@ -70,6 +81,11 @@ export function useVoiceSession(
   const clientRef = useRef(client);
   clientRef.current = client;
 
+  const enableBrowserMediaRef = useRef(options.enableBrowserMedia);
+  enableBrowserMediaRef.current = options.enableBrowserMedia;
+  const openingTextRef = useRef(options.openingText);
+  openingTextRef.current = options.openingText;
+
   /** Prop-facing session id (for connect / refetch). */
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
@@ -93,10 +109,16 @@ export function useVoiceSession(
   const [connection, setConnection] = useState<VoiceConnection | null>(null);
 
   const connectionRef = useRef<VoiceConnection | null>(null);
+  const mediaRef = useRef<BrowserVoiceMediaHandle | null>(null);
   const unsubscribersRef = useRef<Array<() => void>>([]);
   const toolQueueRef = useRef(Promise.resolve());
   const disconnectingRef = useRef(false);
   const connectingRef = useRef(false);
+
+  const stopBrowserMedia = useCallback(() => {
+    mediaRef.current?.stop();
+    mediaRef.current = null;
+  }, []);
 
   const isCurrent = useCallback((epoch: number) => epochRef.current === epoch, []);
 
@@ -214,6 +236,7 @@ export function useVoiceSession(
     // Always release the session that holds the connection, not the latest prop.
     const sid = boundSessionIdRef.current;
     try {
+      stopBrowserMedia();
       clearSubscriptions();
       const conn = connectionRef.current;
       connectionRef.current = null;
@@ -246,7 +269,7 @@ export function useVoiceSession(
     } finally {
       disconnectingRef.current = false;
     }
-  }, [appendTranscript, clearSubscriptions, isCurrent]);
+  }, [appendTranscript, clearSubscriptions, isCurrent, stopBrowserMedia]);
 
   const connect = useCallback(
     async (input: { continuationId?: string } = {}) => {
@@ -343,8 +366,57 @@ export function useVoiceSession(
           }
         }
         bindConnection(sid, conn, epoch);
+
+        const enableMedia =
+          enableBrowserMediaRef.current ??
+          (typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia));
+        if (enableMedia) {
+          try {
+            stopBrowserMedia();
+            mediaRef.current = await attachBrowserVoiceMedia(conn, {
+              onError: (mediaError) => {
+                if (!isCurrent(epoch)) return;
+                setError(mediaError);
+              },
+            });
+            if (!isCurrent(epoch)) {
+              stopBrowserMedia();
+              await conn.disconnect();
+              throw new Error("Voice connection superseded");
+            }
+            appendTranscript({
+              role: "status",
+              text: "Microphone on — speak to the assistant.",
+            });
+          } catch (mediaCaught) {
+            // Connection can stay up for tool/text, but conversation needs mic.
+            const mediaError =
+              mediaCaught instanceof Error ? mediaCaught : new Error(String(mediaCaught));
+            if (isCurrent(epoch)) {
+              setError(
+                new Error(
+                  `Voice linked but microphone failed: ${mediaError.message}. Allow mic permission and reconnect.`,
+                ),
+              );
+            }
+          }
+        }
+
+        // Optional text kickstart only when host sets openingText (null/undefined = skip).
+        // Default skip: a full text turn adds first-response latency; pure audio is lower lag.
+        const opening = openingTextRef.current;
+        if (opening && conn.sendText) {
+          try {
+            conn.sendText(opening);
+            appendTranscript({ role: "user", text: opening });
+          } catch {
+            // optional kickstart
+          }
+        }
+
         appendTranscript({ role: "status", text: "Voice connected." });
       } catch (caught) {
+        stopBrowserMedia();
         const next = caught instanceof Error ? caught : new Error(String(caught));
         if (claimedContinuationId) {
           try {
@@ -383,7 +455,7 @@ export function useVoiceSession(
         }
       }
     },
-    [appendTranscript, bindConnection, disconnect, isCurrent],
+    [appendTranscript, bindConnection, disconnect, isCurrent, stopBrowserMedia],
   );
 
   const refetchLease = useCallback(async () => {
