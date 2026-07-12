@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer } from "react";
 import type { RuntimeSnapshot } from "@pear-agent/core";
 
 import { usePearContext } from "./provider.js";
@@ -27,7 +27,12 @@ export type UseRuntimeSnapshotResult = {
   clearError: () => void;
 };
 
-const IDLE_SNAPSHOT: SessionChannelSnapshot = {
+type SnapshotView = {
+  channel: SessionChannelSnapshot;
+  errorCleared: boolean;
+};
+
+const IDLE_CHANNEL: SessionChannelSnapshot = {
   snapshot: null,
   continuation: null,
   revision: 0,
@@ -35,6 +40,45 @@ const IDLE_SNAPSHOT: SessionChannelSnapshot = {
   status: "idle",
   error: null,
 };
+
+const IDLE_VIEW: SnapshotView = {
+  channel: IDLE_CHANNEL,
+  errorCleared: false,
+};
+
+type SnapshotAction =
+  | { type: "idle" }
+  | { type: "loading" }
+  | { type: "channel"; channel: SessionChannelSnapshot; clearError?: boolean }
+  | { type: "clear-error" };
+
+function snapshotReducer(state: SnapshotView, action: SnapshotAction): SnapshotView {
+  switch (action.type) {
+    case "idle":
+      return IDLE_VIEW;
+    case "loading":
+      return {
+        errorCleared: false,
+        channel: {
+          snapshot: null,
+          continuation: null,
+          revision: 0,
+          lastEventId: null,
+          status: "loading",
+          error: null,
+        },
+      };
+    case "channel":
+      return {
+        errorCleared: action.clearError === true ? false : state.errorCleared,
+        channel: action.channel,
+      };
+    case "clear-error":
+      return { ...state, errorCleared: true };
+    default:
+      return state;
+  }
+}
 
 /**
  * Subscribe to a session's Runtime Snapshot.
@@ -73,33 +117,22 @@ export function useRuntimeSnapshot(
     ],
   );
 
-  const [state, setState] = useState<SessionChannelSnapshot>(IDLE_SNAPSHOT);
-  const [errorCleared, setErrorCleared] = useState(false);
+  const [view, dispatch] = useReducer(snapshotReducer, IDLE_VIEW);
 
   useEffect(() => {
-    setErrorCleared(false);
-
     if (!sessionId) {
-      setState(IDLE_SNAPSHOT);
+      dispatch({ type: "idle" });
       return;
     }
 
-    // Reset local view immediately so session switches do not keep prior revision/snapshot.
-    setState({
-      snapshot: null,
-      continuation: null,
-      revision: 0,
-      lastEventId: null,
-      status: "loading",
-      error: null,
-    });
+    // One reducer action for reset + one for first channel snapshot (not N setStates).
+    dispatch({ type: "loading" });
 
     const { channel, release } = acquireSessionChannel(sessionId, pear.client, channelOptions);
-    setState(channel.getSnapshot());
+    dispatch({ type: "channel", channel: channel.getSnapshot(), clearError: true });
 
     const unsubscribe = channel.subscribe(() => {
-      setErrorCleared(false);
-      setState(channel.getSnapshot());
+      dispatch({ type: "channel", channel: channel.getSnapshot(), clearError: true });
     });
 
     return () => {
@@ -110,24 +143,23 @@ export function useRuntimeSnapshot(
 
   const refetch = useCallback(async () => {
     if (!sessionId) return;
-    setErrorCleared(false);
     const { channel, release } = acquireSessionChannel(sessionId, pear.client, channelOptions);
     try {
       await channel.refetch();
-      setState(channel.getSnapshot());
+      dispatch({ type: "channel", channel: channel.getSnapshot(), clearError: true });
     } finally {
       release();
     }
   }, [sessionId, pear.client, channelOptions]);
 
   return {
-    snapshot: state.snapshot,
-    continuation: state.continuation,
-    revision: state.revision,
-    lastEventId: state.lastEventId,
-    status: sessionId ? state.status : "idle",
-    error: errorCleared ? null : state.error,
+    snapshot: view.channel.snapshot,
+    continuation: view.channel.continuation,
+    revision: view.channel.revision,
+    lastEventId: view.channel.lastEventId,
+    status: sessionId ? view.channel.status : "idle",
+    error: view.errorCleared ? null : view.channel.error,
     refetch,
-    clearError: () => setErrorCleared(true),
+    clearError: () => dispatch({ type: "clear-error" }),
   };
 }

@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { usePearContext } from "./provider.js";
 import { attachBrowserVoiceMedia, type BrowserVoiceMediaHandle } from "./voice/browser-media.js";
 import { GeminiLiveVoiceProvider } from "./voice/gemini-live-provider.js";
+import { attachVoiceConnectionListeners } from "./voice/attach-connection-listeners.js";
 import { createResumeHandleSync, type ResumeHandleSync } from "./voice/resume-handle-sync.js";
 
 /**
@@ -111,19 +112,48 @@ export function useVoiceSession(
    */
   const epochRef = useRef(0);
 
-  const [status, setStatus] = useState<VoiceSessionStatus | "idle">("idle");
-  const [lease, setLease] = useState<VoiceLease | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-  const [transcript, setTranscript] = useState<VoiceTranscriptEntry[]>([]);
-  const [connection, setConnection] = useState<VoiceConnection | null>(null);
+  /** One state blob so session-reset is a single setState (no cascading setState). */
+  type VoiceView = {
+    status: VoiceSessionStatus | "idle";
+    lease: VoiceLease | null;
+    error: Error | null;
+    transcript: VoiceTranscriptEntry[];
+    connection: VoiceConnection | null;
+  };
+  const [view, setView] = useState<VoiceView>({
+    status: "idle",
+    lease: null,
+    error: null,
+    transcript: [],
+    connection: null,
+  });
+  const { status, lease, error, transcript, connection } = view;
+  const setStatus = useCallback(
+    (status: VoiceSessionStatus | "idle") => setView((v) => ({ ...v, status })),
+    [],
+  );
+  const setLease = useCallback((lease: VoiceLease | null) => setView((v) => ({ ...v, lease })), []);
+  const setError = useCallback((error: Error | null) => setView((v) => ({ ...v, error })), []);
+  const setConnection = useCallback(
+    (connection: VoiceConnection | null) => setView((v) => ({ ...v, connection })),
+    [],
+  );
+  const appendTranscriptEntry = useCallback((entry: VoiceTranscriptEntry) => {
+    setView((v) => ({
+      ...v,
+      transcript: [...v.transcript, entry].slice(-40),
+    }));
+  }, []);
 
   const connectionRef = useRef<VoiceConnection | null>(null);
   const mediaRef = useRef<BrowserVoiceMediaHandle | null>(null);
   const unsubscribersRef = useRef<Array<() => void>>([]);
-  const toolQueueRef = useRef(Promise.resolve());
+  /** Serializes tool-call batches. Initialized on first use (not during render). */
+  const toolQueueRef = useRef<Promise<void> | undefined>(undefined);
   const disconnectingRef = useRef(false);
   const connectingRef = useRef(false);
   const resumeSyncRef = useRef<ResumeHandleSync | null>(null);
+  const bindMetaRef = useRef<{ sid: string; epoch: number } | null>(null);
 
   const stopBrowserMedia = useCallback(() => {
     mediaRef.current?.stop();
@@ -145,10 +175,10 @@ export function useVoiceSession(
         },
         onOptimistic: (handle) => {
           if (!isCurrent(epoch)) return;
-          setLease((prev) =>
-            prev && prev.providerResumeHandle !== handle
-              ? { ...prev, providerResumeHandle: handle }
-              : prev,
+          setView((v) =>
+            v.lease && v.lease.providerResumeHandle !== handle
+              ? { ...v, lease: { ...v.lease, providerResumeHandle: handle } }
+              : v,
           );
         },
         isCurrent: () => isCurrent(epoch) && boundSessionIdRef.current === sid,
@@ -166,53 +196,45 @@ export function useVoiceSession(
     unsubscribersRef.current = [];
   }, []);
 
-  const appendTranscript = useCallback((entry: VoiceTranscriptEntry) => {
-    setTranscript((prev) => [...prev, entry].slice(-40));
-  }, []);
+  const appendTranscript = appendTranscriptEntry;
 
   const handleToolCalls = useCallback(
     async (sid: string, conn: VoiceConnection, calls: VoiceToolCall[], epoch: number) => {
-      const responses: {
-        id: string;
-        name: string;
-        response: Record<string, unknown>;
-      }[] = [];
-
-      for (const call of calls) {
-        if (!isCurrent(epoch)) return;
-        appendTranscript({ role: "tool", text: `tool: ${call.name}` });
-        try {
-          const result = await clientRef.current.executeVoiceTool(sid, {
-            toolName: call.name,
-            args: call.args,
-            callId: call.id,
-          });
-          if (result.ok) {
-            responses.push({
-              id: call.id,
-              name: call.name,
-              response: { result: result.result ?? null },
+      if (!isCurrent(epoch)) return;
+      const responses = await Promise.all(
+        calls.map(async (call) => {
+          appendTranscript({ role: "tool", text: `tool: ${call.name}` });
+          try {
+            const result = await clientRef.current.executeVoiceTool(sid, {
+              toolName: call.name,
+              args: call.args,
+              callId: call.id,
             });
-          } else {
-            responses.push({
+            if (result.ok) {
+              return {
+                id: call.id,
+                name: call.name,
+                response: { result: result.result ?? null },
+              };
+            }
+            return {
               id: call.id,
               name: call.name,
               response: {
-                error: true,
+                error: true as const,
                 message: result.message ?? `Tool failed: ${call.name}`,
               },
-            });
+            };
+          } catch (caught) {
+            const message = caught instanceof Error ? caught.message : String(caught);
+            return {
+              id: call.id,
+              name: call.name,
+              response: { error: true as const, message },
+            };
           }
-        } catch (caught) {
-          const message = caught instanceof Error ? caught.message : String(caught);
-          responses.push({
-            id: call.id,
-            name: call.name,
-            response: { error: true, message },
-          });
-        }
-      }
-
+        }),
+      );
       if (!isCurrent(epoch)) return;
       conn.sendToolResponse(responses);
     },
@@ -224,41 +246,54 @@ export function useVoiceSession(
       clearSubscriptions();
       connectionRef.current = conn;
       boundSessionIdRef.current = sid;
+      bindMetaRef.current = { sid, epoch };
       if (!isCurrent(epoch)) return;
-      setConnection(conn);
-      setStatus(conn.status);
-
-      unsubscribersRef.current.push(
-        conn.on("status", (next) => {
-          if (!isCurrent(epoch)) return;
-          setStatus(next);
-        }),
-        conn.on("error", (err) => {
-          if (!isCurrent(epoch)) return;
-          setError(err);
-          setStatus("error");
-        }),
-        conn.on("transcript", (entry) => {
-          if (!isCurrent(epoch)) return;
-          appendTranscript(entry);
-        }),
-        conn.on("resumeHandle", (handle) => {
-          resumeSyncRef.current?.schedule(handle);
-        }),
-        conn.on("toolCall", (calls) => {
-          toolQueueRef.current = toolQueueRef.current
-            .catch(() => undefined)
-            .then(() => handleToolCalls(sid, conn, calls, epoch))
-            .catch((caught) => {
-              if (!isCurrent(epoch)) return;
-              const next = caught instanceof Error ? caught : new Error(String(caught));
-              setError(next);
-            });
-        }),
-      );
+      setView((v) => ({ ...v, connection: conn, status: conn.status }));
     },
-    [appendTranscript, clearSubscriptions, handleToolCalls, isCurrent],
+    [clearSubscriptions, isCurrent],
   );
+
+  // Lifecycle-owned subscriptions (cleanup on connection change / unmount).
+  // Registration lives in attachVoiceConnectionListeners so the effect returns a clear unsub.
+  useEffect(() => {
+    const conn = connection;
+    const meta = bindMetaRef.current;
+    if (!conn || !meta) {
+      return;
+    }
+    const { sid, epoch } = meta;
+
+    const unsubscribe = attachVoiceConnectionListeners(conn, {
+      onStatus: (next) => {
+        if (!isCurrent(epoch)) return;
+        setStatus(next);
+      },
+      onError: (err) => {
+        if (!isCurrent(epoch)) return;
+        setView((v) => ({ ...v, error: err, status: "error" }));
+      },
+      onTranscript: (entry) => {
+        if (!isCurrent(epoch)) return;
+        appendTranscript(entry);
+      },
+      onResumeHandle: (handle) => {
+        resumeSyncRef.current?.schedule(handle);
+      },
+      onToolCall: (calls) => {
+        const queue = toolQueueRef.current ?? Promise.resolve();
+        toolQueueRef.current = queue
+          .catch(() => undefined)
+          .then(() => handleToolCalls(sid, conn, calls, epoch))
+          .catch((caught) => {
+            if (!isCurrent(epoch)) return;
+            const next = caught instanceof Error ? caught : new Error(String(caught));
+            setError(next);
+          });
+      },
+    });
+    unsubscribersRef.current = [unsubscribe];
+    return unsubscribe;
+  }, [connection, appendTranscript, handleToolCalls, isCurrent, setStatus, setError]);
 
   const disconnect = useCallback(async () => {
     if (disconnectingRef.current) return;
@@ -300,13 +335,20 @@ export function useVoiceSession(
       boundSessionIdRef.current = null;
       connectingRef.current = false;
       if (isCurrent(epoch)) {
-        setStatus("disconnected");
-        appendTranscript({ role: "status", text: "Voice disconnected (session continues)." });
+        setView((v) => ({
+          ...v,
+          status: "disconnected",
+          connection: null,
+          transcript: [
+            ...v.transcript,
+            { role: "status" as const, text: "Voice disconnected (session continues)." },
+          ].slice(-40),
+        }));
       }
     } finally {
       disconnectingRef.current = false;
     }
-  }, [appendTranscript, clearSubscriptions, isCurrent, stopBrowserMedia]);
+  }, [clearSubscriptions, isCurrent, stopBrowserMedia]);
 
   const connect = useCallback(
     async (input: { continuationId?: string } = {}) => {
@@ -331,9 +373,15 @@ export function useVoiceSession(
       connectingRef.current = true;
 
       if (isCurrent(epoch)) {
-        setError(null);
-        setStatus("connecting");
-        appendTranscript({ role: "status", text: "Connecting voice…" });
+        setView((v) => ({
+          ...v,
+          error: null,
+          status: "connecting",
+          transcript: [
+            ...v.transcript,
+            { role: "status" as const, text: "Connecting voice…" },
+          ].slice(-40),
+        }));
       }
 
       let claimedContinuationId: string | null = null;
@@ -480,9 +528,12 @@ export function useVoiceSession(
           }
         }
         if (isCurrent(epoch)) {
-          setError(next);
-          setStatus("error");
-          setLease(null);
+          setView((v) => ({
+            ...v,
+            error: next,
+            status: "error",
+            lease: null,
+          }));
         }
         throw next;
       } finally {
@@ -540,10 +591,13 @@ export function useVoiceSession(
   useEffect(() => {
     epochRef.current += 1;
     connectingRef.current = false;
-    setStatus("idle");
-    setLease(null);
-    setError(null);
-    setTranscript([]);
+    setView({
+      status: "idle",
+      lease: null,
+      error: null,
+      transcript: [],
+      connection: null,
+    });
 
     return () => {
       epochRef.current += 1;
