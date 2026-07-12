@@ -129,11 +129,12 @@ export const outingDomain = defineDomain({
       ...(ctx?.context !== undefined ? { context: ctx.context } : {}),
     };
 
+    // Free text always goes through freeTextResolver (Gemini on the host).
+    // No deterministic free-text parse in Domain — structured values still use `parse` only.
     const departureAt = await resolveMaybeFreeTextField({
       ...fieldOpts,
       field: "departureAt",
       value: input.departureAt,
-      parseDeterministic: parseOutingDepartureFreeText,
       parse: (value): string => z.iso.datetime().parse(value),
       hint: "ISO-8601 datetime string",
     });
@@ -142,7 +143,6 @@ export const outingDomain = defineDomain({
       ...fieldOpts,
       field: "belongings",
       value: input.belongings,
-      parseDeterministic: parseOutingBelongingsFreeText,
       parse: (value): OutingBelongingInput[] => belongingInputSchema.array().min(1).parse(value),
       hint: "Array of { id, name, chargePercent? }",
     });

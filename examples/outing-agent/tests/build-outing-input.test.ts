@@ -7,42 +7,18 @@ import {
   defaultDepartureLocal,
   resolveBelongingModalDraftLocal,
   slugFromName,
-  structureBelongingFreeText,
 } from "../web/src/lib/build-outing-input.js";
 
-describe("structureBelongingFreeText", () => {
-  it("parses a single free-text item", () => {
-    expect(structureBelongingFreeText("Phone 30")).toEqual([
-      { id: "phone", name: "Phone", chargePercent: 30 },
-    ]);
-  });
-});
-
 describe("resolveBelongingModalDraftLocal", () => {
-  it("structures free text locally when deterministic", () => {
-    const result = resolveBelongingModalDraftLocal({
-      freeText: "phone:Phone:20",
-      name: "",
-      id: "",
-      chargePercent: "",
-    });
-    expect(result.kind).toBe("structured");
-    if (result.kind === "structured") {
-      expect(result.rows[0]).toMatchObject({ id: "phone", name: "Phone", chargePercent: "20" });
-    }
-  });
-
-  it("defers ambiguous free text to server (structure on Add only)", () => {
-    const result = resolveBelongingModalDraftLocal({
-      freeText: "whatever i usually take when leaving home in the morning",
-      name: "",
-      id: "",
-      chargePercent: "",
-    });
-    expect(result).toEqual({
-      kind: "needs_server",
-      freeText: "whatever i usually take when leaving home in the morning",
-    });
+  it("routes free text to Gemini (no local deterministic structure)", () => {
+    expect(
+      resolveBelongingModalDraftLocal({
+        freeText: "phone:Phone:20",
+        name: "",
+        id: "",
+        chargePercent: "",
+      }),
+    ).toEqual({ kind: "needs_gemini", freeText: "phone:Phone:20" });
   });
 
   it("uses structured fields when free text empty", () => {
@@ -85,7 +61,7 @@ describe("buildOutingInputFromForm", () => {
     ]);
   });
 
-  it("uses free-text departure envelope", () => {
+  it("uses free-text departure envelope (Gemini at normalize)", () => {
     const input = buildOutingInputFromForm({
       departureMode: "freeText",
       departureLocal: defaultDepartureLocal(),

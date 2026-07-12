@@ -5,11 +5,7 @@ import {
   resolvePearContextFromHeader,
 } from "@pear-agent/cloudflare";
 import { resolveMaybeFreeTextField } from "@pear-agent/core";
-import {
-  outingDomain,
-  parseOutingBelongingsFreeText,
-  parseOutingDepartureFreeText,
-} from "@pear-agent/outing-domain-example";
+import { outingDomain } from "@pear-agent/outing-domain-example";
 import { z } from "zod";
 
 import { authorize } from "./authorize.js";
@@ -42,7 +38,7 @@ const worker = createPearWorker({
         context,
       });
     },
-    /** Single-field structure for modal "Add" (deterministic → Gemini). */
+    /** Single-field structure for modal "Add" — always Gemini (no deterministic free-text). */
     resolveDomainFreeTextField: async ({
       domainId,
       field,
@@ -53,13 +49,20 @@ const worker = createPearWorker({
       if (domainId !== outingDomain.id) {
         throw new Error(`Unknown domain: ${domainId}`);
       }
+      if (!freeTextResolver) {
+        throw Object.assign(
+          new Error(
+            "GEMINI_API_KEY is not configured (required for free-text structure via Gemini)",
+          ),
+          { status: 503 as const },
+        );
+      }
       if (field === "departureAt") {
         return resolveMaybeFreeTextField({
           domainId,
           field,
           value: { freeText },
-          ...(freeTextResolver !== undefined ? { freeTextResolver } : {}),
-          parseDeterministic: parseOutingDepartureFreeText,
+          freeTextResolver,
           parse: (value): string => z.iso.datetime().parse(value),
           hint: "ISO-8601 datetime string",
           context,
@@ -70,8 +73,7 @@ const worker = createPearWorker({
           domainId,
           field,
           value: { freeText },
-          ...(freeTextResolver !== undefined ? { freeTextResolver } : {}),
-          parseDeterministic: parseOutingBelongingsFreeText,
+          freeTextResolver,
           parse: (value) =>
             z
               .array(

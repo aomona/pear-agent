@@ -28,7 +28,7 @@ const emptyDraft = () => ({
 
 /**
  * Add one belonging at a time.
- * Free text is kept raw until the user presses 「構造化して追加」— no structure on type/blur.
+ * Free text is structured only when pressing 「構造化して追加」, always via Gemini (not deterministic parse).
  */
 export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelongingModalProps) {
   const { client } = usePearContext();
@@ -61,7 +61,7 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
     setError(null);
     setBusy(true);
     try {
-      // Structure only here (button press), never while typing.
+      // Structure only on this button press — never while typing.
       const local = resolveBelongingModalDraftLocal(draft);
       if (local.kind === "structured") {
         onAdd(local.rows);
@@ -69,7 +69,7 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
         return;
       }
 
-      // Ambiguous free text → Worker (deterministic again + Gemini freeTextResolver).
+      // Free text → always Gemini (local.kind === "needs_gemini").
       const resolved = await client.resolvePlanField(planId, {
         field: "belongings",
         freeText: local.freeText,
@@ -106,28 +106,28 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
         </h2>
         <p className="mt-1 text-xs text-muted-foreground">
           入力中は構造化しません。<strong>「構造化して追加」</strong>
-          を押したタイミングで構造化して一覧に出します。
+          で Gemini が構造化して一覧に出します（決定論パースは使いません）。
         </p>
 
         <form className="mt-4 space-y-4" onSubmit={(e) => void handleSubmit(e)}>
           <div className="space-y-1.5">
-            <Label htmlFor="belonging-free">自由文</Label>
+            <Label htmlFor="belonging-free">自由文（Gemini）</Label>
             <Input
               id="belonging-free"
               autoFocus
               disabled={busy}
-              placeholder="例: Phone 30 / 財布 / スマホ残量3割"
+              placeholder="例: スマホ残量3割と財布"
               value={draft.freeText}
               onChange={(e) => setDraft((d) => ({ ...d, freeText: e.target.value }))}
             />
             <p className="text-xs text-muted-foreground">
-              追加ボタンで決定論パース → だめなら Gemini。単純な文はキー不要です。
+              GEMINI_API_KEY 必須。自由文は常に Gemini で構造化します。
             </p>
           </div>
 
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Separator className="flex-1" />
-            <span>または直接入力（追加時にそのまま採用）</span>
+            <span>または直接入力（Gemini なし）</span>
             <Separator className="flex-1" />
           </div>
 
@@ -187,7 +187,7 @@ export function AddBelongingModal({ open, planId, onClose, onAdd }: AddBelonging
               キャンセル
             </Button>
             <Button type="submit" disabled={busy}>
-              {busy ? "構造化中…" : "構造化して追加"}
+              {busy ? "Gemini で構造化中…" : "構造化して追加"}
             </Button>
           </div>
         </form>

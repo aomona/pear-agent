@@ -40,22 +40,16 @@ describe("outingDomain", () => {
     });
   });
 
-  it("normalizes per-field free text with deterministic parsers", async () => {
+  it("requires freeTextResolver for free-text fields (no deterministic free-text path)", async () => {
     await expect(
       outingDomain.normalizeInput({
         departureAt: { freeText: "2026-07-11T03:00:00.000Z" },
-        belongings: { freeText: "phone:Phone:80\nkeys:Keys" },
+        belongings: { freeText: "phone:Phone:80" },
       }),
-    ).resolves.toEqual({
-      departureAt: "2026-07-11T03:00:00.000Z",
-      belongings: [
-        { id: "phone", name: "Phone", chargePercent: 80 },
-        { id: "keys", name: "Keys", chargePercent: null },
-      ],
-    });
+    ).rejects.toThrow(/no freeTextResolver/);
   });
 
-  it("uses freeTextResolver when free text is not deterministically parseable", async () => {
+  it("uses freeTextResolver for all free-text fields", async () => {
     await expect(
       outingDomain.normalizeInput(
         {

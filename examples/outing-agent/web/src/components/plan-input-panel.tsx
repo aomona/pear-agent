@@ -134,7 +134,7 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
               <div>
                 <h3 className="text-sm font-semibold">持ち物</h3>
                 <p className="text-xs text-muted-foreground">
-                  追加 → モーダルで入力 →「構造化して追加」の瞬間だけ構造化
+                  追加 → モーダル →「構造化して追加」で Gemini 構造化（決定論なし）
                 </p>
               </div>
               <Button type="button" size="sm" onClick={() => setAddOpen(true)}>

@@ -84,8 +84,9 @@ Session と独立した Plan を D1 に保存できます（migration `0005_plan
 | ready 化                            | `PATCH /plans/:id` `{ "status": "ready" }`                     |
 | 実行開始                            | `POST /sessions` `{ planArtifactId, domainId, actorIds, ... }` |
 
-- 構造化入力や `id:name` 形式の自由文は **LLM なし**で通る
-- 「明日の朝、鍵とスマホ30%」のような自然文は **`GEMINI_API_KEY` 必須**（未設定時 503）
+- 自由文の構造化は **常に Gemini**（決定論 free-text パースは使わない）。`GEMINI_API_KEY` 必須（未設定時 503）
+- 持ち物はモーダルの「構造化して追加」押下時のみ Gemini 呼び出し
+- 直接入力（名前 / id / 充電%）は Gemini なし
 - Web UI: **一覧 → 入力 → 計画 → 実行** の 4 フェーズ（localStorage で plan/session を保持）
 
 ## デプロイ

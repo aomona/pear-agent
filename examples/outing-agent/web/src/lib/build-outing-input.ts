@@ -1,8 +1,4 @@
-import {
-  parseOutingBelongingsFreeText,
-  type OutingBelongingInput,
-  type OutingInput,
-} from "@pear-agent/outing-domain-example";
+import type { OutingBelongingInput, OutingInput } from "@pear-agent/outing-domain-example";
 import { z } from "zod";
 
 /** One belongings row already structured in the list. */
@@ -67,14 +63,6 @@ export function slugFromName(name: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-/**
- * Structure free text entered in the add-item modal into one or more belongings.
- * Uses Domain deterministic parser; returns null when LLM would be needed.
- */
-export function structureBelongingFreeText(freeText: string): OutingBelongingInput[] | null {
-  return parseOutingBelongingsFreeText(freeText);
-}
-
 export type AddBelongingModalDraft = {
   freeText: string;
   name: string;
@@ -83,25 +71,19 @@ export type AddBelongingModalDraft = {
 };
 
 export type BelongingModalLocalResult =
-  | { kind: "structured"; rows: BelongingFormRow[] }
-  /** Free text needs server (LLM) — only resolve when user presses Add. */
-  | { kind: "needs_server"; freeText: string };
+  /** Free text always structured via Gemini on the Worker (never client deterministic). */
+  { kind: "needs_gemini"; freeText: string } | { kind: "structured"; rows: BelongingFormRow[] };
 
 /**
- * Local-only resolve at modal Add time (no network).
- * Free text that cannot be parsed deterministically returns `needs_server`.
- * Does not structure while the user is typing — call only on submit.
+ * Classify modal draft at Add time (no free-text parsing here).
+ * Free text → always Gemini on the server. Direct fields → structured rows.
  */
 export function resolveBelongingModalDraftLocal(
   draft: AddBelongingModalDraft,
 ): BelongingModalLocalResult {
   const free = draft.freeText.trim();
   if (free) {
-    const parsed = structureBelongingFreeText(free);
-    if (parsed && parsed.length > 0) {
-      return { kind: "structured", rows: parsed.map(belongingInputToRow) };
-    }
-    return { kind: "needs_server", freeText: free };
+    return { kind: "needs_gemini", freeText: free };
   }
 
   const name = draft.name.trim();
