@@ -1,4 +1,4 @@
-import { executionGoalSchema, worldStateSchema } from "@pear-agent/core";
+import { assertPlanMatchesGoal, executionGoalSchema, worldStateSchema } from "@pear-agent/core";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -189,6 +189,9 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     let normalizedInput: unknown;
 
     if (raw.planArtifactId) {
+      // Same surface as GET /plans/:planId — session.create alone must not bypass artifact ACL.
+      await options.authorize({ type: "plan.read", planId: raw.planArtifactId }, context);
+
       const artifact = await new D1PlanRepository(c.env.DB).getStored(raw.planArtifactId);
       if (!artifact) throw new PlanArtifactNotFoundError(raw.planArtifactId);
       if (artifact.domainId !== raw.domainId) {
@@ -223,9 +226,10 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
         normalizedInput,
         context,
       });
-      if (plan.goal.id !== goal.id) {
+      const match = assertPlanMatchesGoal(plan, goal);
+      if (!match.ok) {
         throw new HTTPException(400, {
-          message: "Planner goal id must match the requested goal id",
+          message: `Planner goal must match the requested goal (${match.reason})`,
         });
       }
     }

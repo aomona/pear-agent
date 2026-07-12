@@ -1,9 +1,4 @@
-import {
-  computeCriticalPathIds,
-  estimateCriticalPathDurationSeconds,
-  topologicalOrder,
-  validatePlanGraph,
-} from "./plan-graph.js";
+import { computeCriticalPathIds, topologicalOrder, validatePlanGraph } from "./plan-graph.js";
 import {
   effectiveResourceRequirements,
   type ExecutionPlan,
@@ -34,6 +29,7 @@ export type SchedulePlanResult<TStepData = unknown> = {
   plan: ExecutionPlan<TStepData>;
   conflicts: ScheduleConflict[];
   criticalPath: string[];
+  /** Makespan of the leveled schedule (max step end), not dep-only critical path. */
   totalDurationSeconds: number;
 };
 
@@ -81,11 +77,22 @@ export function schedulePlan<TStepData>(
     const reqs = effectiveResourceRequirements(step);
 
     if (resolveCapacity && reqs.length > 0) {
+      assertFeasibleRequirements(step.id, reqs, capacityById);
       start = findEarliestStart(start, duration, reqs, capacityById, usage);
     } else if (!resolveCapacity) {
       for (const req of reqs) {
         const cap = capacityById.get(req.resourceId);
         if (cap === undefined) continue;
+        if (req.quantity > cap) {
+          conflicts.push({
+            stepId,
+            resourceId: req.resourceId,
+            atOffsetSeconds: start,
+            needed: req.quantity,
+            available: cap,
+          });
+          continue;
+        }
         const peak = peakUsage(usage.get(req.resourceId) ?? [], start, start + duration);
         if (peak + req.quantity > cap) {
           conflicts.push({
@@ -122,12 +129,34 @@ export function schedulePlan<TStepData>(
     steps: scheduledSteps,
   };
 
+  let makespan = 0;
+  for (const timeline of timelines.values()) {
+    if (timeline.endOffsetSeconds > makespan) makespan = timeline.endOffsetSeconds;
+  }
+
   return {
     plan: scheduledPlan,
     conflicts,
     criticalPath: computeCriticalPathIds(scheduledSteps),
-    totalDurationSeconds: estimateCriticalPathDurationSeconds(scheduledSteps),
+    totalDurationSeconds: makespan,
   };
+}
+
+/** A single step that needs more than configured capacity can never be scheduled. */
+function assertFeasibleRequirements(
+  stepId: string,
+  reqs: { resourceId: string; quantity: number }[],
+  capacityById: Map<string, number>,
+): void {
+  for (const req of reqs) {
+    const cap = capacityById.get(req.resourceId);
+    if (cap === undefined) continue;
+    if (req.quantity > cap) {
+      throw new Error(
+        `Cannot schedule step ${stepId}: requires ${req.quantity} of ${req.resourceId} but capacity is ${cap}`,
+      );
+    }
+  }
 }
 
 function peakUsage(intervals: readonly Interval[], start: number, end: number): number {

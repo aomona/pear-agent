@@ -1,4 +1,5 @@
 import {
+  assertPlanMatchesGoal,
   executionGoalSchema,
   executionPlanSchema,
   planArtifactStatusSchema,
@@ -299,9 +300,10 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       context,
     });
 
-    if (generated.goal.id !== goal.id) {
+    const match = assertPlanMatchesGoal(generated, goal);
+    if (!match.ok) {
       throw new HTTPException(400, {
-        message: "Planner goal id must match the artifact goal id",
+        message: `Planner goal must match the artifact goal (${match.reason})`,
       });
     }
 
@@ -466,6 +468,12 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
 
     try {
       const result = await planImprover.improve(improveInput);
+      const match = assertPlanMatchesGoal(result.plan, existing.goal);
+      if (!match.ok) {
+        throw new HTTPException(400, {
+          message: `Improved plan goal must match the artifact goal (${match.reason})`,
+        });
+      }
       const nextPlan: ExecutionPlan = {
         ...result.plan,
         version: existing.version + 1,

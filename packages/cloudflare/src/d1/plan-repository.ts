@@ -18,6 +18,7 @@ import { z } from "zod";
 
 import { parseJson, serializeJson } from "../serialize.js";
 import { createPearDatabase, type PearDatabase } from "./client.js";
+import { isUniqueConstraintError } from "./repository.js";
 import { planArtifactVersions, planArtifacts } from "./schema.js";
 
 const planSchema = executionPlanSchema(z.unknown());
@@ -103,16 +104,25 @@ export class D1PlanRepository implements PlanRepository {
       updatedAt: now.toISOString(),
     };
 
-    await this.db.insert(planArtifacts).values(row);
-    await this.db.insert(planArtifactVersions).values({
-      artifactId: id,
-      version: plan.version,
-      planJson: row.currentPlanJson,
-      parentVersion: null,
-      changeReason: "initial",
-      summary: "Created",
-      createdAt: now.toISOString(),
-    });
+    try {
+      await this.db.batch([
+        this.db.insert(planArtifacts).values(row),
+        this.db.insert(planArtifactVersions).values({
+          artifactId: id,
+          version: plan.version,
+          planJson: row.currentPlanJson,
+          parentVersion: null,
+          changeReason: "initial",
+          summary: "Created",
+          createdAt: now.toISOString(),
+        }),
+      ]);
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        throw new PlanArtifactConflictError(`Plan artifact already exists: ${id}`);
+      }
+      throw error;
+    }
 
     return rowToStored(row);
   }
@@ -221,29 +231,57 @@ export class D1PlanRepository implements PlanRepository {
     const title = plan.title ?? existing.title;
     const normalizedInput =
       input.normalizedInput !== undefined ? input.normalizedInput : existing.normalizedInput;
+    const planJson = serializeJson(plan);
 
-    await this.db
-      .update(planArtifacts)
-      .set({
-        status,
-        title: title ?? null,
-        goalJson: serializeJson(plan.goal),
-        currentPlanJson: serializeJson(plan),
-        version: plan.version,
-        normalizedInputJson: normalizedInput === undefined ? null : serializeJson(normalizedInput),
-        updatedAt: now.toISOString(),
-      })
-      .where(eq(planArtifacts.id, input.artifactId));
-
-    await this.db.insert(planArtifactVersions).values({
-      artifactId: input.artifactId,
-      version: plan.version,
-      planJson: serializeJson(plan),
-      parentVersion: existing.version,
-      changeReason,
-      summary: input.summary ?? null,
-      createdAt: now.toISOString(),
-    });
+    // Insert history first, then CAS-update current — one D1 batch so concurrent
+    // writers cannot expose current_plan_json without a matching history row.
+    // Unique(artifact_id, version) fails and rolls the batch back if two writers race.
+    try {
+      const results = await this.db.batch([
+        this.db.insert(planArtifactVersions).values({
+          artifactId: input.artifactId,
+          version: plan.version,
+          planJson,
+          parentVersion: existing.version,
+          changeReason,
+          summary: input.summary ?? null,
+          createdAt: now.toISOString(),
+        }),
+        this.db
+          .update(planArtifacts)
+          .set({
+            status,
+            title: title ?? null,
+            goalJson: serializeJson(plan.goal),
+            currentPlanJson: planJson,
+            version: plan.version,
+            normalizedInputJson:
+              normalizedInput === undefined ? null : serializeJson(normalizedInput),
+            updatedAt: now.toISOString(),
+          })
+          .where(
+            and(
+              eq(planArtifacts.id, input.artifactId),
+              eq(planArtifacts.version, existing.version),
+            ),
+          ),
+      ]);
+      const updateChanges = (results.at(-1) as { meta?: { changes?: number } } | undefined)?.meta
+        ?.changes;
+      if (updateChanges === 0) {
+        throw new PlanArtifactConflictError(
+          `Plan artifact ${input.artifactId} version race: base ${existing.version} was updated concurrently`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof PlanArtifactConflictError) throw error;
+      if (isUniqueConstraintError(error)) {
+        throw new PlanArtifactConflictError(
+          `Plan artifact ${input.artifactId} version ${plan.version} conflict (concurrent update)`,
+        );
+      }
+      throw error;
+    }
 
     const updated = await this.getStored(input.artifactId);
     if (!updated) throw new PlanArtifactNotFoundError(input.artifactId);

@@ -60,6 +60,9 @@ describe("schedulePlan", () => {
     const starts = [a.startOffsetSeconds, b.startOffsetSeconds].sort((x, y) => x - y);
     expect(starts).toEqual([0, 10]);
     expect(c.startOffsetSeconds).toBe(20);
+    expect(c.endOffsetSeconds).toBe(25);
+    // Makespan includes resource leveling, not dep-only critical path (15s).
+    expect(result.totalDurationSeconds).toBe(25);
     expect(result.conflicts).toEqual([]);
   });
 
@@ -69,5 +72,59 @@ describe("schedulePlan", () => {
       resolveCapacity: false,
     });
     expect(result.conflicts.length).toBeGreaterThan(0);
+  });
+
+  it("throws when a step requires more than resource capacity", () => {
+    const plan: ExecutionPlan = {
+      ...basePlan,
+      steps: [
+        {
+          id: "heavy",
+          executor: { type: "human" },
+          after: [],
+          requirements: [],
+          resourceRequirements: [{ resourceId: "stove", quantity: 2 }],
+          estimatedDurationSeconds: 10,
+          timers: [],
+          domainData: {},
+        },
+      ],
+    };
+    expect(() =>
+      schedulePlan(plan, {
+        capacities: [{ id: "stove", capacity: 1, mode: "exclusive" }],
+      }),
+    ).toThrow(/requires 2 of stove but capacity is 1/);
+  });
+
+  it("reports capacity-exceeding requirements as conflicts when not resolving", () => {
+    const plan: ExecutionPlan = {
+      ...basePlan,
+      steps: [
+        {
+          id: "heavy",
+          executor: { type: "human" },
+          after: [],
+          requirements: [],
+          resourceRequirements: [{ resourceId: "stove", quantity: 2 }],
+          estimatedDurationSeconds: 10,
+          timers: [],
+          domainData: {},
+        },
+      ],
+    };
+    const result = schedulePlan(plan, {
+      capacities: [{ id: "stove", capacity: 1 }],
+      resolveCapacity: false,
+    });
+    expect(result.conflicts).toEqual([
+      {
+        stepId: "heavy",
+        resourceId: "stove",
+        atOffsetSeconds: 0,
+        needed: 2,
+        available: 1,
+      },
+    ]);
   });
 });

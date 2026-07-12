@@ -601,8 +601,8 @@ export function useVoiceSession(
 
     return () => {
       epochRef.current += 1;
-      resumeSyncRef.current?.dispose();
-      resumeSyncRef.current = null;
+      // disconnect flushes then disposes resume-handle sync; do not dispose first
+      // or a handle still in the debounce window is dropped on unmount/session switch.
       void disconnect();
     };
   }, [sessionId, disconnect]);
