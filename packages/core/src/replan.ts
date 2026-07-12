@@ -142,8 +142,6 @@ export type ApplyPlanPatchResult = {
   diff: PlanPatchDiff;
   activeStepIds: string[];
   confirmationRequiredStepIds: string[];
-  /** @deprecated Use activeStepIds */
-  activeStepIdsRequiringConfirmation: string[];
 };
 
 export class PlanPatchValidationError extends Error {
@@ -357,16 +355,51 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
       )
     : worldState;
 
-  const activeStepIdList = [...activeStepIds];
-  const confirmationList = [...confirmationRequiredStepIds];
   return {
     plan: nextPlan,
     worldState: nextWorldState,
     diff,
-    activeStepIds: activeStepIdList,
-    confirmationRequiredStepIds: confirmationList,
-    activeStepIdsRequiringConfirmation: activeStepIdList,
+    activeStepIds: [...activeStepIds],
+    confirmationRequiredStepIds: [...confirmationRequiredStepIds],
   };
+}
+
+/** Order-insensitive set equality for step/event id lists. */
+export function sameIdSet(left: readonly string[], right: readonly string[]): boolean {
+  const a = new Set(left);
+  const b = new Set(right);
+  if (a.size !== b.size) return false;
+  for (const id of a) {
+    if (!b.has(id)) return false;
+  }
+  return true;
+}
+
+/**
+ * Ensures a generated patch only touches the Runtime-approved subgraph, plus
+ * newly added steps that appear in both `affectedStepIds` and add operations.
+ */
+export function assertPatchMatchesApprovedSubgraph(
+  plan: ExecutionPlan,
+  patch: PlanPatch,
+  expectedAffectedStepIds: readonly string[],
+): void {
+  const parsedPlan = executionPlanSchema(z.unknown()).parse(plan);
+  const parsedPatch = planPatchSchema.parse(patch);
+  const knownStepIds = new Set(parsedPlan.steps.map(({ id }) => id));
+  const addedStepIds = parsedPatch.operations
+    .filter((operation) => operation.type === "add_step")
+    .map((operation) => operation.step.id);
+  const existingAffected = parsedPatch.affectedStepIds.filter((stepId) => knownStepIds.has(stepId));
+  const newAffected = parsedPatch.affectedStepIds.filter((stepId) => !knownStepIds.has(stepId));
+  if (
+    !sameIdSet(existingAffected, expectedAffectedStepIds) ||
+    !sameIdSet(newAffected, addedStepIds)
+  ) {
+    throw new PlanPatchValidationError(
+      "Patch affected steps differ from the Runtime-approved subgraph",
+    );
+  }
 }
 
 /** Event types that do not advance the replan operational cursor. */
@@ -428,17 +461,4 @@ export function inspectPatchSteps(
     }
   }
   return { activeStepIds, confirmationRequiredStepIds };
-}
-
-/** @deprecated Prefer inspectPatchSteps */
-export function findActivePatchStepIds(patch: PlanPatch, stepStates: StepStates): string[] {
-  return inspectPatchSteps(patch, stepStates).activeStepIds;
-}
-
-/** @deprecated Prefer inspectPatchSteps */
-export function findConfirmationRequiredPatchStepIds(
-  patch: PlanPatch,
-  stepStates: StepStates,
-): string[] {
-  return inspectPatchSteps(patch, stepStates).confirmationRequiredStepIds;
 }

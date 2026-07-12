@@ -5,9 +5,11 @@ import type { ExecutionPlan } from "./plan.js";
 import {
   analyzeAffectedSubgraph,
   applyPlanPatch,
+  assertPatchMatchesApprovedSubgraph,
   normalizePlanPatchSteps,
   PlanPatchValidationError,
   resolvePlanPatchMode,
+  sameIdSet,
   type PlanPatch,
 } from "./replan.js";
 import { createWorldState } from "./world-state.js";
@@ -80,6 +82,37 @@ describe("partial replanning", () => {
       rootStepIds: ["charge"],
       stepIds: ["charge", "leave-home"],
     });
+  });
+
+  it("compares id sets without order or duplicates and checks approved subgraphs", () => {
+    expect(sameIdSet(["b", "a", "a"], ["a", "b"])).toBe(true);
+    expect(sameIdSet(["a"], ["a", "b"])).toBe(false);
+    expect(() =>
+      assertPatchMatchesApprovedSubgraph(
+        plan,
+        patch([
+          {
+            type: "update_step",
+            stepId: "charge",
+            step: { ...plan.steps[1]!, estimatedDurationSeconds: 600 },
+          },
+        ]),
+        ["charge", "leave-home"],
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertPatchMatchesApprovedSubgraph(
+        plan,
+        patch([
+          {
+            type: "update_step",
+            stepId: "charge",
+            step: { ...plan.steps[1]!, estimatedDurationSeconds: 600 },
+          },
+        ]),
+        ["charge"],
+      ),
+    ).toThrow(PlanPatchValidationError);
   });
 
   it("updates only an affected ready step and preserves unaffected completed work", () => {

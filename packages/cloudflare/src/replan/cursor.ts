@@ -26,15 +26,32 @@ export async function hasOnlyInterruptionEventsSinceBase(
   baseEventId: string | null,
   activeStepIds: readonly string[],
 ): Promise<boolean> {
-  const rows = await d1
-    .prepare("SELECT id, event_json FROM runtime_events WHERE session_id = ? ORDER BY rowid ASC")
-    .bind(sessionId)
-    .all<{ id: string; event_json: string }>();
-  const events = rows.results;
-  const baseIndex = baseEventId === null ? -1 : events.findIndex(({ id }) => id === baseEventId);
-  if (baseEventId !== null && baseIndex < 0) return false;
+  let rows: { id: string; event_json: string }[];
+  if (baseEventId === null) {
+    const result = await d1
+      .prepare("SELECT id, event_json FROM runtime_events WHERE session_id = ? ORDER BY rowid ASC")
+      .bind(sessionId)
+      .all<{ id: string; event_json: string }>();
+    rows = result.results;
+  } else {
+    const base = await d1
+      .prepare("SELECT rowid FROM runtime_events WHERE session_id = ? AND id = ?")
+      .bind(sessionId, baseEventId)
+      .first<{ rowid: number }>();
+    if (!base) return false;
+    const result = await d1
+      .prepare(
+        `SELECT id, event_json FROM runtime_events
+         WHERE session_id = ? AND rowid > ?
+         ORDER BY rowid ASC`,
+      )
+      .bind(sessionId, base.rowid)
+      .all<{ id: string; event_json: string }>();
+    rows = result.results;
+  }
+
   const allowedSteps = new Set(activeStepIds);
-  return events.slice(baseIndex + 1).every(({ event_json: eventJson }) => {
+  return rows.every(({ event_json: eventJson }) => {
     const event = parseRuntimeEvent(eventJson);
     if (event.type === "replan_proposed" || event.type === "replan_failed") return true;
     if (event.type.startsWith("continuation_")) return true;

@@ -1,6 +1,7 @@
 import {
   analyzeAffectedSubgraph,
   applyPlanPatch,
+  assertPatchMatchesApprovedSubgraph,
   lastOperationalEventId,
   mostRestrictiveReplanMode,
   normalizePlanPatchSteps,
@@ -9,6 +10,7 @@ import {
   replanAssessmentSchema,
   replanModeSchema,
   resolvePlanPatchMode,
+  sameIdSet,
   type ReplanCapabilityPolicy,
 } from "@pear-agent/core";
 import type { Hono } from "hono";
@@ -29,7 +31,6 @@ import type { PearEnv } from "../env.js";
 import { SessionNotFoundError } from "../errors.js";
 import { toJsonValue } from "../serialize.js";
 import { validateReplanConfiguration, type ReplanRuntime } from "./engine.js";
-import { sameIdSet } from "./keys.js";
 
 type ReplanHono = Hono<{
   Bindings: PearEnv;
@@ -226,19 +227,15 @@ export function registerReplanRoutes(
       if (!sameIdSet(patch.causeEventIds, assessment.causeEventIds)) {
         throw new PublicReplanError("Generated patch cause events differ from the assessment");
       }
-      const knownStepIds = new Set(snapshot.plan.steps.map(({ id }) => id));
-      const addedStepIds = patch.operations
-        .filter((operation) => operation.type === "add_step")
-        .map((operation) => operation.step.id);
-      const existingAffectedIds = patch.affectedStepIds.filter((id) => knownStepIds.has(id));
-      const newAffectedIds = patch.affectedStepIds.filter((id) => !knownStepIds.has(id));
-      if (
-        !sameIdSet(existingAffectedIds, affected.stepIds) ||
-        !sameIdSet(newAffectedIds, addedStepIds)
-      ) {
-        throw new PublicReplanError(
-          "Generated patch expands or omits the Runtime affected subgraph",
-        );
+      try {
+        assertPatchMatchesApprovedSubgraph(snapshot.plan, patch, affected.stepIds);
+      } catch (caught) {
+        if (caught instanceof PlanPatchValidationError) {
+          throw new PublicReplanError(
+            "Generated patch expands or omits the Runtime affected subgraph",
+          );
+        }
+        throw caught;
       }
 
       // Domain schema and semantic WorldState validation run before the Agent

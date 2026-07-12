@@ -1,6 +1,7 @@
 import {
   applyPlanPatch,
   applyRuntimeEvent,
+  assertPatchMatchesApprovedSubgraph,
   inspectPatchSteps,
   materializedExecutionStateSchema,
   planChangeSchema,
@@ -9,6 +10,7 @@ import {
   replanModeSchema,
   resolvePlanPatchMode,
   runtimeEventSchema,
+  sameIdSet,
   worldStateSchema,
   type ExecutionPlan,
   type MaterializedExecutionState,
@@ -25,7 +27,7 @@ import { SessionNotFoundError } from "../errors.js";
 import { parseJson, parseRuntimeEvent } from "../serialize.js";
 import { activatePlanPatch } from "./activation.js";
 import { currentReplanBaseEventId, hasOnlyInterruptionEventsSinceBase } from "./cursor.js";
-import { attemptKey, causeKey, sameIdSet } from "./keys.js";
+import { attemptKey, causeKey } from "./keys.js";
 import {
   insertEventStatement,
   insertPatchStatement,
@@ -185,23 +187,7 @@ export class D1ReplanStore {
       if (input.normalizedInputRevision !== normalizedInputRevision) {
         throw new PlanPatchValidationError("Normalized input changed after the Replan assessment");
       }
-      const expectedAffected = new Set(input.expectedAffectedStepIds);
-      const knownStepIds = new Set(state.plan.steps.map(({ id }) => id));
-      const addedStepIds = patch.operations
-        .filter((operation) => operation.type === "add_step")
-        .map((operation) => operation.step.id);
-      const existingAffected = patch.affectedStepIds.filter((stepId) => knownStepIds.has(stepId));
-      const newAffected = patch.affectedStepIds.filter((stepId) => !knownStepIds.has(stepId));
-      if (
-        existingAffected.length !== expectedAffected.size ||
-        existingAffected.some((stepId) => !expectedAffected.has(stepId)) ||
-        newAffected.length !== new Set(addedStepIds).size ||
-        newAffected.some((stepId) => !addedStepIds.includes(stepId))
-      ) {
-        throw new PlanPatchValidationError(
-          "Patch affected steps differ from the Runtime-approved subgraph",
-        );
-      }
+      assertPatchMatchesApprovedSubgraph(state.plan, patch, input.expectedAffectedStepIds);
       candidate = applyPlanPatch({
         plan: state.plan,
         stepStates: state.stepStates,

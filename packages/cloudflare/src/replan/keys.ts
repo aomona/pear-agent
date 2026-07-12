@@ -1,5 +1,7 @@
 import type { PlanPatch } from "@pear-agent/core";
 
+export { sameIdSet } from "@pear-agent/core";
+
 export function causeKey(
   domainVersion: number,
   normalizedInputRevision: number | null,
@@ -19,9 +21,4 @@ export function attemptKey(
     patch.basePlanVersion,
     patch.baseLastEventId,
   ]);
-}
-
-export function sameIdSet(left: readonly string[], right: readonly string[]): boolean {
-  const expected = new Set(right);
-  return left.length === expected.size && left.every((id) => expected.has(id));
 }
