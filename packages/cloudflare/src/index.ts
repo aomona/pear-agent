@@ -67,7 +67,15 @@ export {
   executionContinuations,
   planVersions,
   planPatches,
+  planArtifacts,
+  planArtifactVersions,
 } from "./d1/schema.js";
+export {
+  D1PlanRepository,
+  PlanArtifactConflictError,
+  PlanArtifactNotFoundError,
+  type StoredPlanArtifact,
+} from "./d1/plan-repository.js";
 export type { PearEnv } from "./env.js";
 export {
   ContinuationConflictError,

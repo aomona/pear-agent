@@ -69,7 +69,15 @@ Migration `0004` marks pre-existing sessions with Domain version `0` (unknown/in
 | Method   | Path                                                        | Notes                                                                |
 | -------- | ----------------------------------------------------------- | -------------------------------------------------------------------- |
 | `GET`    | `/health`                                                   | No auth                                                              |
-| `POST`   | `/sessions`                                                 | JSON: domainId, actorIds, goal, normalizedInput, optional worldState |
+| `POST`   | `/sessions`                                                 | JSON: domainId, actorIds; either (goal + normalizedInput) **or** ready `planArtifactId` |
+| `GET`    | `/plans?domainId=&status=`                                  | Plan library list (CE-11)                                            |
+| `POST`   | `/plans`                                                    | Create draft/ready plan artifact                                     |
+| `GET`    | `/plans/:id`                                                | Artifact + optional normalizedInput                                  |
+| `PATCH`  | `/plans/:id`                                                | title / status / plan edit / normalizedInput                         |
+| `POST`   | `/plans/:id/generate`                                       | Run PlanGenerator into artifact                                      |
+| `POST`   | `/plans/:id/normalize`                                      | Domain normalize (+ optional freeTextResolver)                       |
+| `POST`   | `/plans/:id/improve`                                        | PlanImprover (host-injected)                                         |
+| `GET`    | `/plans/:id/versions`                                       | Artifact version history                                             |
 | `GET`    | `/sessions/:id`                                             | Materialized state                                                   |
 | `GET`    | `/sessions/:id/snapshot`                                    | Runtime snapshot                                                     |
 | `POST`   | `/sessions/:id/events`                                      | Append runtime event                                                 |
@@ -101,6 +109,13 @@ Replan requests call the host hook first with mode-neutral `replan.preflight` be
 - Install optional peer `@google/genai` on the Worker when using the default Google minter.
 - Apply D1 migration `0002_voice_leases.sql`.
 - Inject `voiceTokenMinter` on `createPearApp` for tests (real mint uses `GEMINI_API_KEY` + optional `@google/genai`).
+
+### Plan library (CE-11)
+
+Session-independent plans live in D1 tables `plan_artifacts` / `plan_artifact_versions` (migration `0005_plan_artifacts.sql`). Do **not** confuse with session-scoped `plan_versions` (runtime replan history).
+
+- Status flow: `draft` → generate steps → `ready` → `POST /sessions` with `planArtifactId` (skips PlanGenerator).
+- Host may inject `planLibrary.normalizeDomainInput`, `freeTextResolver`, and `planImprover` on `createPearApp` / `createPearWorker`.
 
 ### Partial Replanning (Issue #8)
 

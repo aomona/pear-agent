@@ -29,7 +29,13 @@ import {
   VoiceLeaseNotFoundError,
   VoiceTokenUnavailableError,
 } from "../errors.js";
+import {
+  D1PlanRepository,
+  PlanArtifactConflictError,
+  PlanArtifactNotFoundError,
+} from "../d1/plan-repository.js";
 import type { PlanGenerator } from "../planner.js";
+import { registerPlanRoutes, type PlanLibraryOptions } from "../plans/routes.js";
 import { registerReplanRoutes } from "../replan/routes.js";
 import { validateReplanConfiguration, type ReplanRuntime } from "../replan/engine.js";
 import { DEFAULT_MAX_RAW_INPUT_BYTES, R2RawInputStore } from "../r2/raw-input-store.js";
@@ -64,17 +70,47 @@ export type CreatePearAppOptions = {
   voiceTokenMinter?: VoiceTokenMinter;
   /** Host-injected Assess/Replan runtime, normally backed by AI SDK. */
   replanRuntime?: ReplanRuntime;
+  /**
+   * Optional plan-library host hooks (normalize free-text, improve plan).
+   * Plan CRUD always uses D1; these only power /plans/:id/normalize|improve.
+   */
+  planLibrary?: Pick<
+    PlanLibraryOptions,
+    "freeTextResolver" | "planImprover" | "normalizeDomainInput"
+  >;
 };
 
 /** Raw JSON body — Domain `normalizedInput` is left un-revived. */
-const createSessionBodySchema = z.object({
-  sessionId: z.string().min(1).optional(),
-  domainId: z.string().min(1),
-  actorIds: z.array(z.string().min(1)).min(1),
-  goal: z.unknown(),
-  normalizedInput: z.unknown(),
-  worldState: worldStateSchema.optional(),
-});
+const createSessionBodySchema = z
+  .object({
+    sessionId: z.string().min(1).optional(),
+    domainId: z.string().min(1),
+    actorIds: z.array(z.string().min(1)).min(1),
+    goal: z.unknown().optional(),
+    normalizedInput: z.unknown().optional(),
+    worldState: worldStateSchema.optional(),
+    /**
+     * Start from a ready plan library artifact (skips PlanGenerator).
+     * Artifact supplies plan + goal; normalizedInput may come from artifact or body.
+     */
+    planArtifactId: z.string().min(1).optional(),
+  })
+  .superRefine((value, context) => {
+    if (!value.planArtifactId && value.goal === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "goal is required when planArtifactId is omitted",
+        path: ["goal"],
+      });
+    }
+    if (!value.planArtifactId && value.normalizedInput === undefined) {
+      context.addIssue({
+        code: "custom",
+        message: "normalizedInput is required when planArtifactId is omitted",
+        path: ["normalizedInput"],
+      });
+    }
+  });
 
 export type PearApp = Hono<{ Bindings: PearEnv; Variables: PearAppVariables }>;
 
@@ -99,7 +135,9 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       error instanceof VoiceLeaseNotFoundError ||
       error instanceof VoiceTokenUnavailableError ||
       error instanceof ContinuationConflictError ||
-      error instanceof ContinuationNotFoundError
+      error instanceof ContinuationNotFoundError ||
+      error instanceof PlanArtifactNotFoundError ||
+      error instanceof PlanArtifactConflictError
     ) {
       return c.json({ error: error.message }, error.status);
     }
@@ -127,43 +165,74 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   app.post("/sessions", async (c) => {
     const context = c.get("pearContext");
     const raw = createSessionBodySchema.parse(await c.req.json());
-    // Core goal dates coerce via dateSchema; Domain normalizedInput stays JSON-safe.
-    const goal = executionGoalSchema.parse(raw.goal);
-    const body = { ...raw, goal };
 
-    await options.authorize({ type: "session.create", domainId: body.domainId }, context);
+    await options.authorize({ type: "session.create", domainId: raw.domainId }, context);
 
-    const sessionId = body.sessionId ?? crypto.randomUUID();
+    const sessionId = raw.sessionId ?? crypto.randomUUID();
     const domainVersion = options.replanRuntime
-      ? validateReplanConfiguration(await options.replanRuntime.resolveConfiguration(body.domainId))
+      ? validateReplanConfiguration(await options.replanRuntime.resolveConfiguration(raw.domainId))
           .domainVersion
       : 0;
-    const plan = await options.planGenerator.generatePlan({
-      domainId: body.domainId,
-      goal: body.goal,
-      normalizedInput: body.normalizedInput,
-      context,
-    });
 
-    if (plan.goal.id !== body.goal.id) {
-      throw new HTTPException(400, {
-        message: "Planner goal id must match the requested goal id",
+    let plan;
+    let goal;
+    let normalizedInput: unknown;
+
+    if (raw.planArtifactId) {
+      const artifact = await new D1PlanRepository(c.env.DB).getStored(raw.planArtifactId);
+      if (!artifact) throw new PlanArtifactNotFoundError(raw.planArtifactId);
+      if (artifact.domainId !== raw.domainId) {
+        throw new HTTPException(400, {
+          message: "planArtifactId domain does not match session domainId",
+        });
+      }
+      if (artifact.status !== "ready") {
+        throw new HTTPException(400, {
+          message: `Plan artifact must be ready to start a session (status=${artifact.status})`,
+        });
+      }
+      if (artifact.currentPlan.steps.length === 0) {
+        throw new HTTPException(400, {
+          message: "Plan artifact has no steps; generate a plan first",
+        });
+      }
+      plan = artifact.currentPlan;
+      goal = artifact.goal;
+      normalizedInput = raw.normalizedInput ?? artifact.normalizedInput;
+      if (normalizedInput === undefined) {
+        throw new HTTPException(400, {
+          message: "normalizedInput is required (store on artifact or pass in body)",
+        });
+      }
+    } else {
+      goal = executionGoalSchema.parse(raw.goal);
+      normalizedInput = raw.normalizedInput;
+      plan = await options.planGenerator.generatePlan({
+        domainId: raw.domainId,
+        goal,
+        normalizedInput,
+        context,
       });
+      if (plan.goal.id !== goal.id) {
+        throw new HTTPException(400, {
+          message: "Planner goal id must match the requested goal id",
+        });
+      }
     }
 
     const initialState = buildInitialExecutionState({
       sessionId,
       plan,
-      actorIds: body.actorIds,
-      ...(body.worldState === undefined ? {} : { worldState: body.worldState }),
+      actorIds: raw.actorIds,
+      ...(raw.worldState === undefined ? {} : { worldState: raw.worldState }),
     });
 
     await agentCreateSession(c.env, {
       sessionId,
-      domainId: body.domainId,
+      domainId: raw.domainId,
       domainVersion,
       initialState,
-      normalizedInput: body.normalizedInput,
+      normalizedInput,
     });
 
     return c.json(
@@ -172,6 +241,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
         session: toJsonValue(initialState.session),
         plan: toJsonValue(initialState.plan),
         stepStates: toJsonValue(initialState.stepStates),
+        ...(raw.planArtifactId ? { planArtifactId: raw.planArtifactId } : {}),
       },
       201,
     );
@@ -309,6 +379,11 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   });
   registerContinuationRoutes(app, options.authorize);
   registerReplanRoutes(app, options.authorize, options.replanRuntime);
+  registerPlanRoutes(app, {
+    authorize: options.authorize,
+    planGenerator: options.planGenerator,
+    ...options.planLibrary,
+  });
 
   return app;
 }

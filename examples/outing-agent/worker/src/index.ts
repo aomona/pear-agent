@@ -4,6 +4,7 @@ import {
   PEAR_CONTEXT_HEADER,
   resolvePearContextFromHeader,
 } from "@pear-agent/cloudflare";
+import { outingDomain } from "@pear-agent/outing-domain-example";
 
 import { authorize } from "./authorize.js";
 import { handleCorsPreflight, withCors } from "./cors.js";
@@ -22,6 +23,19 @@ const worker = createPearWorker({
   authorize,
   planGenerator,
   replanRuntime,
+  planLibrary: {
+    normalizeDomainInput: async ({ domainId, input, freeTextResolver, context }) => {
+      if (domainId !== outingDomain.id) {
+        throw new Error(`Unknown domain: ${domainId}`);
+      }
+      const parsed = outingDomain.schemas.input.parse(input);
+      return outingDomain.normalizeInput(parsed, {
+        ...(freeTextResolver !== undefined ? { freeTextResolver } : {}),
+        context,
+      });
+    },
+    // freeTextResolver / planImprover (Gemini) wired in a follow-up.
+  },
   resolveContext: async (request) => {
     // Demo only: missing header → default actor. Malformed header still fails closed.
     if (!request.headers.get(PEAR_CONTEXT_HEADER)) {
