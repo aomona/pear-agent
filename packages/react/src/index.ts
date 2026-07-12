@@ -28,6 +28,7 @@ export {
   useVoiceSession,
   FakeVoiceProvider,
   GeminiLiveVoiceProvider,
+  RESUME_HANDLE_DEBOUNCE_MS,
   type UseVoiceSessionOptions,
   type UseVoiceSessionResult,
 } from "./use-voice-session.js";

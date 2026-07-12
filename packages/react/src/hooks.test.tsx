@@ -11,7 +11,7 @@ import { sampleMaterializedState, sampleSnapshot } from "./test-fixtures.js";
 import { useContinuation } from "./use-continuation.js";
 import { useExecutionSession } from "./use-execution-session.js";
 import { useRuntimeSnapshot } from "./use-runtime-snapshot.js";
-import { useVoiceSession } from "./use-voice-session.js";
+import { RESUME_HANDLE_DEBOUNCE_MS, useVoiceSession } from "./use-voice-session.js";
 
 function createWrapper(client: PearClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -514,9 +514,16 @@ describe("react hooks", () => {
       await Promise.resolve();
     });
 
+    // Optimistic local lease update (no PUT yet).
     await waitFor(() => {
       expect(result.current.lease?.providerResumeHandle).toBe("handle-xyz");
     });
+    const putBeforeSuspend = fetchMock.mock.calls.filter((call) => {
+      const url = String(call[0]);
+      const method = String((call[1] as RequestInit | undefined)?.method ?? "GET").toUpperCase();
+      return url.includes("/voice/resume-handle") && method === "PUT";
+    });
+    expect(putBeforeSuspend.length).toBe(0);
 
     await act(async () => {
       await result.current.suspend({
@@ -528,12 +535,133 @@ describe("react hooks", () => {
 
     expect(result.current.status).toBe("disconnected");
     expect(result.current.lease?.status).toBe("released");
+    // Flush on suspend writes the handle once.
+    const putAfterSuspend = fetchMock.mock.calls.filter((call) => {
+      const url = String(call[0]);
+      const method = String((call[1] as RequestInit | undefined)?.method ?? "GET").toUpperCase();
+      return url.includes("/voice/resume-handle") && method === "PUT";
+    });
+    expect(putAfterSuspend.length).toBe(1);
     // Disconnect must not POST session_cancelled / session_paused.
     const cancelled = fetchMock.mock.calls.some((call) => {
       const url = String(call[0]);
       return url.includes("/events");
     });
     expect(cancelled).toBe(false);
+  });
+
+  it("debounces rapid resume-handle updates and flushes only the latest", async () => {
+    vi.useFakeTimers();
+    const provider = new FakeVoiceProvider();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = String(init?.method ?? "GET").toUpperCase();
+      if (url.endsWith("/voice/lease") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/token") && method === "POST") {
+        return new Response(JSON.stringify({ token: "ephemeral", model: "fake-model" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/voice/resume-handle") && method === "PUT") {
+        const body = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: body.handle,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/lease") && method === "DELETE") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-1",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "released",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const { result } = renderHook(
+      () => useVoiceSession("s1", { provider, enableBrowserMedia: false }),
+      {
+        wrapper: createWrapper(client),
+      },
+    );
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    const conn = provider.connections[0]!;
+    await act(async () => {
+      conn.emitResumeHandle("h1");
+      conn.emitResumeHandle("h2");
+      conn.emitResumeHandle("h3");
+    });
+
+    const putsBeforeTimer = () =>
+      fetchMock.mock.calls.filter((call) => String(call[0]).includes("/voice/resume-handle"));
+    expect(putsBeforeTimer().length).toBe(0);
+    expect(result.current.lease?.providerResumeHandle).toBe("h3");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RESUME_HANDLE_DEBOUNCE_MS + 10);
+    });
+
+    expect(putsBeforeTimer().length).toBe(1);
+    const body = JSON.parse(String(putsBeforeTimer()[0]![1]?.body));
+    expect(body.handle).toBe("h3");
+
+    await act(async () => {
+      conn.emitResumeHandle("h3"); // duplicate — no new PUT
+      await vi.advanceTimersByTimeAsync(RESUME_HANDLE_DEBOUNCE_MS + 10);
+    });
+    expect(putsBeforeTimer().length).toBe(1);
+
+    await act(async () => {
+      await result.current.disconnect();
+    });
+
+    vi.useRealTimers();
   });
 
   it("falls back to a new Voice Session when a continuation resume handle is stale", async () => {
