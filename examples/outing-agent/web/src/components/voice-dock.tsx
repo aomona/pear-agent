@@ -150,9 +150,9 @@ export function VoiceDock({ sessionId }: VoiceDockProps) {
                   : "話した内容がここに横へ流れていきます"}
               </span>
             ) : (
-              visibleTurns.map((turn, i) => (
+              visibleTurns.map((turn) => (
                 <span
-                  key={`${turn.role}-${i}-${turn.text.length}`}
+                  key={`${turn.role}:${turn.text}`}
                   className="inline-flex items-baseline gap-1 text-[12px] leading-none"
                 >
                   <span
@@ -175,7 +175,7 @@ export function VoiceDock({ sessionId }: VoiceDockProps) {
                   >
                     {turn.text}
                   </span>
-                  {i < visibleTurns.length - 1 ? (
+                  {turn !== visibleTurns[visibleTurns.length - 1] ? (
                     <span className="ml-1 text-muted-foreground/50" aria-hidden>
                       ·
                     </span>

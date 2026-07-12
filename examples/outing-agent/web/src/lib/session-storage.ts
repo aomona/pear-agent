@@ -1,4 +1,5 @@
-const SESSION_KEY = "pear-outing-session";
+const SESSION_KEY = "pear-outing-session:v1";
+const LEGACY_SESSION_KEYS = ["pear-outing-session", "pear-outing-session-id"] as const;
 
 export type StoredSession = {
   sessionId: string;
@@ -6,10 +7,8 @@ export type StoredSession = {
   planId: string | null;
 };
 
-export function loadStoredSession(): StoredSession | null {
+function parseSession(raw: string): StoredSession | null {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as unknown;
     if (
       parsed &&
@@ -24,17 +23,31 @@ export function loadStoredSession(): StoredSession | null {
         planId: typeof planId === "string" && planId.length > 0 ? planId : null,
       };
     }
-    return null;
   } catch {
-    // migrate legacy plain session id string
-    try {
-      const legacy = localStorage.getItem("pear-outing-session-id");
-      if (legacy) {
+    // ignore
+  }
+  return null;
+}
+
+export function loadStoredSession(): StoredSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (raw) {
+      const parsed = parseSession(raw);
+      if (parsed) return parsed;
+    }
+    // migrate legacy keys
+    for (const key of LEGACY_SESSION_KEYS) {
+      const legacy = localStorage.getItem(key);
+      if (!legacy) continue;
+      if (key === "pear-outing-session-id") {
         return { sessionId: legacy, planId: null };
       }
-    } catch {
-      // ignore
+      const parsed = parseSession(legacy);
+      if (parsed) return parsed;
     }
+    return null;
+  } catch {
     return null;
   }
 }
@@ -43,10 +56,14 @@ export function storeSession(session: StoredSession | null): void {
   try {
     if (session) {
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-      localStorage.removeItem("pear-outing-session-id");
+      for (const key of LEGACY_SESSION_KEYS) {
+        localStorage.removeItem(key);
+      }
     } else {
       localStorage.removeItem(SESSION_KEY);
-      localStorage.removeItem("pear-outing-session-id");
+      for (const key of LEGACY_SESSION_KEYS) {
+        localStorage.removeItem(key);
+      }
     }
   } catch {
     // ignore quota / private mode

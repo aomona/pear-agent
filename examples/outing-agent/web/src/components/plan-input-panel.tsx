@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePearContext, type PlanArtifactDetail } from "@pear-agent/react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -21,11 +21,10 @@ import { generateSuccessMessage } from "../lib/order-meta";
 import { OUTING_PRESETS } from "../lib/presets";
 import { AddPrepModal, type AddPrepSubmit } from "./add-prep-modal";
 import { InputSummary } from "./input-summary";
+import { DepartureFields, PlaceFields } from "./plan-input-fields";
 import { PrepListItem } from "./prep-list-item";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
 
 type PlanInputPanelProps = {
   planId: string;
@@ -43,6 +42,7 @@ type StructureVariables = {
 
 export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanInputPanelProps) {
   const { client } = usePearContext();
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<OutingFormState>({
     departureMode: "structured",
     departureLocal: defaultDepartureLocal(),
@@ -110,6 +110,10 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
         ),
       }));
       toast.error(message);
+    },
+    onSettled: () => {
+      // Local form is SoT for prep rows; invalidate any plan-scoped caches.
+      void queryClient.invalidateQueries({ queryKey: ["outing", planId] });
     },
   });
 
@@ -244,88 +248,14 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
 
           <InputSummary form={form} />
 
-          <section className="space-y-3 rounded-lg border p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold">出発時刻</h3>
-              <div className="flex gap-1">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={form.departureMode === "structured" ? "default" : "outline"}
-                  onClick={() => setForm((f) => ({ ...f, departureMode: "structured" }))}
-                >
-                  日時
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={form.departureMode === "freeText" ? "default" : "outline"}
-                  onClick={() => setForm((f) => ({ ...f, departureMode: "freeText" }))}
-                >
-                  自由文
-                </Button>
-              </div>
-            </div>
-            {form.departureMode === "structured" ? (
-              <Input
-                type="datetime-local"
-                value={form.departureLocal}
-                onChange={(e) => setForm((f) => ({ ...f, departureLocal: e.target.value }))}
-              />
-            ) : (
-              <Input
-                placeholder="例: 明日の朝10時"
-                value={form.departureFreeText}
-                onChange={(e) => setForm((f) => ({ ...f, departureFreeText: e.target.value }))}
-              />
-            )}
-          </section>
+          <DepartureFields form={form} setForm={setForm} />
 
-          <section className="space-y-3 rounded-lg border p-4">
-            <h3 className="text-sm font-semibold">行き先</h3>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="origin">出発地</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="origin"
-                    placeholder="Home / 渋谷"
-                    value={form.originLabel}
-                    onChange={(e) => setForm((f) => ({ ...f, originLabel: e.target.value }))}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={placeBusy !== null}
-                    onClick={() => void resolvePlace("origin")}
-                  >
-                    {placeBusy === "origin" ? "…" : "整える"}
-                  </Button>
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="dest">目的地</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="dest"
-                    placeholder="Office / 横浜"
-                    value={form.destinationLabel}
-                    onChange={(e) => setForm((f) => ({ ...f, destinationLabel: e.target.value }))}
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={placeBusy !== null}
-                    onClick={() => void resolvePlace("destination")}
-                  >
-                    {placeBusy === "destination" ? "…" : "整える"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </section>
+          <PlaceFields
+            form={form}
+            setForm={setForm}
+            placeBusy={placeBusy}
+            onResolvePlace={(which) => void resolvePlace(which)}
+          />
 
           <section className="space-y-3 rounded-lg border p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">

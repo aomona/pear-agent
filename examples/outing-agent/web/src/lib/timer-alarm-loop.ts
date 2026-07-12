@@ -33,23 +33,21 @@ export function startTimerAlarmLoop(options: {
   const ac = new AbortController();
   let first = true;
 
-  void (async () => {
-    while (!ac.signal.aborted) {
-      try {
-        await playTimerAlarmBeeps();
-        if (ac.signal.aborted) break;
-        if (first) {
-          first = false;
-          options.onFirstBurst?.();
-        }
-        await abortableSleep(options.gapAfterBurstMs, ac.signal);
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") break;
-        // Audio failure: stop looping rather than spin.
-        break;
+  // Sequential by design (beep → gap → beep). Not independent work for Promise.all.
+  const tick = () => {
+    if (ac.signal.aborted) return;
+    void playTimerAlarmBeeps().then(() => {
+      if (ac.signal.aborted) return;
+      if (first) {
+        first = false;
+        options.onFirstBurst?.();
       }
-    }
-  })();
+      void abortableSleep(options.gapAfterBurstMs, ac.signal)
+        .then(tick)
+        .catch(() => undefined);
+    });
+  };
+  tick();
 
   return {
     stop: () => {
