@@ -16,6 +16,7 @@ import {
   PlanArtifactNotFoundError,
   type StoredPlanArtifact,
 } from "../d1/plan-repository.js";
+import type { PearEnv } from "../env.js";
 import type { PearApp } from "../http/app.js";
 import type { PlanGenerator } from "../planner.js";
 import { toJsonValue } from "../serialize.js";
@@ -25,6 +26,8 @@ const planSchema = executionPlanSchema(z.unknown());
 export type PlanLibraryOptions = {
   authorize: AuthorizeFn;
   planGenerator: PlanGenerator;
+  /** Per-request generator when env (e.g. GEMINI_API_KEY) is required. */
+  createPlanGenerator?: (env: PearEnv) => PlanGenerator;
   /**
    * Optional host free-text resolver (often LLM). Used by POST .../normalize when provided.
    * Prefer {@link createFreeTextResolver} when the implementation needs Worker env (API keys).
@@ -90,6 +93,10 @@ function asHttpError(error: unknown): never {
 
 function repo(env: { DB: D1Database }): D1PlanRepository {
   return new D1PlanRepository(env.DB);
+}
+
+function resolvePlanGenerator(options: PlanLibraryOptions, env: PearEnv): PlanGenerator {
+  return options.createPlanGenerator?.(env) ?? options.planGenerator;
 }
 
 function artifactJson(stored: StoredPlanArtifact) {
@@ -280,7 +287,7 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
 
     const goal = body.goal !== undefined ? executionGoalSchema.parse(body.goal) : existing.goal;
 
-    const generated = await options.planGenerator.generatePlan({
+    const generated = await resolvePlanGenerator(options, c.env).generatePlan({
       domainId: existing.domainId,
       goal,
       normalizedInput,

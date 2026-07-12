@@ -15,7 +15,7 @@ import {
 import { authorize } from "./authorize.js";
 import { handleCorsPreflight, withCors } from "./cors.js";
 import { createGeminiFreeTextResolver } from "./free-text-resolver.js";
-import { planGenerator } from "./plan-generator.js";
+import { createOutingPlanGenerator, planGenerator } from "./plan-generator.js";
 import { createGeminiPlanImprover } from "./plan-improver.js";
 import { replanRuntime } from "./replan-runtime.js";
 
@@ -29,7 +29,13 @@ const DEMO_CONTEXT = {
 
 const worker = createPearWorker({
   authorize,
+  // Fallback without env (tests); production uses createPlanGenerator for Gemini ordering.
   planGenerator,
+  createPlanGenerator: (env) =>
+    createOutingPlanGenerator({
+      getApiKey: () => env.GEMINI_API_KEY,
+      refineOrder: true,
+    }),
   replanRuntime,
   planLibrary: {
     normalizeDomainInput: async ({ domainId, input, freeTextResolver, context }) => {

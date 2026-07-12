@@ -87,7 +87,7 @@ export function PlanDraftPanel({
           <div>
             <CardTitle>3. Execution plan</CardTitle>
             <CardDescription>
-              生成 → レーン確認 → ready → 実行。Improve は短いチップでもできます。
+              生成時に Gemini が step の順序（after）を整えます。レーンで並列を確認 → ready → 実行。
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -119,10 +119,18 @@ export function PlanDraftPanel({
         <div className="flex flex-wrap gap-2">
           <Button
             disabled={busy || artifact.normalizedInput === undefined}
-            onClick={() => void run("Plan generated", () => client.generatePlanArtifact(planId))}
+            onClick={() =>
+              void run("計画を生成（順序は Gemini が調整）", () =>
+                client.generatePlanArtifact(planId),
+              )
+            }
           >
             計画を生成
           </Button>
+          <p className="w-full text-xs text-muted-foreground">
+            ステップ本体は Domain が決め、依存関係（after）だけ LLM
+            が差し替えます。キー無し時は全部並列。
+          </p>
           <Button
             variant="outline"
             disabled={busy || !hasSteps}

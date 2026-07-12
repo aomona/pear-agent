@@ -56,6 +56,11 @@ export type CreatePearAppOptions = {
   authorize: AuthorizeFn;
   planGenerator: PlanGenerator;
   /**
+   * Per-request PlanGenerator (e.g. needs `env.GEMINI_API_KEY`).
+   * When set, used instead of {@link planGenerator} for generate/session paths.
+   */
+  createPlanGenerator?: (env: PearEnv) => PlanGenerator;
+  /**
    * Resolve host authentication into {@link PearRequestContext}.
    * Defaults to parsing the `x-pear-context` header as JSON.
    */
@@ -84,6 +89,10 @@ export type CreatePearAppOptions = {
     | "resolveDomainFreeTextField"
   >;
 };
+
+function resolvePlanGenerator(options: CreatePearAppOptions, env: PearEnv): PlanGenerator {
+  return options.createPlanGenerator?.(env) ?? options.planGenerator;
+}
 
 /** Raw JSON body — Domain `normalizedInput` is left un-revived. */
 const createSessionBodySchema = z
@@ -212,7 +221,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     } else {
       goal = executionGoalSchema.parse(raw.goal);
       normalizedInput = raw.normalizedInput;
-      plan = await options.planGenerator.generatePlan({
+      plan = await resolvePlanGenerator(options, c.env).generatePlan({
         domainId: raw.domainId,
         goal,
         normalizedInput,
@@ -387,6 +396,9 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
   registerPlanRoutes(app, {
     authorize: options.authorize,
     planGenerator: options.planGenerator,
+    ...(options.createPlanGenerator !== undefined
+      ? { createPlanGenerator: options.createPlanGenerator }
+      : {}),
     ...options.planLibrary,
   });
 
