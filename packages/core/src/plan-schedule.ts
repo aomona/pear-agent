@@ -78,7 +78,7 @@ export function schedulePlan<TStepData>(
 
     if (resolveCapacity && reqs.length > 0) {
       assertFeasibleRequirements(step.id, reqs, capacityById);
-      start = findEarliestStart(start, duration, reqs, capacityById, usage);
+      start = findEarliestStart(start, duration, reqs, capacityById, usage, step.id);
     } else if (!resolveCapacity) {
       for (const req of reqs) {
         const cap = capacityById.get(req.resourceId);
@@ -182,6 +182,7 @@ function findEarliestStart(
   reqs: { resourceId: string; quantity: number }[],
   capacityById: Map<string, number>,
   usage: Map<string, Interval[]>,
+  stepId: string,
 ): number {
   let start = earliest;
   for (let attempt = 0; attempt < 10_000; attempt++) {
@@ -205,5 +206,7 @@ function findEarliestStart(
     if (ok) return start;
     start = delayTo;
   }
-  return start;
+  throw new Error(
+    `Cannot schedule step ${stepId}: resource leveling did not converge after 10,000 attempts`,
+  );
 }

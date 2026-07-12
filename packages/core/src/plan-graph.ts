@@ -97,70 +97,70 @@ export function topologicalOrder(nodes: readonly PlanGraphNode[]): string[] {
   return order;
 }
 
-/** Topological depth of each step (roots = 0). */
+/** Topological depth of each step (roots = 0). Uses iterative topo-order to avoid stack overflow on deep plans. */
 export function topologicalDepths(nodes: readonly PlanGraphNode[]): Map<string, number> {
   const byId = new Map(nodes.map((step) => [step.id, step]));
   const depths = new Map<string, number>();
+  const order = topologicalOrder(nodes);
 
-  const depthOf = (id: string): number => {
-    const cached = depths.get(id);
-    if (cached !== undefined) return cached;
+  for (const id of order) {
     const step = byId.get(id);
     if (!step || step.after.length === 0) {
       depths.set(id, 0);
-      return 0;
+    } else {
+      let maxDep = 0;
+      for (const depId of step.after) {
+        const d = depths.get(depId) ?? 0;
+        if (d > maxDep) maxDep = d;
+      }
+      depths.set(id, 1 + maxDep);
     }
-    const d = 1 + Math.max(...step.after.map((depId) => depthOf(depId)));
-    depths.set(id, d);
-    return d;
-  };
+  }
 
-  for (const step of nodes) depthOf(step.id);
   return depths;
 }
 
-/** Longest-path duration through the DAG (critical path length in seconds). */
+/** Longest-path duration through the DAG (critical path length in seconds). Uses iterative topo-order to avoid stack overflow on deep plans. */
 export function estimateCriticalPathDurationSeconds(steps: readonly TimedPlanNode[]): number {
   const byId = new Map(steps.map((step) => [step.id, step]));
   const memo = new Map<string, number>();
+  const order = topologicalOrder(steps);
 
-  const dfs = (id: string): number => {
-    const cached = memo.get(id);
-    if (cached !== undefined) return cached;
+  for (const id of order) {
     const step = byId.get(id);
-    if (!step) return 0;
-    const depMax = step.after.length === 0 ? 0 : Math.max(...step.after.map((depId) => dfs(depId)));
-    const total = depMax + step.estimatedDurationSeconds;
-    memo.set(id, total);
-    return total;
-  };
+    if (!step) {
+      memo.set(id, 0);
+      continue;
+    }
+    const depMax =
+      step.after.length === 0 ? 0 : Math.max(...step.after.map((depId) => memo.get(depId) ?? 0));
+    memo.set(id, depMax + step.estimatedDurationSeconds);
+  }
 
   let max = 0;
-  for (const step of steps) {
-    max = Math.max(max, dfs(step.id));
+  for (const value of memo.values()) {
+    if (value > max) max = value;
   }
   return max;
 }
 
-/** Step ids on one critical path (prefers max predecessor duration). */
+/** Step ids on one critical path (prefers max predecessor duration). Uses iterative topo-order to avoid stack overflow on deep plans. */
 export function computeCriticalPathIds(steps: readonly TimedPlanNode[]): string[] {
   if (steps.length === 0) return [];
   const byId = new Map(steps.map((step) => [step.id, step]));
   const best = new Map<string, number>();
+  const order = topologicalOrder(steps);
 
-  const pathLength = (id: string): number => {
-    const cached = best.get(id);
-    if (cached !== undefined) return cached;
+  for (const id of order) {
     const step = byId.get(id);
-    if (!step) return 0;
+    if (!step) {
+      best.set(id, 0);
+      continue;
+    }
     const depMax =
-      step.after.length === 0 ? 0 : Math.max(...step.after.map((depId) => pathLength(depId)));
-    const total = depMax + step.estimatedDurationSeconds;
-    best.set(id, total);
-    return total;
-  };
-
-  for (const step of steps) pathLength(step.id);
+      step.after.length === 0 ? 0 : Math.max(...step.after.map((depId) => best.get(depId) ?? 0));
+    best.set(id, depMax + step.estimatedDurationSeconds);
+  }
 
   let endId = steps[0]!.id;
   let endLen = best.get(endId) ?? 0;

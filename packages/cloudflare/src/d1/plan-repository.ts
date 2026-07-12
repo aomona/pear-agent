@@ -133,6 +133,7 @@ export class D1PlanRepository implements PlanRepository {
     domainId: string;
     goal: ExecutionGoal;
     title?: string;
+    normalizedInput?: unknown;
     ownerActorId?: string | null;
   }): Promise<StoredPlanArtifact> {
     const goal = executionGoalSchema.parse(input.goal);
@@ -150,6 +151,7 @@ export class D1PlanRepository implements PlanRepository {
       plan,
       status: "draft",
       ...(input.title !== undefined ? { title: input.title } : {}),
+      ...(input.normalizedInput !== undefined ? { normalizedInput: input.normalizedInput } : {}),
       ...(input.ownerActorId !== undefined ? { ownerActorId: input.ownerActorId } : {}),
     });
   }
@@ -236,6 +238,11 @@ export class D1PlanRepository implements PlanRepository {
     // Insert history first, then CAS-update current — one D1 batch so concurrent
     // writers cannot expose current_plan_json without a matching history row.
     // Unique(artifact_id, version) fails and rolls the batch back if two writers race.
+    // NOTE: We prefer db.batch() over db.transaction() because miniflare (used by
+    // vitest-pool-workers) rejects SQL BEGIN TRANSACTION. The batch is atomic for
+    // SQL errors, but if the CAS-UPDATE matches 0 rows (concurrent race), the
+    // version-history INSERT already committed. In that case we DELETE the orphaned
+    // row manually before throwing the conflict error.
     try {
       const results = await this.db.batch([
         this.db.insert(planArtifactVersions).values({
@@ -269,6 +276,15 @@ export class D1PlanRepository implements PlanRepository {
       const updateChanges = (results.at(-1) as { meta?: { changes?: number } } | undefined)?.meta
         ?.changes;
       if (updateChanges === 0) {
+        // Clean up orphaned version-history row before throwing
+        await this.db
+          .delete(planArtifactVersions)
+          .where(
+            and(
+              eq(planArtifactVersions.artifactId, input.artifactId),
+              eq(planArtifactVersions.version, plan.version),
+            ),
+          );
         throw new PlanArtifactConflictError(
           `Plan artifact ${input.artifactId} version race: base ${existing.version} was updated concurrently`,
         );

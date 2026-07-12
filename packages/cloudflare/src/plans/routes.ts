@@ -182,6 +182,12 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
     let stored: StoredPlanArtifact;
     if (body.plan !== undefined) {
       const plan = planSchema.parse(body.plan);
+      const match = assertPlanMatchesGoal(plan, goal);
+      if (!match.ok) {
+        throw new HTTPException(400, {
+          message: `Plan goal must match the requested goal (${match.reason})`,
+        });
+      }
       stored = await repository.createStored({
         ...(body.id !== undefined ? { id: body.id } : {}),
         domainId: body.domainId,
@@ -197,14 +203,9 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
         domainId: body.domainId,
         goal,
         ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.normalizedInput !== undefined ? { normalizedInput: body.normalizedInput } : {}),
         ownerActorId: context.actorId,
       });
-      if (body.normalizedInput !== undefined) {
-        stored = await repository.updateMeta({
-          artifactId: stored.id,
-          normalizedInput: body.normalizedInput,
-        });
-      }
     }
 
     return c.json(artifactJson(stored), 201);
@@ -242,6 +243,12 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
 
     if (body.plan !== undefined) {
       const nextPlan = planSchema.parse(body.plan) as ExecutionPlan;
+      const match = assertPlanMatchesGoal(nextPlan, existing.goal);
+      if (!match.ok) {
+        throw new HTTPException(400, {
+          message: `Replacement plan goal must match artifact goal (${match.reason})`,
+        });
+      }
       const versioned: ExecutionPlan = {
         ...nextPlan,
         version: existing.version + 1,
@@ -317,7 +324,7 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
     const stored = await repository.saveVersionStored({
       artifactId: planId,
       plan,
-      changeReason: "initial",
+      changeReason: existing.currentPlan.steps.length === 0 ? "initial" : "improve",
       summary: existing.currentPlan.steps.length === 0 ? "Generated plan" : "Regenerated plan",
       normalizedInput,
     });
