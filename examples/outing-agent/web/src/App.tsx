@@ -1,9 +1,11 @@
 import { outingDomain } from "@pear-agent/outing-domain-example";
 import { PearProvider, usePearContext, type PlanArtifactDetail } from "@pear-agent/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { DelayReplanPanel } from "./components/delay-replan-panel";
+import { NextActionHero } from "./components/next-action-hero";
+import { PhaseStepper } from "./components/phase-stepper";
 import { PlanDraftPanel } from "./components/plan-draft-panel";
 import { PlanInputPanel } from "./components/plan-input-panel";
 import { PlanListPanel } from "./components/plan-list-panel";
@@ -22,13 +24,6 @@ import { loadStoredSessionId, storeSessionId } from "./lib/session-storage";
 
 const API_BASE = import.meta.env.VITE_PEAR_API_BASE ?? "http://127.0.0.1:8787";
 const ACTOR_ID = "demo-user";
-
-const PHASES: { id: DemoPhase; label: string }[] = [
-  { id: "list", label: "一覧" },
-  { id: "input", label: "入力" },
-  { id: "plan", label: "計画" },
-  { id: "execute", label: "実行" },
-];
 
 function DemoShell() {
   const { client } = usePearContext();
@@ -78,10 +73,32 @@ function DemoShell() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- hydrate once on mount
 
+  const canGo = useMemo(
+    (): Partial<Record<DemoPhase, boolean>> => ({
+      list: true,
+      input: Boolean(planId),
+      plan: Boolean(planId && artifact?.normalizedInput !== undefined),
+      execute: Boolean(sessionId),
+    }),
+    [planId, artifact, sessionId],
+  );
+
   const goList = () => {
     setPhase("list");
     setPlanId(null);
     setArtifact(null);
+  };
+
+  const selectPhase = (next: DemoPhase) => {
+    if (next === "list") {
+      goList();
+      return;
+    }
+    if (!canGo[next] && next !== phase) {
+      toast.message("このフェーズにはまだ進めません");
+      return;
+    }
+    setPhase(next);
   };
 
   const openPlan = async (id: string) => {
@@ -93,8 +110,6 @@ function DemoShell() {
     }
     if (next.normalizedInput === undefined) {
       setPhase("input");
-    } else if (next.currentPlan.steps.length === 0 || next.status === "draft") {
-      setPhase("plan");
     } else {
       setPhase("plan");
     }
@@ -118,50 +133,45 @@ function DemoShell() {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">PEAR Outing Agent</h1>
-            <p className="text-xs text-muted-foreground">
-              Plan library → Input → Plan → Execute · demo UI
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {PHASES.map((p) => (
-              <Badge
-                key={p.id}
-                variant={phase === p.id ? "default" : "outline"}
-                className="cursor-default"
-              >
-                {p.label}
-              </Badge>
-            ))}
-            {planId ? (
-              <Badge variant="outline" className="font-mono text-xs max-w-[140px] truncate">
-                plan {planId.slice(0, 8)}…
-              </Badge>
-            ) : null}
-            {sessionId ? (
-              <>
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight">PEAR Outing Agent</h1>
+              <p className="text-xs text-muted-foreground">
+                一覧 → 入力 → 計画 → 実行 · 迷わず進められるデモ UI
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {planId ? (
                 <Badge variant="outline" className="font-mono text-xs max-w-[140px] truncate">
-                  sess {sessionId.slice(0, 8)}…
+                  plan {planId.slice(0, 8)}…
                 </Badge>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setSessionId(null);
-                    if (planId) setPhase("plan");
-                    else setPhase("list");
-                  }}
-                >
-                  Leave session
-                </Button>
-              </>
-            ) : null}
-            <Button size="sm" variant="ghost" onClick={goList}>
-              Plans
-            </Button>
+              ) : null}
+              {sessionId ? (
+                <>
+                  <Badge variant="outline" className="font-mono text-xs max-w-[140px] truncate">
+                    sess {sessionId.slice(0, 8)}…
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setSessionId(null);
+                      if (planId && artifact?.normalizedInput !== undefined) setPhase("plan");
+                      else if (planId) setPhase("input");
+                      else setPhase("list");
+                    }}
+                  >
+                    Leave session
+                  </Button>
+                </>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={goList}>
+                Plans
+              </Button>
+            </div>
           </div>
+          <PhaseStepper phase={phase} canGo={canGo} onSelect={selectPhase} />
         </div>
       </header>
 
@@ -204,13 +214,8 @@ function DemoShell() {
 
         {phase === "execute" ? (
           <>
-            <div className="md:col-span-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span>Running execution session from saved plan.</span>
-              {planId ? (
-                <Button size="sm" variant="ghost" onClick={() => setPhase("plan")}>
-                  Back to plan
-                </Button>
-              ) : null}
+            <div className="md:col-span-2">
+              <NextActionHero sessionId={sessionId} />
             </div>
             <PlanStepsPanel sessionId={sessionId} />
             <VoiceContinuationPanel sessionId={sessionId} />

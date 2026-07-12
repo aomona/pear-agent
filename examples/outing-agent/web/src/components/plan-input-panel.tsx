@@ -16,7 +16,9 @@ import {
   type OutingFormState,
   type PrepListRow,
 } from "../lib/build-outing-input";
+import { OUTING_PRESETS } from "../lib/presets";
 import { AddPrepModal, type AddPrepSubmit } from "./add-prep-modal";
+import { InputSummary } from "./input-summary";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -176,6 +178,33 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              プリセット（ワンタップで埋める）
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {OUTING_PRESETS.map((preset) => (
+                <Button
+                  key={preset.id}
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setForm(preset.apply());
+                    toast.success(`${preset.label} を適用しました`);
+                  }}
+                >
+                  {preset.label}
+                </Button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {OUTING_PRESETS.map((p) => `${p.label}: ${p.description}`).join(" · ")}
+            </p>
+          </div>
+
+          <InputSummary form={form} />
+
           {/* Departure */}
           <section className="space-y-3 rounded-lg border p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -291,6 +320,12 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
                     index={index}
                     onRemove={() => removeItem(row.key)}
                     onRetry={() => retryItem(row)}
+                    onChange={(patch) =>
+                      setForm((f) => ({
+                        ...f,
+                        items: f.items.map((r) => (r.key === row.key ? { ...r, ...patch } : r)),
+                      }))
+                    }
                   />
                 ))}
               </ul>
@@ -335,13 +370,16 @@ function PrepListItem({
   index,
   onRemove,
   onRetry,
+  onChange,
 }: {
   row: PrepListRow;
   index: number;
   onRemove: () => void;
   onRetry: () => void;
+  onChange: (patch: Partial<PrepListRow>) => void;
 }) {
   const kindBadge = row.kind === "belonging" ? "持ち物" : "タスク";
+  const [editing, setEditing] = useState(false);
 
   if (row.status === "pending") {
     return (
@@ -387,6 +425,64 @@ function PrepListItem({
     );
   }
 
+  if (editing) {
+    return (
+      <li className="space-y-2 rounded-md border border-primary/30 bg-background px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">#{index + 1}</span>
+          <Badge variant="secondary">{kindBadge}</Badge>
+          <span className="text-xs text-muted-foreground">編集中</span>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Input
+            value={row.name}
+            placeholder={row.kind === "task" ? "タスク名" : "名前"}
+            onChange={(e) => onChange({ name: e.target.value })}
+          />
+          <Input
+            className="font-mono text-sm"
+            value={row.id}
+            placeholder="id"
+            onChange={(e) => onChange({ id: e.target.value })}
+          />
+          {row.kind === "belonging" ? (
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              placeholder="充電%"
+              value={row.chargePercent}
+              onChange={(e) => onChange({ chargePercent: e.target.value })}
+            />
+          ) : (
+            <Input
+              type="number"
+              min={1}
+              placeholder="所要秒"
+              value={row.estimatedDurationSeconds}
+              onChange={(e) => onChange({ estimatedDurationSeconds: e.target.value })}
+            />
+          )}
+        </div>
+        {row.kind === "task" ? (
+          <Input
+            placeholder="メモ"
+            value={row.notes}
+            onChange={(e) => onChange({ notes: e.target.value })}
+          />
+        ) : null}
+        <div className="flex justify-end gap-1">
+          <Button type="button" size="sm" variant="outline" onClick={() => setEditing(false)}>
+            完了
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onRemove}>
+            削除
+          </Button>
+        </div>
+      </li>
+    );
+  }
+
   return (
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/20 px-3 py-2">
       <div className="min-w-0 space-y-0.5">
@@ -415,9 +511,14 @@ function PrepListItem({
           )}
         </div>
       </div>
-      <Button type="button" size="sm" variant="ghost" onClick={onRemove}>
-        削除
-      </Button>
+      <div className="flex gap-1">
+        <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+          編集
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onRemove}>
+          削除
+        </Button>
+      </div>
     </li>
   );
 }
