@@ -10,8 +10,8 @@ type ActiveTimersHudProps = {
   sessionId: string | null;
 };
 
-/** Repeat ピピピピ while any timer is at 00:00 until complete_timer (UI or Live). */
-const ALARM_REPEAT_MS = 2_200;
+/** Repeat ピピピピ while at 00:00 until complete — leave a clear gap between bursts. */
+const ALARM_REPEAT_MS = 8_000;
 
 function formatMmSs(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
