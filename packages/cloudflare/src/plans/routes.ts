@@ -27,12 +27,15 @@ export type PlanLibraryOptions = {
   planGenerator: PlanGenerator;
   /**
    * Optional host free-text resolver (often LLM). Used by POST .../normalize when provided.
+   * Prefer {@link createFreeTextResolver} when the implementation needs Worker env (API keys).
    */
   freeTextResolver?: FreeTextFieldResolver;
+  createFreeTextResolver?: (env: { GEMINI_API_KEY?: string }) => FreeTextFieldResolver | undefined;
   /**
    * Optional host plan improver. Used by POST .../improve when provided.
    */
   planImprover?: PlanImprover;
+  createPlanImprover?: (env: { GEMINI_API_KEY?: string }) => PlanImprover | undefined;
   /**
    * Domain-specific normalize. Hosts inject for domains they support.
    * If omitted, POST .../normalize returns 501.
@@ -44,6 +47,35 @@ export type PlanLibraryOptions = {
     context: unknown;
   }) => Promise<unknown>;
 };
+
+function resolveFreeTextResolver(
+  options: PlanLibraryOptions,
+  env: { GEMINI_API_KEY?: string },
+): FreeTextFieldResolver | undefined {
+  return options.createFreeTextResolver?.(env) ?? options.freeTextResolver;
+}
+
+function resolvePlanImprover(
+  options: PlanLibraryOptions,
+  env: { GEMINI_API_KEY?: string },
+): PlanImprover | undefined {
+  return options.createPlanImprover?.(env) ?? options.planImprover;
+}
+
+function asHttpError(error: unknown): never {
+  if (error instanceof HTTPException) throw error;
+  if (
+    error instanceof Error &&
+    "status" in error &&
+    typeof (error as { status?: unknown }).status === "number"
+  ) {
+    const status = (error as { status: number }).status;
+    if (status === 400 || status === 502 || status === 503) {
+      throw new HTTPException(status, { message: error.message });
+    }
+  }
+  throw error;
+}
 
 function repo(env: { DB: D1Database }): D1PlanRepository {
   return new D1PlanRepository(env.DB);
@@ -306,6 +338,7 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
     const existing = await repository.getStored(planId);
     if (!existing) throw new PlanArtifactNotFoundError(planId);
 
+    const freeTextResolver = resolveFreeTextResolver(options, c.env);
     const resolveInput: {
       domainId: string;
       input: unknown;
@@ -316,16 +349,20 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       input: body.input,
       context,
     };
-    if (options.freeTextResolver !== undefined) {
-      resolveInput.freeTextResolver = options.freeTextResolver;
+    if (freeTextResolver !== undefined) {
+      resolveInput.freeTextResolver = freeTextResolver;
     }
 
-    const normalizedInput = await options.normalizeDomainInput(resolveInput);
-    const stored = await repository.updateMeta({
-      artifactId: planId,
-      normalizedInput,
-    });
-    return c.json(artifactJson(stored));
+    try {
+      const normalizedInput = await options.normalizeDomainInput(resolveInput);
+      const stored = await repository.updateMeta({
+        artifactId: planId,
+        normalizedInput,
+      });
+      return c.json(artifactJson(stored));
+    } catch (error) {
+      asHttpError(error);
+    }
   });
 
   app.post("/plans/:planId/improve", async (c) => {
@@ -333,7 +370,8 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
     const planId = c.req.param("planId");
     await options.authorize({ type: "plan.update", planId }, context);
 
-    if (!options.planImprover) {
+    const planImprover = resolvePlanImprover(options, c.env);
+    if (!planImprover) {
       throw new HTTPException(501, {
         message: "planImprover is not configured on this Worker",
       });
@@ -370,20 +408,24 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       improveInput.constraints = body.constraints;
     }
 
-    const result = await options.planImprover.improve(improveInput);
-    const nextPlan: ExecutionPlan = {
-      ...result.plan,
-      version: existing.version + 1,
-      id: existing.currentPlan.id,
-    };
+    try {
+      const result = await planImprover.improve(improveInput);
+      const nextPlan: ExecutionPlan = {
+        ...result.plan,
+        version: existing.version + 1,
+        id: existing.currentPlan.id,
+      };
 
-    const stored = await repository.saveVersionStored({
-      artifactId: planId,
-      plan: nextPlan,
-      changeReason: "improve",
-      summary: body.request.slice(0, 200),
-    });
-    return c.json(artifactJson(stored));
+      const stored = await repository.saveVersionStored({
+        artifactId: planId,
+        plan: nextPlan,
+        changeReason: "improve",
+        summary: body.request.slice(0, 200),
+      });
+      return c.json(artifactJson(stored));
+    } catch (error) {
+      asHttpError(error);
+    }
   });
 
   app.get("/plans/:planId/versions", async (c) => {

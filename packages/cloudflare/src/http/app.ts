@@ -76,7 +76,11 @@ export type CreatePearAppOptions = {
    */
   planLibrary?: Pick<
     PlanLibraryOptions,
-    "freeTextResolver" | "planImprover" | "normalizeDomainInput"
+    | "freeTextResolver"
+    | "createFreeTextResolver"
+    | "planImprover"
+    | "createPlanImprover"
+    | "normalizeDomainInput"
   >;
 };
 

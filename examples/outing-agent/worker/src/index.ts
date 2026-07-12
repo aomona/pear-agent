@@ -8,7 +8,9 @@ import { outingDomain } from "@pear-agent/outing-domain-example";
 
 import { authorize } from "./authorize.js";
 import { handleCorsPreflight, withCors } from "./cors.js";
+import { createGeminiFreeTextResolver } from "./free-text-resolver.js";
 import { planGenerator } from "./plan-generator.js";
+import { createGeminiPlanImprover } from "./plan-improver.js";
 import { replanRuntime } from "./replan-runtime.js";
 
 export { ExecutionSessionAgent };
@@ -34,7 +36,14 @@ const worker = createPearWorker({
         context,
       });
     },
-    // freeTextResolver / planImprover (Gemini) wired in a follow-up.
+    createFreeTextResolver: (env) =>
+      createGeminiFreeTextResolver({
+        getApiKey: () => env.GEMINI_API_KEY,
+      }),
+    createPlanImprover: (env) =>
+      createGeminiPlanImprover({
+        getApiKey: () => env.GEMINI_API_KEY,
+      }),
   },
   resolveContext: async (request) => {
     // Demo only: missing header → default actor. Malformed header still fails closed.
