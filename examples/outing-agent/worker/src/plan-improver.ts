@@ -114,27 +114,11 @@ export function createGeminiPlanImprover(options: CreateGeminiPlanImproverOption
       const raw = await generateGeminiJson({
         apiKey: options.getApiKey(),
         ...(options.model !== undefined ? { model: options.model } : {}),
-        system: [
-          "You improve a PEAR outing preparation plan before execution.",
-          "Only edit existing steps by id. Do not invent new step ids.",
-          "Keep changes minimal and concrete (durations, labels, instructions).",
-          "Respond with JSON matching the schema.",
-        ].join("\n"),
-        user: [
-          `Domain: ${input.domainId}`,
-          `Goal: ${input.goal.description}`,
-          `User request: ${input.request}`,
-          input.normalizedInput !== undefined
-            ? `Normalized input: ${JSON.stringify(input.normalizedInput)}`
-            : "",
-          input.constraints !== undefined
-            ? `Constraints: ${JSON.stringify(input.constraints)}`
-            : "",
-          `Current steps: ${JSON.stringify(stepSummary)}`,
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        system:
+          "Edit only existing step ids. Minimal concrete changes (duration/label/instructions). JSON only.",
+        user: [`Request: ${input.request}`, `Steps: ${JSON.stringify(stepSummary)}`].join("\n"),
         schema: improveResponseSchema as unknown as Record<string, unknown>,
+        maxOutputTokens: 768,
       });
 
       const parsed = improveParsedSchema.safeParse(raw);

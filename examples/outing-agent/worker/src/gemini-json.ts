@@ -1,9 +1,13 @@
 /**
  * Thin Gemini structured-JSON helper for outing plan library (normalize / improve).
- * Uses @google/genai generateContent + responseJsonSchema (not Live API).
+ * Optimized for low latency: flash-lite + thinking off + small max tokens.
  */
 
-export const OUTING_GEMINI_TEXT_MODEL = "gemini-3.5-flash";
+/**
+ * Fast structured extraction — lite model, thinking disabled.
+ * Override per-call via `model` if needed.
+ */
+export const OUTING_GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite-preview";
 
 export class GeminiServiceError extends Error {
   readonly status: 400 | 502 | 503;
@@ -22,7 +26,47 @@ export type GenerateJsonInput = {
   user: string;
   /** JSON Schema object for structured output. */
   schema: Record<string, unknown>;
+  /** Cap output size (default small for field extraction). */
+  maxOutputTokens?: number;
 };
+
+type GenConfig = {
+  systemInstruction: string;
+  responseMimeType: string;
+  responseJsonSchema: Record<string, unknown>;
+  temperature: number;
+  maxOutputTokens: number;
+  thinkingConfig?: {
+    thinkingBudget: number;
+    includeThoughts: boolean;
+  };
+};
+
+async function callOnce(
+  apiKey: string,
+  model: string,
+  user: string,
+  config: GenConfig,
+): Promise<unknown> {
+  const { GoogleGenAI } = await import("@google/genai");
+  const client = new GoogleGenAI({ apiKey });
+  const response = await client.models.generateContent({
+    model,
+    contents: user,
+    config,
+  });
+
+  const text = response.text?.trim();
+  if (!text) {
+    throw new GeminiServiceError("Gemini returned an empty structured response", 502);
+  }
+
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new GeminiServiceError("Gemini returned non-JSON structured output", 502);
+  }
+}
 
 /**
  * Call Gemini and parse JSON text. Throws {@link GeminiServiceError} on config/API failure.
@@ -36,34 +80,37 @@ export async function generateGeminiJson(input: GenerateJsonInput): Promise<unkn
   }
 
   const model = input.model ?? OUTING_GEMINI_TEXT_MODEL;
+  const maxOutputTokens = input.maxOutputTokens ?? 512;
+  const base = {
+    systemInstruction: input.system,
+    responseMimeType: "application/json",
+    responseJsonSchema: input.schema,
+    temperature: 0,
+    maxOutputTokens,
+  } as const;
 
   try {
-    const { GoogleGenAI } = await import("@google/genai");
-    const client = new GoogleGenAI({ apiKey: input.apiKey });
-    const response = await client.models.generateContent({
-      model,
-      contents: input.user,
-      config: {
-        systemInstruction: input.system,
-        responseMimeType: "application/json",
-        responseJsonSchema: input.schema,
-        temperature: 0.2,
+    // thinkingBudget: 0 = disable reasoning (huge latency win on Flash family).
+    return await callOnce(input.apiKey, model, input.user, {
+      ...base,
+      thinkingConfig: {
+        thinkingBudget: 0,
+        includeThoughts: false,
       },
     });
-
-    const text = response.text?.trim();
-    if (!text) {
-      throw new GeminiServiceError("Gemini returned an empty structured response", 502);
-    }
-
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      throw new GeminiServiceError("Gemini returned non-JSON structured output", 502);
-    }
   } catch (error) {
     if (error instanceof GeminiServiceError) throw error;
     const message = error instanceof Error ? error.message : String(error);
+    // Some model variants reject thinkingConfig — retry bare for compatibility.
+    if (/thinking|ThinkingConfig|invalid|unknown field/i.test(message)) {
+      try {
+        return await callOnce(input.apiKey, model, input.user, { ...base });
+      } catch (retryError) {
+        if (retryError instanceof GeminiServiceError) throw retryError;
+        const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+        throw new GeminiServiceError(`Gemini request failed: ${retryMsg}`, 502);
+      }
+    }
     throw new GeminiServiceError(`Gemini request failed: ${message}`, 502);
   }
 }

@@ -8,7 +8,7 @@ const departureSchema = {
   properties: {
     departureAt: {
       type: "string",
-      description: "ISO-8601 datetime with offset or Z, e.g. 2026-07-12T10:00:00.000Z",
+      description: "ISO-8601 datetime with Z, e.g. 2026-07-12T10:00:00.000Z",
     },
   },
   required: ["departureAt"],
@@ -24,13 +24,13 @@ const belongingsSchema = {
       items: {
         type: "object",
         properties: {
-          id: { type: "string", description: "slug id, e.g. phone" },
-          name: { type: "string", description: "display name" },
+          id: { type: "string", description: "kebab-case id" },
+          name: { type: "string" },
           chargePercent: {
             type: "number",
             minimum: 0,
             maximum: 100,
-            description: "Current battery % when the item needs charging; omit if N/A",
+            description: "battery % if device needs charge; omit otherwise",
           },
         },
         required: ["id", "name"],
@@ -60,14 +60,12 @@ const belongingsResultSchema = z.object({
 
 export type CreateGeminiFreeTextResolverOptions = {
   getApiKey: () => string | undefined;
-  /** Optional clock for relative phrases like "tomorrow morning". */
   now?: () => Date;
   model?: string;
 };
 
 /**
- * Host FreeTextFieldResolver for outing Domain fields via Gemini structured output.
- * Deterministic parsers run first in Domain normalize; this is the LLM fallback.
+ * Fast free-text → structured JSON via Gemini flash-lite (no reasoning).
  */
 export function createGeminiFreeTextResolver(
   options: CreateGeminiFreeTextResolverOptions,
@@ -75,26 +73,15 @@ export function createGeminiFreeTextResolver(
   return {
     async resolve(input) {
       const now = options.now?.() ?? new Date();
-      const system = [
-        "You convert natural-language outing-prep fields into strict JSON.",
-        "Do not invent unrelated items. Prefer concrete ids (kebab-case).",
-        `Reference now (UTC): ${now.toISOString()}`,
-        "If the user says relative times (tomorrow morning), resolve against now.",
-      ].join("\n");
 
       if (input.field === "departureAt") {
         const raw = await generateGeminiJson({
           apiKey: options.getApiKey(),
           ...(options.model !== undefined ? { model: options.model } : {}),
-          system,
-          user: [
-            "Extract departure datetime.",
-            input.hint ? `Hint: ${input.hint}` : "",
-            `Free text: ${input.freeText}`,
-          ]
-            .filter(Boolean)
-            .join("\n"),
+          system: `Extract one departure datetime as ISO-8601 UTC. Now=${now.toISOString()}. JSON only.`,
+          user: input.freeText,
           schema: departureSchema as unknown as Record<string, unknown>,
+          maxOutputTokens: 128,
         });
         const parsed = departureResultSchema.safeParse(raw);
         if (!parsed.success) {
@@ -103,7 +90,6 @@ export function createGeminiFreeTextResolver(
             400,
           );
         }
-        // Domain parse expects ISO string; allow Date.parse-able values.
         const ms = Date.parse(parsed.data.departureAt);
         if (Number.isNaN(ms)) {
           throw new GeminiServiceError(
@@ -118,16 +104,11 @@ export function createGeminiFreeTextResolver(
         const raw = await generateGeminiJson({
           apiKey: options.getApiKey(),
           ...(options.model !== undefined ? { model: options.model } : {}),
-          system,
-          user: [
-            "Extract belongings for leaving the house.",
-            "Items that need charging should include chargePercent (0-100).",
-            input.hint ? `Hint: ${input.hint}` : "",
-            `Free text: ${input.freeText}`,
-          ]
-            .filter(Boolean)
-            .join("\n"),
+          system:
+            "Extract leave-home items as JSON. kebab-case ids. chargePercent only for devices. No extra items.",
+          user: input.freeText,
           schema: belongingsSchema as unknown as Record<string, unknown>,
+          maxOutputTokens: 384,
         });
         const parsed = belongingsResultSchema.safeParse(raw);
         if (!parsed.success) {
