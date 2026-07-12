@@ -58,6 +58,10 @@ export type CreateSessionResult = {
   stepStates: StepStates;
 };
 
+/**
+ * Successful HTTP 200 replan outcomes. Pre-commit generation/validation failures
+ * throw {@link PearClientError} (HTTP 4xx) with body `{ kind: "failed", attemptId, reason }`.
+ */
 export type RequestReplanResult =
   | { kind: "not_needed"; assessment: ReplanAssessment }
   | {

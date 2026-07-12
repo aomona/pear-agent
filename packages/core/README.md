@@ -109,7 +109,7 @@ CoreはSession、WorldState、Runtime Event、Timer、materialized state、Snaps
 
 ## Partial Replanning
 
-`analyzeAffectedSubgraph()`は直接影響を受けたStepから下流依存を展開します。`applyPlanPatch()`は`PlanPatch`を不変データとして検証・適用し、追加・更新・削除のdiffとreconcile済みWorldStateを返します。base Plan / append-order Event cursor、原因Event、affected範囲、DAG、Capability、Domain step schema、WorldState/resource整合性を検証し、completed/skippedを変更しません。Domain schemaのdefault/coerce/transformは変更対象Stepだけへ反映し、unaffected Stepは保持します。activeは中断後、paused/failedは人間の確認後にのみ切替できます。
+`analyzeAffectedSubgraph()`は直接影響を受けたStepから下流依存を展開します。`applyPlanPatch({ phase })`は`PlanPatch`を不変データとして検証・適用し、追加・更新・削除のdiffとreconcile済みWorldStateを返します。`phase: "proposal"`は候補検証（active/paused を検査可能）、`phase: "activation"`は中断後の active 禁止と paused/failed の人間確認を強制します。`currentLastEventId`は operational cursor（replan/continuation 監査 Event を除く）を明示します。base Plan、原因Event、affected範囲、DAG、Capability、Domain step schema、WorldState/resource整合性を検証し、completed/skippedを変更しません。Domain schemaのdefault/coerce/transformは変更対象Stepだけへ反映し、unaffected Stepは保持します。
 
 `InMemoryExecutionStateRepository`は永続ストアではありません。Cloudflare/D1への永続化と AI SDK 計画・再計画は Adapter 側で提供します。Core は `ExecutionContinuation` と Wake Condition の共通契約を公開し、永続化と Scheduler は `@pear-agent/cloudflare` が担当します。
 

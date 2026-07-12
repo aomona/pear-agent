@@ -148,7 +148,7 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
           actorId: input.actorId,
           origin: "replan",
           type: "replan_failed",
-          payload: { patchId: input.attemptId, reason: input.reason.slice(0, 2_000) },
+          payload: { attemptId: input.attemptId, reason: input.reason.slice(0, 2_000) },
           occurredAt: new Date(),
         }),
       ),
@@ -407,17 +407,11 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
         normalizedInputRevision: input.normalizedInputRevision,
         capabilityPolicies: input.capabilityPolicies,
       });
-      const continuation = result.event
-        ? await new D1ContinuationStore(this.env.DB).wakeForEvent(result.event)
-        : null;
-      const responseState = continuation
-        ? ((await this.repository().get(this.sessionId())) ?? result.state)
-        : result.state;
-      this.bumpPulse(
-        responseState.appliedEventIds[responseState.appliedEventIds.length - 1] ?? null,
-        continuation ?? undefined,
-      );
-      return { ...result, state: responseState };
+      const state = await this.publishAfterMutation({
+        event: result.event,
+        state: result.state,
+      });
+      return { ...result, state };
     });
   }
 
@@ -437,17 +431,11 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
         domainVersion: input.domainVersion,
         capabilityPolicies: input.capabilityPolicies,
       });
-      const continuation = result.event
-        ? await new D1ContinuationStore(this.env.DB).wakeForEvent(result.event)
-        : null;
-      const responseState = continuation
-        ? ((await this.repository().get(this.sessionId())) ?? result.state)
-        : result.state;
-      this.bumpPulse(
-        responseState.appliedEventIds[responseState.appliedEventIds.length - 1] ?? null,
-        continuation ?? undefined,
-      );
-      return { ...result, state: responseState };
+      const state = await this.publishAfterMutation({
+        event: result.event,
+        state: result.state,
+      });
+      return { ...result, state };
     });
   }
 
@@ -467,19 +455,36 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
             .bind(event.sessionId, event.id, event.idempotencyKey)
             .first<{ event_json: string }>()
             .then((row) => (row ? parseRuntimeEvent(row.event_json) : null));
-    const continuation = deliveryEvent
-      ? await new D1ContinuationStore(this.env.DB).wakeForEvent(deliveryEvent)
+    const state = await this.publishAfterMutation({
+      event: deliveryEvent,
+      state: result.state,
+      fallbackEventId: deliveryEvent?.id ?? result.event.id,
+    });
+    return { ...result, state };
+  }
+
+  /**
+   * Wake Continuations for a committed event, reload state if needed, and bump
+   * the client invalidation pulse. Call only under {@link runExclusive}.
+   */
+  private async publishAfterMutation(input: {
+    event: RuntimeEvent | null;
+    state: MaterializedExecutionState;
+    fallbackEventId?: string | null;
+  }): Promise<MaterializedExecutionState> {
+    const continuation = input.event
+      ? await new D1ContinuationStore(this.env.DB).wakeForEvent(input.event)
       : null;
     const responseState = continuation
-      ? ((await this.repository().get(this.sessionId())) ?? result.state)
-      : result.state;
+      ? ((await this.repository().get(this.sessionId())) ?? input.state)
+      : input.state;
     this.bumpPulse(
       responseState.appliedEventIds[responseState.appliedEventIds.length - 1] ??
-        deliveryEvent?.id ??
-        result.event.id,
+        input.fallbackEventId ??
+        null,
       continuation ?? undefined,
     );
-    return { ...result, state: responseState };
+    return responseState;
   }
 
   /**

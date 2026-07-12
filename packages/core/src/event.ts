@@ -39,8 +39,17 @@ const replanProposedPayloadSchema = z
   .object({ patchId: z.string().min(1), mode: z.enum(["automatic", "confirm", "suggest"]) })
   .strict();
 const replanFailedPayloadSchema = z
-  .object({ patchId: z.string().min(1), reason: z.string().min(1) })
-  .strict();
+  .object({
+    reason: z.string().min(1),
+    /** Durable PlanPatch id when a patch row was written. */
+    patchId: z.string().min(1).optional(),
+    /** Stable pre-commit attempt id when no patch row exists yet. */
+    attemptId: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine((payload) => payload.patchId !== undefined || payload.attemptId !== undefined, {
+    message: "replan_failed requires patchId or attemptId",
+  });
 
 function coreEventSchema<TType extends string, TPayload extends z.ZodType>(
   type: TType,

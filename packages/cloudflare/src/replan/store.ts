@@ -1,8 +1,7 @@
 import {
   applyPlanPatch,
   applyRuntimeEvent,
-  findActivePatchStepIds,
-  findConfirmationRequiredPatchStepIds,
+  inspectPatchSteps,
   materializedExecutionStateSchema,
   planChangeSchema,
   PlanPatchValidationError,
@@ -23,13 +22,15 @@ import {
 
 import { D1ExecutionStateRepository } from "../d1/repository.js";
 import { SessionNotFoundError } from "../errors.js";
+import { parseJson, parseRuntimeEvent } from "../serialize.js";
+import { activatePlanPatch } from "./activation.js";
+import { currentReplanBaseEventId, hasOnlyInterruptionEventsSinceBase } from "./cursor.js";
+import { attemptKey, causeKey, sameIdSet } from "./keys.js";
 import {
-  parseJson,
-  serializeExecutionState,
-  serializeJson,
-  serializeRuntimeEvent,
-  parseRuntimeEvent,
-} from "../serialize.js";
+  insertEventStatement,
+  insertPatchStatement,
+  updateMaterializedStatement,
+} from "./statements.js";
 
 type PatchRow = {
   id: string;
@@ -57,46 +58,11 @@ export type ReplanMutationResult = {
   event: RuntimeEvent | null;
 };
 
-function causeKey(
-  domainVersion: number,
-  normalizedInputRevision: number | null,
-  eventIds: readonly string[],
-): string {
-  return JSON.stringify([domainVersion, normalizedInputRevision, [...new Set(eventIds)].sort()]);
-}
-
-function attemptKey(
-  domainVersion: number,
-  normalizedInputRevision: number | null,
-  patch: PlanPatch,
-): string {
-  return JSON.stringify([
-    causeKey(domainVersion, normalizedInputRevision, patch.causeEventIds),
-    patch.basePlanId,
-    patch.basePlanVersion,
-    patch.baseLastEventId,
-  ]);
-}
-
-function sameIdSet(left: readonly string[], right: readonly string[]): boolean {
-  const expected = new Set(right);
-  return left.length === expected.size && left.every((id) => expected.has(id));
-}
-
 function safePatchFailure(caught: unknown): string {
   return caught instanceof PlanPatchValidationError
     ? caught.message.slice(0, 2_000)
     : "Plan patch validation failed";
 }
-
-const NORMALIZED_INPUT_REVISION_GATE = `(
-  (? IS NULL AND NOT EXISTS (
-    SELECT 1 FROM normalized_inputs absent_input WHERE absent_input.session_id = es.id
-  )) OR EXISTS (
-    SELECT 1 FROM normalized_inputs current_input
-    WHERE current_input.session_id = es.id AND current_input.revision = ?
-  )
-)`;
 
 function rowToChange(row: PatchRow): PlanChange {
   return planChangeSchema.parse({
@@ -193,9 +159,8 @@ export class D1ReplanStore {
     const sessionDomainVersion = await this.requireSessionDomainVersion(input.sessionId);
     const normalizedInputRevision = await this.currentNormalizedInputRevision(input.sessionId);
     let mode = replanModeSchema.parse(input.mode);
-    const currentLastEventId = await this.currentReplanBaseEventId(input.sessionId);
-    const activeStepIds = findActivePatchStepIds(patch, state.stepStates);
-    const confirmationRequiredStepIds = findConfirmationRequiredPatchStepIds(
+    const currentLastEventId = await currentReplanBaseEventId(this.d1, input.sessionId);
+    const { activeStepIds, confirmationRequiredStepIds } = inspectPatchSteps(
       patch,
       state.stepStates,
     );
@@ -242,13 +207,10 @@ export class D1ReplanStore {
         stepStates: state.stepStates,
         worldState: state.worldState,
         appliedEventIds: state.appliedEventIds,
-        patch,
-        // Proposal validation may inspect an active-step candidate. Actual
-        // activation still requires the real session to be paused + confirmed.
-        activeStepChangeConfirmed: confirmationRequiredStepIds.length > 0,
-        allowActiveStepProposal: activeStepIds.length > 0,
-        capabilityIds: input.capabilityPolicies.map(({ id }) => id),
         currentLastEventId,
+        patch,
+        phase: "proposal",
+        capabilityIds: input.capabilityPolicies.map(({ id }) => id),
       }).plan;
     } catch (caught) {
       const reason = safePatchFailure(caught);
@@ -283,7 +245,7 @@ export class D1ReplanStore {
     });
     const nextState = applyRuntimeEvent(state, event);
     await this.d1.batch([
-      this.insertPatchStatement({
+      insertPatchStatement(this.d1, {
         sessionId: input.sessionId,
         actorId: input.actorId,
         patch,
@@ -295,8 +257,8 @@ export class D1ReplanStore {
         activeStepIdsAtProposal: activeStepIds,
         now,
       }),
-      this.insertEventStatement(event),
-      this.updateMaterializedStatement(input.sessionId, nextState, now),
+      insertEventStatement(this.d1, event),
+      updateMaterializedStatement(this.d1, input.sessionId, nextState, now),
     ]);
     const change = await this.get(input.sessionId, patch.id);
     if (!change) throw new Error(`Failed to read proposed patch ${patch.id}`);
@@ -364,7 +326,7 @@ export class D1ReplanStore {
         normalizedInputRevision: change.validationNormalizedInputRevision,
       });
     }
-    let currentLastEventId = await this.currentReplanBaseEventId(input.sessionId);
+    let currentLastEventId = await currentReplanBaseEventId(this.d1, input.sessionId);
     if (
       change.activeStepIdsAtProposal.length > 0 &&
       (state.session.status !== "paused" ||
@@ -377,7 +339,8 @@ export class D1ReplanStore {
     }
     if (
       change.activeStepIdsAtProposal.length > 0 &&
-      (await this.hasOnlyInterruptionEventsSinceBase(
+      (await hasOnlyInterruptionEventsSinceBase(
+        this.d1,
         input.sessionId,
         change.patch.baseLastEventId,
         change.activeStepIdsAtProposal,
@@ -392,10 +355,11 @@ export class D1ReplanStore {
         stepStates: state.stepStates,
         worldState: state.worldState,
         appliedEventIds: state.appliedEventIds,
-        patch: change.patch,
-        activeStepChangeConfirmed: input.humanConfirmed,
-        capabilityIds: input.capabilityPolicies.map(({ id }) => id),
         currentLastEventId,
+        patch: change.patch,
+        phase: "activation",
+        humanConfirmed: input.humanConfirmed,
+        capabilityIds: input.capabilityPolicies.map(({ id }) => id),
       }).plan;
     } catch (caught) {
       const reason = safePatchFailure(caught);
@@ -442,181 +406,11 @@ export class D1ReplanStore {
     normalizedInputRevision: number | null;
     activeStepIdsAtProposal: string[];
   }): Promise<ReplanMutationResult> {
-    const now = new Date();
-    const transitionToken = crypto.randomUUID();
-    const event = runtimeEventSchema.parse({
-      id: `${input.sessionId}-plan-updated-${input.patch.id}`,
-      sessionId: input.sessionId,
-      idempotencyKey: `plan-updated:${input.patch.id}`,
-      actorId: input.actorId,
-      origin: "replan",
-      type: "plan_updated",
-      payload: {
-        plan: input.candidate,
-        worldState: { ...input.candidateWorldState, updatedAt: now },
-        patchId: input.patch.id,
-        summary: input.patch.summary,
-        confirmedActiveStepIds: input.confirmedActiveStepIds,
-      },
-      occurredAt: now,
+    return activatePlanPatch({
+      d1: this.d1,
+      ...input,
+      readChange: (sessionId, patchId) => this.get(sessionId, patchId),
     });
-    const nextState = applyRuntimeEvent(input.state, event);
-    const statements: D1PreparedStatement[] = [];
-    if (input.createPatchRow) {
-      statements.push(
-        this.insertPatchStatement({
-          sessionId: input.sessionId,
-          actorId: input.actorId,
-          patch: input.patch,
-          mode: input.mode,
-          status: "applied",
-          candidateWorldState: input.candidateWorldState,
-          domainVersion: input.domainVersion,
-          normalizedInputRevision: input.normalizedInputRevision,
-          activeStepIdsAtProposal: input.activeStepIdsAtProposal,
-          targetPlanVersion: input.candidate.version,
-          transitionToken,
-          requireBasePlanVersion: true,
-          now,
-        }),
-      );
-    } else {
-      statements.push(
-        this.d1
-          .prepare(
-            `UPDATE plan_patches
-             SET status = 'applied', target_plan_version = ?, failure_reason = NULL,
-                 transition_token = ?, updated_at = ?
-             WHERE id = ? AND session_id = ? AND status = 'pending_confirmation'
-               AND EXISTS (
-                 SELECT 1 FROM execution_sessions es
-                 WHERE es.id = ? AND es.plan_version = ? AND es.domain_version = ?
-                   AND ${NORMALIZED_INPUT_REVISION_GATE}
-               )`,
-          )
-          .bind(
-            input.candidate.version,
-            transitionToken,
-            now.toISOString(),
-            input.patch.id,
-            input.sessionId,
-            input.sessionId,
-            input.patch.basePlanVersion,
-            input.domainVersion,
-            input.normalizedInputRevision,
-            input.normalizedInputRevision,
-          ),
-      );
-    }
-    const gate = `EXISTS (
-      SELECT 1 FROM plan_patches pp
-      JOIN execution_sessions es ON es.id = pp.session_id
-      WHERE pp.id = ? AND pp.session_id = ? AND pp.transition_token = ?
-        AND es.plan_version = ? AND es.domain_version = ?
-        AND ${NORMALIZED_INPUT_REVISION_GATE}
-    )`;
-    statements.push(
-      this.d1
-        .prepare(
-          `UPDATE plan_versions SET status = 'superseded'
-           WHERE session_id = ? AND status = 'active' AND ${gate}`,
-        )
-        .bind(
-          input.sessionId,
-          input.patch.id,
-          input.sessionId,
-          transitionToken,
-          input.patch.basePlanVersion,
-          input.domainVersion,
-          input.normalizedInputRevision,
-          input.normalizedInputRevision,
-        ),
-      this.d1
-        .prepare(
-          `INSERT INTO plan_versions (session_id, version, plan_json, patch_id, status, created_at)
-           SELECT ?, ?, ?, ?, 'active', ? WHERE ${gate}`,
-        )
-        .bind(
-          input.sessionId,
-          input.candidate.version,
-          serializeJson(input.candidate),
-          input.patch.id,
-          now.toISOString(),
-          input.patch.id,
-          input.sessionId,
-          transitionToken,
-          input.patch.basePlanVersion,
-          input.domainVersion,
-          input.normalizedInputRevision,
-          input.normalizedInputRevision,
-        ),
-      this.d1
-        .prepare(
-          `INSERT INTO runtime_events (id, session_id, idempotency_key, event_json, occurred_at)
-           SELECT ?, ?, ?, ?, ? WHERE ${gate}`,
-        )
-        .bind(
-          event.id,
-          event.sessionId,
-          event.idempotencyKey,
-          serializeRuntimeEvent(event),
-          event.occurredAt.toISOString(),
-          input.patch.id,
-          input.sessionId,
-          transitionToken,
-          input.patch.basePlanVersion,
-          input.domainVersion,
-          input.normalizedInputRevision,
-          input.normalizedInputRevision,
-        ),
-      this.d1
-        .prepare(
-          `UPDATE materialized_states SET state_json = ?, updated_at = ?
-           WHERE session_id = ? AND ${gate}`,
-        )
-        .bind(
-          serializeExecutionState(nextState),
-          now.toISOString(),
-          input.sessionId,
-          input.patch.id,
-          input.sessionId,
-          transitionToken,
-          input.patch.basePlanVersion,
-          input.domainVersion,
-          input.normalizedInputRevision,
-          input.normalizedInputRevision,
-        ),
-      this.d1
-        .prepare(
-          `UPDATE execution_sessions
-           SET plan_id = ?, plan_version = ?, goal_id = ?, status = ?, updated_at = ?
-           WHERE id = ? AND plan_version = ? AND domain_version = ? AND ${gate}`,
-        )
-        .bind(
-          nextState.session.planId,
-          nextState.session.planVersion,
-          nextState.session.goalId,
-          nextState.session.status,
-          now.toISOString(),
-          input.sessionId,
-          input.patch.basePlanVersion,
-          input.domainVersion,
-          input.patch.id,
-          input.sessionId,
-          transitionToken,
-          input.patch.basePlanVersion,
-          input.domainVersion,
-          input.normalizedInputRevision,
-          input.normalizedInputRevision,
-        ),
-    );
-    const results = await this.d1.batch(statements);
-    if ((results.at(-1)?.meta.changes ?? 0) === 0) {
-      throw new Error("Plan patch activation lost its base-version compare-and-swap");
-    }
-    const change = await this.get(input.sessionId, input.patch.id);
-    if (!change) throw new Error(`Failed to read applied patch ${input.patch.id}`);
-    return { kind: "applied", change, state: nextState, event };
   }
 
   private async recordFailure(input: {
@@ -647,7 +441,7 @@ export class D1ReplanStore {
             "UPDATE plan_patches SET status = 'failed', failure_reason = ?, updated_at = ? WHERE id = ? AND session_id = ?",
           )
           .bind(input.reason, now.toISOString(), input.patch.id, input.sessionId)
-      : this.insertPatchStatement({
+      : insertPatchStatement(this.d1, {
           sessionId: input.sessionId,
           actorId: input.actorId,
           patch: input.patch,
@@ -662,102 +456,12 @@ export class D1ReplanStore {
         });
     await this.d1.batch([
       patchStatement,
-      this.insertEventStatement(event),
-      this.updateMaterializedStatement(input.sessionId, nextState, now),
+      insertEventStatement(this.d1, event),
+      updateMaterializedStatement(this.d1, input.sessionId, nextState, now),
     ]);
     const change = await this.get(input.sessionId, input.patch.id);
     if (!change) throw new Error(`Failed to read failed patch ${input.patch.id}`);
     return { kind: "failed", change, state: nextState, event };
-  }
-
-  private insertPatchStatement(input: {
-    sessionId: string;
-    actorId: string;
-    patch: PlanPatch;
-    mode: ReplanMode;
-    status: PlanChange["status"];
-    candidateWorldState: WorldState;
-    domainVersion: number;
-    normalizedInputRevision: number | null;
-    activeStepIdsAtProposal: string[];
-    targetPlanVersion?: number;
-    failureReason?: string;
-    transitionToken?: string;
-    requireBasePlanVersion?: boolean;
-    now: Date;
-  }): D1PreparedStatement {
-    const columns = `INSERT INTO plan_patches
-         (id, session_id, base_plan_version, cause_key, attempt_key, validation_domain_version,
-          normalized_input_revision, target_plan_version,
-          mode, status, patch_json, candidate_world_state_json, failure_reason, active_step_ids_json,
-          transition_token, created_by_actor_id, created_at, updated_at)`;
-    const values = [
-      input.patch.id,
-      input.sessionId,
-      input.patch.basePlanVersion,
-      causeKey(input.domainVersion, input.normalizedInputRevision, input.patch.causeEventIds),
-      attemptKey(input.domainVersion, input.normalizedInputRevision, input.patch),
-      input.domainVersion,
-      input.normalizedInputRevision,
-      input.targetPlanVersion ?? null,
-      input.mode,
-      input.status,
-      serializeJson(input.patch),
-      serializeJson(input.candidateWorldState),
-      input.failureReason ?? null,
-      serializeJson(input.activeStepIdsAtProposal),
-      input.transitionToken ?? null,
-      input.actorId,
-      input.now.toISOString(),
-      input.now.toISOString(),
-    ];
-    if (input.requireBasePlanVersion) {
-      return this.d1
-        .prepare(
-          `${columns}
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-           WHERE EXISTS (
-             SELECT 1 FROM execution_sessions es
-             WHERE es.id = ? AND es.plan_version = ? AND es.domain_version = ?
-               AND ${NORMALIZED_INPUT_REVISION_GATE}
-           )`,
-        )
-        .bind(
-          ...values,
-          input.sessionId,
-          input.patch.basePlanVersion,
-          input.domainVersion,
-          input.normalizedInputRevision,
-          input.normalizedInputRevision,
-        );
-    }
-    return this.d1
-      .prepare(`${columns} VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(...values);
-  }
-
-  private insertEventStatement(event: RuntimeEvent): D1PreparedStatement {
-    return this.d1
-      .prepare(
-        "INSERT INTO runtime_events (id, session_id, idempotency_key, event_json, occurred_at) VALUES (?, ?, ?, ?, ?)",
-      )
-      .bind(
-        event.id,
-        event.sessionId,
-        event.idempotencyKey,
-        serializeRuntimeEvent(event),
-        event.occurredAt.toISOString(),
-      );
-  }
-
-  private updateMaterializedStatement(
-    sessionId: string,
-    state: MaterializedExecutionState,
-    now: Date,
-  ): D1PreparedStatement {
-    return this.d1
-      .prepare("UPDATE materialized_states SET state_json = ?, updated_at = ? WHERE session_id = ?")
-      .bind(serializeExecutionState(state), now.toISOString(), sessionId);
   }
 
   private async requireState(sessionId: string): Promise<MaterializedExecutionState> {
@@ -829,42 +533,5 @@ export class D1ReplanStore {
       .bind(sessionId, idempotencyKey)
       .first<{ event_json: string }>();
     return row ? parseRuntimeEvent(row.event_json) : null;
-  }
-
-  private async currentReplanBaseEventId(sessionId: string): Promise<string | null> {
-    const row = await this.d1
-      .prepare(
-        `SELECT id FROM runtime_events
-         WHERE session_id = ?
-           AND json_extract(event_json, '$.type') NOT IN ('replan_proposed', 'replan_failed', 'plan_updated')
-           AND json_extract(event_json, '$.type') NOT LIKE 'continuation_%'
-         ORDER BY rowid DESC LIMIT 1`,
-      )
-      .bind(sessionId)
-      .first<{ id: string }>();
-    return row?.id ?? null;
-  }
-
-  private async hasOnlyInterruptionEventsSinceBase(
-    sessionId: string,
-    baseEventId: string | null,
-    activeStepIds: readonly string[],
-  ): Promise<boolean> {
-    const rows = await this.d1
-      .prepare("SELECT id, event_json FROM runtime_events WHERE session_id = ? ORDER BY rowid ASC")
-      .bind(sessionId)
-      .all<{ id: string; event_json: string }>();
-    const events = rows.results;
-    const baseIndex = baseEventId === null ? -1 : events.findIndex(({ id }) => id === baseEventId);
-    if (baseEventId !== null && baseIndex < 0) return false;
-    const allowedSteps = new Set(activeStepIds);
-    return events.slice(baseIndex + 1).every(({ event_json: eventJson }) => {
-      const event = parseRuntimeEvent(eventJson);
-      if (event.type === "replan_proposed" || event.type === "replan_failed") return true;
-      if (event.type.startsWith("continuation_")) return true;
-      if (event.type === "session_paused") return true;
-      if (event.type === "timer_paused" || event.type === "timer_cancelled") return true;
-      return event.type === "step_paused" && allowedSteps.has(event.payload.stepId);
-    });
   }
 }

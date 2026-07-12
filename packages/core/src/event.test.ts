@@ -144,5 +144,19 @@ describe("runtimeEventSchema", () => {
         payload: { patchId: "patch-1", reason: "stale base" },
       }).success,
     ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "replan_failed",
+        payload: { attemptId: "attempt-1", reason: "generator failed" },
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "replan_failed",
+        payload: { reason: "missing identity" },
+      }).success,
+    ).toBe(false);
   });
 });

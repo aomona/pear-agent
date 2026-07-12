@@ -1,6 +1,7 @@
 import {
   analyzeAffectedSubgraph,
   applyPlanPatch,
+  lastOperationalEventId,
   mostRestrictiveReplanMode,
   normalizePlanPatchSteps,
   PlanPatchValidationError,
@@ -28,6 +29,7 @@ import type { PearEnv } from "../env.js";
 import { SessionNotFoundError } from "../errors.js";
 import { toJsonValue } from "../serialize.js";
 import { validateReplanConfiguration, type ReplanRuntime } from "./engine.js";
+import { sameIdSet } from "./keys.js";
 
 type ReplanHono = Hono<{
   Bindings: PearEnv;
@@ -36,12 +38,6 @@ type ReplanHono = Hono<{
 
 const requestBodySchema = z.object({ mode: replanModeSchema.optional() });
 const confirmBodySchema = z.object({ confirmed: z.literal(true) });
-
-function sameIds(left: readonly string[], right: readonly string[]): boolean {
-  const a = [...new Set(left)].sort();
-  const b = [...new Set(right)].sort();
-  return a.length === b.length && a.every((value, index) => value === b[index]);
-}
 
 class PublicReplanError extends Error {}
 
@@ -81,15 +77,6 @@ async function stableAttemptId(input: {
   mode: "automatic" | "confirm" | "suggest";
   recentEvents: readonly { id: string; type: string }[];
 }): Promise<string> {
-  const lastOperationalEventId = input.recentEvents
-    .filter(
-      ({ type }) =>
-        type !== "replan_proposed" &&
-        type !== "replan_failed" &&
-        type !== "plan_updated" &&
-        !type.startsWith("continuation_"),
-    )
-    .at(-1)?.id;
   const bytes = new TextEncoder().encode(
     JSON.stringify([
       input.sessionId,
@@ -98,7 +85,7 @@ async function stableAttemptId(input: {
       input.configuredDomainVersion,
       input.normalizedInputRevision,
       input.mode,
-      lastOperationalEventId ?? null,
+      lastOperationalEventId(input.recentEvents),
     ]),
   );
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -228,14 +215,7 @@ export function registerReplanRoutes(
         // the global D1 primary key collision-free across sessions.
         id: `patch-${crypto.randomUUID()}`,
       });
-      const baseEvents = snapshot.recentEvents.filter(
-        ({ type }) =>
-          type !== "replan_proposed" &&
-          type !== "replan_failed" &&
-          type !== "plan_updated" &&
-          !type.startsWith("continuation_"),
-      );
-      const lastEventId = baseEvents.at(-1)?.id ?? null;
+      const lastEventId = lastOperationalEventId(snapshot.recentEvents);
       if (
         patch.basePlanId !== snapshot.plan.id ||
         patch.basePlanVersion !== snapshot.plan.version ||
@@ -243,7 +223,7 @@ export function registerReplanRoutes(
       ) {
         throw new PublicReplanError("Generated patch base does not match the assessed snapshot");
       }
-      if (!sameIds(patch.causeEventIds, assessment.causeEventIds)) {
+      if (!sameIdSet(patch.causeEventIds, assessment.causeEventIds)) {
         throw new PublicReplanError("Generated patch cause events differ from the assessment");
       }
       const knownStepIds = new Set(snapshot.plan.steps.map(({ id }) => id));
@@ -253,8 +233,8 @@ export function registerReplanRoutes(
       const existingAffectedIds = patch.affectedStepIds.filter((id) => knownStepIds.has(id));
       const newAffectedIds = patch.affectedStepIds.filter((id) => !knownStepIds.has(id));
       if (
-        !sameIds(existingAffectedIds, affected.stepIds) ||
-        !sameIds(newAffectedIds, addedStepIds)
+        !sameIdSet(existingAffectedIds, affected.stepIds) ||
+        !sameIdSet(newAffectedIds, addedStepIds)
       ) {
         throw new PublicReplanError(
           "Generated patch expands or omits the Runtime affected subgraph",
@@ -270,8 +250,7 @@ export function registerReplanRoutes(
         appliedEventIds: snapshot.recentEvents.map(({ id }) => id),
         currentLastEventId: lastEventId,
         patch,
-        activeStepChangeConfirmed: true,
-        allowActiveStepProposal: true,
+        phase: "proposal",
         capabilityIds: configuration.capabilityPolicies.map(({ id }) => id),
         stepDataSchema: configuration.stepDataSchema,
         reconcileWorldState: configuration.reconcileWorldState,

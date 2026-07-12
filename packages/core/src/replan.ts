@@ -117,24 +117,32 @@ export type PlanPatchDiff = {
   removedStepIds: string[];
 };
 
+/** Proposal builds a candidate without human confirmation gates; activation enforces them. */
+export type PlanPatchPhase = "proposal" | "activation";
+
 export type ApplyPlanPatchInput = {
   plan: ExecutionPlan;
   stepStates: StepStates;
   worldState: WorldState;
   appliedEventIds: readonly string[];
+  /** Operational cursor (excludes replan/continuation audit events). Required. */
+  currentLastEventId: string | null;
   patch: PlanPatch;
-  activeStepChangeConfirmed?: boolean;
-  allowActiveStepProposal?: boolean;
+  phase: PlanPatchPhase;
+  /** Activation only: human confirmed paused/failed (and interrupted active) steps. */
+  humanConfirmed?: boolean;
   capabilityIds?: readonly string[];
   reconcileWorldState?: (plan: ExecutionPlan, worldState: WorldState) => WorldState;
   stepDataSchema?: z.ZodType;
-  currentLastEventId?: string | null;
 };
 
 export type ApplyPlanPatchResult = {
   plan: ExecutionPlan;
   worldState: WorldState;
   diff: PlanPatchDiff;
+  activeStepIds: string[];
+  confirmationRequiredStepIds: string[];
+  /** @deprecated Use activeStepIds */
   activeStepIdsRequiringConfirmation: string[];
 };
 
@@ -239,11 +247,7 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
   }
 
   const appliedEventIds = new Set(input.appliedEventIds);
-  const currentLastEventId =
-    input.currentLastEventId === undefined
-      ? (input.appliedEventIds.at(-1) ?? null)
-      : input.currentLastEventId;
-  if (patch.baseLastEventId !== currentLastEventId) {
+  if (patch.baseLastEventId !== input.currentLastEventId) {
     throw new PlanPatchValidationError("Patch event cursor is stale");
   }
   for (const eventId of patch.causeEventIds) {
@@ -256,6 +260,7 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
   const steps = new Map(plan.steps.map((step) => [step.id, structuredClone(step)]));
   const touched = new Set<string>();
   const activeStepIds = new Set<string>();
+  const confirmationRequiredStepIds = new Set<string>();
   const diff: PlanPatchDiff = { addedStepIds: [], updatedStepIds: [], removedStepIds: [] };
 
   for (const operation of patch.operations) {
@@ -282,6 +287,9 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
       throw new PlanPatchValidationError(`Cannot change ${status} step: ${stepId}`);
     }
     if (status === "active") activeStepIds.add(stepId);
+    if (status === "paused" || status === "failed" || status === "active") {
+      confirmationRequiredStepIds.add(stepId);
+    }
 
     if (operation.type === "update_step") {
       if (operation.step.id !== stepId) {
@@ -295,18 +303,21 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
     }
   }
 
-  if (activeStepIds.size > 0 && input.allowActiveStepProposal !== true) {
-    throw new PlanPatchValidationError(
-      "Active steps must be paused before a confirmed patch can be applied",
-    );
-  }
-
-  const confirmationStatuses = new Set(["paused", "failed"]);
-  const confirmationRequired = [...touched].filter((stepId) =>
-    confirmationStatuses.has(stepStates[stepId]?.status ?? ""),
-  );
-  if (confirmationRequired.length > 0 && input.activeStepChangeConfirmed !== true) {
-    throw new PlanPatchValidationError("Paused or failed step changes require human confirmation");
+  if (input.phase === "activation") {
+    if (activeStepIds.size > 0) {
+      throw new PlanPatchValidationError(
+        "Active steps must be paused before a confirmed patch can be applied",
+      );
+    }
+    const needsHumanConfirm = [...confirmationRequiredStepIds].filter((stepId) => {
+      const status = stepStates[stepId]?.status;
+      return status === "paused" || status === "failed";
+    });
+    if (needsHumanConfirm.length > 0 && input.humanConfirmed !== true) {
+      throw new PlanPatchValidationError(
+        "Paused or failed step changes require human confirmation",
+      );
+    }
   }
 
   let nextPlan = executionPlanSchema(z.unknown()).parse({
@@ -316,6 +327,7 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
   });
 
   if (input.stepDataSchema !== undefined) {
+    const stepDataSchema = input.stepDataSchema;
     nextPlan = executionPlanSchema(z.unknown()).parse({
       ...nextPlan,
       steps: nextPlan.steps.map((step) => {
@@ -323,7 +335,7 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
         // idempotent on its own output. Parse/normalize only generated data
         // for touched steps; Domain-version provenance protects untouched work.
         if (!touched.has(step.id)) return step;
-        const parsedDomainData = input.stepDataSchema!.parse(structuredClone(step.domainData));
+        const parsedDomainData = stepDataSchema.parse(structuredClone(step.domainData));
         return { ...step, domainData: parsedDomainData };
       }),
     });
@@ -345,12 +357,36 @@ export function applyPlanPatch(input: ApplyPlanPatchInput): ApplyPlanPatchResult
       )
     : worldState;
 
+  const activeStepIdList = [...activeStepIds];
+  const confirmationList = [...confirmationRequiredStepIds];
   return {
     plan: nextPlan,
     worldState: nextWorldState,
     diff,
-    activeStepIdsRequiringConfirmation: [...activeStepIds],
+    activeStepIds: activeStepIdList,
+    confirmationRequiredStepIds: confirmationList,
+    activeStepIdsRequiringConfirmation: activeStepIdList,
   };
+}
+
+/** Event types that do not advance the replan operational cursor. */
+export function isReplanNonOperationalEventType(type: string): boolean {
+  return (
+    type === "replan_proposed" ||
+    type === "replan_failed" ||
+    type === "plan_updated" ||
+    type.startsWith("continuation_")
+  );
+}
+
+export function lastOperationalEventId(
+  events: readonly { id: string; type: string }[],
+): string | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event && !isReplanNonOperationalEventType(event.type)) return event.id;
+  }
+  return null;
 }
 
 /** Replace AI step payloads with the Domain-normalized candidate persisted by the Runtime. */
@@ -374,25 +410,35 @@ export function normalizePlanPatchSteps(patch: PlanPatch, validatedPlan: Executi
   });
 }
 
-/** Returns active steps touched by a patch without applying it. */
-export function findActivePatchStepIds(patch: PlanPatch, stepStates: StepStates): string[] {
+/** Inspect which patched steps are active or need human confirmation. */
+export function inspectPatchSteps(
+  patch: PlanPatch,
+  stepStates: StepStates,
+): { activeStepIds: string[]; confirmationRequiredStepIds: string[] } {
   const parsedPatch = planPatchSchema.parse(patch);
   const parsedStates = stepStatesSchema.parse(stepStates);
-  return parsedPatch.operations
-    .map((operation) => (operation.type === "add_step" ? operation.step.id : operation.stepId))
-    .filter((stepId) => parsedStates[stepId]?.status === "active");
+  const activeStepIds: string[] = [];
+  const confirmationRequiredStepIds: string[] = [];
+  for (const operation of parsedPatch.operations) {
+    const stepId = operation.type === "add_step" ? operation.step.id : operation.stepId;
+    const status = parsedStates[stepId]?.status;
+    if (status === "active") activeStepIds.push(stepId);
+    if (status === "active" || status === "paused" || status === "failed") {
+      confirmationRequiredStepIds.push(stepId);
+    }
+  }
+  return { activeStepIds, confirmationRequiredStepIds };
 }
 
+/** @deprecated Prefer inspectPatchSteps */
+export function findActivePatchStepIds(patch: PlanPatch, stepStates: StepStates): string[] {
+  return inspectPatchSteps(patch, stepStates).activeStepIds;
+}
+
+/** @deprecated Prefer inspectPatchSteps */
 export function findConfirmationRequiredPatchStepIds(
   patch: PlanPatch,
   stepStates: StepStates,
 ): string[] {
-  const parsedPatch = planPatchSchema.parse(patch);
-  const parsedStates = stepStatesSchema.parse(stepStates);
-  return parsedPatch.operations
-    .map((operation) => (operation.type === "add_step" ? operation.step.id : operation.stepId))
-    .filter((stepId) => {
-      const status = parsedStates[stepId]?.status;
-      return status === "active" || status === "paused" || status === "failed";
-    });
+  return inspectPatchSteps(patch, stepStates).confirmationRequiredStepIds;
 }

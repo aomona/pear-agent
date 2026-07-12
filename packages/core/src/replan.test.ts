@@ -88,6 +88,8 @@ describe("partial replanning", () => {
       stepStates,
       worldState,
       appliedEventIds: ["delay-event"],
+      currentLastEventId: "delay-event",
+      phase: "activation",
       patch: patch([
         {
           type: "update_step",
@@ -120,6 +122,8 @@ describe("partial replanning", () => {
       stepStates,
       worldState,
       appliedEventIds: ["delay-event"],
+      currentLastEventId: "delay-event",
+      phase: "activation",
       patch: generatedPatch,
       stepDataSchema: z.object({ label: z.string().default("normalized") }),
       reconcileWorldState: (_candidate, current) => ({
@@ -168,6 +172,8 @@ describe("partial replanning", () => {
       stepStates,
       worldState,
       appliedEventIds: ["delay-event"],
+      currentLastEventId: "delay-event",
+      phase: "activation",
       patch: transformedPatch,
       stepDataSchema: z.object({ raw: z.string() }).transform(({ raw }) => ({ normalized: raw })),
     });
@@ -231,6 +237,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: {
           ...patch([]),
           affectedStepIds: ["keys"],
@@ -245,6 +253,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: patch([{ type: "remove_step", stepId: "keys" }]),
       }),
     ).toThrow("Patch operation touches unaffected step: keys");
@@ -255,6 +265,8 @@ describe("partial replanning", () => {
         stepStates: { ...stepStates, keys: { status: "skipped" } },
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: {
           ...patch([]),
           affectedStepIds: ["keys"],
@@ -270,16 +282,19 @@ describe("partial replanning", () => {
       plan,
       stepStates: activeStates,
       worldState,
-      appliedEventIds: ["delay-event"],
+      appliedEventIds: ["delay-event"] as const,
+      currentLastEventId: "delay-event" as string | null,
+      phase: "activation" as const,
       patch: patch([{ type: "remove_step", stepId: "charge" }]),
     };
     expect(() => applyPlanPatch(input)).toThrow(
       "Active steps must be paused before a confirmed patch can be applied",
     );
+    // Proposal may inspect an active-step candidate (DAG still enforced).
     expect(() =>
       applyPlanPatch({
         ...input,
-        allowActiveStepProposal: true,
+        phase: "proposal",
       }),
     ).toThrow("missing_dependency");
 
@@ -296,6 +311,22 @@ describe("partial replanning", () => {
         ]),
       }),
     ).toThrow("Paused or failed step changes require human confirmation");
+
+    const confirmed = applyPlanPatch({
+      ...input,
+      stepStates: { ...stepStates, charge: { status: "paused" } },
+      patch: patch([
+        {
+          type: "update_step",
+          stepId: "charge",
+          step: { ...plan.steps[1]!, estimatedDurationSeconds: 600 },
+        },
+      ]),
+      humanConfirmed: true,
+    });
+    expect(confirmed.plan.steps.find(({ id }) => id === "charge")?.estimatedDurationSeconds).toBe(
+      600,
+    );
   });
 
   it("rejects invalid DAGs, Domain data, capabilities, WorldState policy, and stale bases", () => {
@@ -305,6 +336,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: patch([
           {
             type: "update_step",
@@ -321,6 +354,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: patch([
           {
             type: "update_step",
@@ -342,6 +377,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: patch([{ type: "update_step", stepId: "charge", step: agentStep }]),
         capabilityIds: [],
       }),
@@ -353,6 +390,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: patch([{ type: "update_step", stepId: "charge", step: plan.steps[1]! }]),
         reconcileWorldState: () => {
           throw new PlanPatchValidationError("WorldState policy rejected patch");
@@ -366,6 +405,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event"],
+        currentLastEventId: "delay-event",
+        phase: "activation",
         patch: {
           ...patch([{ type: "update_step", stepId: "charge", step: plan.steps[1]! }]),
           basePlanVersion: 99,
@@ -379,6 +420,8 @@ describe("partial replanning", () => {
         stepStates,
         worldState,
         appliedEventIds: ["delay-event", "newer-event"],
+        currentLastEventId: "newer-event",
+        phase: "activation",
         patch: patch([{ type: "update_step", stepId: "charge", step: plan.steps[1]! }]),
       }),
     ).toThrow("Patch event cursor is stale");
