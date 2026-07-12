@@ -121,6 +121,9 @@ export function buildOutingPlan(
   const steps: ExecutionPlan<OutingStepData>["steps"] = [
     {
       id: "pack",
+      label: "Pack belongings",
+      summary: "Gather items needed to leave",
+      instructions: `Pack: ${packIds.join(", ")}`,
       executor: { type: "human" },
       after: [],
       requirements: [],
@@ -133,11 +136,21 @@ export function buildOutingPlan(
   if (chargeIds.length > 0) {
     steps.push({
       id: "charge",
+      label: "Charge devices",
+      summary: "Bring device charge to a usable level",
+      instructions: `Charge: ${chargeIds.join(", ")}. You can suspend voice while waiting.`,
       executor: { type: "human" },
       after: [],
       requirements: [],
       estimatedDurationSeconds: DEFAULT_CHARGE_SECONDS,
-      timers: [{ id: OUTING_CHARGE_TIMER_ID, durationSeconds: DEFAULT_CHARGE_SECONDS }],
+      timers: [
+        {
+          id: OUTING_CHARGE_TIMER_ID,
+          label: "Charge wait",
+          durationSeconds: DEFAULT_CHARGE_SECONDS,
+          autoStart: false,
+        },
+      ],
       domainData: { belongingIds: chargeIds },
     });
   }
@@ -145,6 +158,11 @@ export function buildOutingPlan(
   return {
     id: options?.planId ?? "outing-plan",
     version: options?.version ?? 1,
+    title: "Outing preparation",
+    metadata: {
+      domainId: outingDomain.id,
+      domainVersion: outingDomain.version,
+    },
     goal: outingGoal,
     steps,
   };

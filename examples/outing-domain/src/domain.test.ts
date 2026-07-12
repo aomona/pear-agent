@@ -87,8 +87,14 @@ describe("outingDomain", () => {
     ]);
     expect(plan.steps.find((s) => s.id === "charge")?.domainData.belongingIds).toEqual(["laptop"]);
     expect(plan.steps.find((s) => s.id === "charge")?.timers).toEqual([
-      { id: OUTING_CHARGE_TIMER_ID, durationSeconds: 300 },
+      {
+        id: OUTING_CHARGE_TIMER_ID,
+        label: "Charge wait",
+        durationSeconds: 300,
+        autoStart: false,
+      },
     ]);
+    expect(plan.title).toBe("Outing preparation");
 
     const world = buildOutingWorldState(normalized, {
       updatedAt: new Date("2026-08-20T00:00:00.000Z"),

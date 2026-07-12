@@ -63,6 +63,13 @@ const result = validatePlanGraph([
 ]);
 ```
 
+## Plan 表示・Planner Port（Wave A）
+
+- Step は optional の `label` / `summary` / `instructions` / `notes` と構造化 `timers`（`TimerDefinition`）を持てます
+- Plan は optional の `title` / `metadata` を持てます
+- `buildPlanPresentation(plan, stepStates?)` はレーン・クリティカルパス・ready/blocked を純関数で返します
+- `PlanGenerator` / `createStaticPlanGenerator` は Core の Port（Cloudflare Adapter が host context 付きで再 export）
+
 ## Step状態導出
 
 `deriveStepStatuses()`は依存Stepが`completed`または`skipped`になるまでStepを`blocked`に保ち、実行可能になると`ready`を導出します。`transitionStep()`は許可された状態遷移だけを適用します。

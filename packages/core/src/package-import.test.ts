@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildPlanPresentation,
+  createStaticPlanGenerator,
   createWorldStateFromDomainFacts,
   defineDomain,
   evaluateGoalCompletion,
@@ -19,6 +21,8 @@ describe("@pear-agent/core public API", () => {
     ["createWorldStateFromDomainFacts", createWorldStateFromDomainFacts],
     ["parseDomainWorldStateFacts", parseDomainWorldStateFacts],
     ["parseDomainEvent", parseDomainEvent],
+    ["buildPlanPresentation", buildPlanPresentation],
+    ["createStaticPlanGenerator", createStaticPlanGenerator],
   ])("exports %s as a function", (_name, exportedValue) => {
     expect(exportedValue).toBeTypeOf("function");
   });
