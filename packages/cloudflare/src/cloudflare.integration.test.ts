@@ -1,43 +1,7 @@
-import { env, exports } from "cloudflare:workers";
+import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
-import { outingGoal } from "../../../examples/outing-domain/src/domain.js";
-import type { PearEnv } from "./env.js";
-
-const pearEnv = env as unknown as PearEnv;
-
-function contextHeaders(extra?: HeadersInit): HeadersInit {
-  return {
-    "x-pear-context": JSON.stringify({
-      actorId: "traveler",
-      roles: ["owner"],
-      claims: {},
-    }),
-    ...extra,
-  };
-}
-
-async function createSession(sessionId: string): Promise<Response> {
-  return exports.default.fetch(
-    new Request("http://example.com/sessions", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        ...contextHeaders(),
-      },
-      body: JSON.stringify({
-        sessionId,
-        domainId: "outing",
-        actorIds: ["traveler"],
-        goal: outingGoal,
-        normalizedInput: {
-          departureAt: "2026-07-11T03:00:00Z",
-          belongings: [{ id: "phone", name: "Phone", chargePercent: 20 }],
-        },
-      }),
-    }),
-  );
-}
+import { contextHeaders, createSession, pearEnv } from "./test/integration-helpers.js";
 
 describe("cloudflare runtime integration", () => {
   it("persists session and snapshot across reads (D1 durable)", async () => {

@@ -98,6 +98,10 @@ function VoicePanel({ sessionId }: { sessionId: string }) {
 
 Optional peer: `@google/genai` for `GeminiLiveVoiceProvider` (default when no `provider` override).
 
+### Partial Replanning
+
+Use `PearClient.requestReplan(sessionId, mode)`, `confirmPlanPatch(sessionId, patchId)`, and `getLatestPlanChange(sessionId)` for the three Replan modes. `RuntimeSnapshot.latestPlanChange` carries the latest Patch status, cause Events, failure reason, and operation list, so UI can distinguish proposed/rejected/applied diffs without diffing whole Plans.
+
 ### Auth
 
 - HTTP: `getContext()` → `x-pear-context`

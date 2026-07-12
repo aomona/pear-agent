@@ -97,6 +97,8 @@ describe("runtimeEventSchema", () => {
         ...event,
         type: "plan_updated",
         payload: {
+          patchId: "patch-1",
+          summary: "Delay affected packing",
           plan: {
             id: "plan-1",
             version: 2,
@@ -127,5 +129,34 @@ describe("runtimeEventSchema", () => {
         },
       }).success,
     ).toBe(true);
+
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "replan_proposed",
+        payload: { patchId: "patch-1", mode: "confirm" },
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "replan_failed",
+        payload: { patchId: "patch-1", reason: "stale base" },
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "replan_failed",
+        payload: { attemptId: "attempt-1", reason: "generator failed" },
+      }).success,
+    ).toBe(true);
+    expect(
+      runtimeEventSchema.safeParse({
+        ...event,
+        type: "replan_failed",
+        payload: { reason: "missing identity" },
+      }).success,
+    ).toBe(false);
   });
 });

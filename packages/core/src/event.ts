@@ -25,8 +25,31 @@ const goalCompletionConfirmedPayloadSchema = z.object({ goalId: z.string().min(1
 const worldStateFactsPatchedPayloadSchema = z
   .object({ facts: z.record(z.string(), jsonValueSchema) })
   .strict();
-const planUpdatedPayloadSchema = z.object({ plan: executionPlanSchema(z.unknown()) }).strict();
+const planUpdatedPayloadSchema = z
+  .object({
+    plan: executionPlanSchema(z.unknown()),
+    patchId: z.string().min(1).optional(),
+    summary: z.string().min(1).optional(),
+    confirmedActiveStepIds: z.array(z.string().min(1)).optional(),
+    worldState: worldStateSchema.optional(),
+  })
+  .strict();
 const continuationPayloadSchema = z.object({ continuationId: z.string().min(1) }).strict();
+const replanProposedPayloadSchema = z
+  .object({ patchId: z.string().min(1), mode: z.enum(["automatic", "confirm", "suggest"]) })
+  .strict();
+const replanFailedPayloadSchema = z
+  .object({
+    reason: z.string().min(1),
+    /** Durable PlanPatch id when a patch row was written. */
+    patchId: z.string().min(1).optional(),
+    /** Stable pre-commit attempt id when no patch row exists yet. */
+    attemptId: z.string().min(1).optional(),
+  })
+  .strict()
+  .refine((payload) => payload.patchId !== undefined || payload.attemptId !== undefined, {
+    message: "replan_failed requires patchId or attemptId",
+  });
 
 function coreEventSchema<TType extends string, TPayload extends z.ZodType>(
   type: TType,
@@ -82,6 +105,8 @@ const continuationExpiredEventSchema = coreEventSchema(
   "continuation_expired",
   continuationPayloadSchema,
 );
+const replanProposedEventSchema = coreEventSchema("replan_proposed", replanProposedPayloadSchema);
+const replanFailedEventSchema = coreEventSchema("replan_failed", replanFailedPayloadSchema);
 
 const coreEventSchemas = [
   sessionStartedEventSchema,
@@ -107,6 +132,8 @@ const coreEventSchemas = [
   continuationCompletedEventSchema,
   continuationResumeFailedEventSchema,
   continuationExpiredEventSchema,
+  replanProposedEventSchema,
+  replanFailedEventSchema,
 ] as const;
 
 export const coreRuntimeEventSchema = z.discriminatedUnion("type", coreEventSchemas);

@@ -35,6 +35,7 @@ export type CreateSessionInput = {
   actorIds: string[];
   goal: unknown;
   normalizedInput: unknown;
+  worldState?: import("@pear-agent/core").WorldState;
 };
 
 export type AppendEventInput = {

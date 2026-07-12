@@ -8,8 +8,14 @@ import type {
   VoiceLease,
   ContinuationWakeCondition,
   ExecutionContinuation,
+  PlanChange,
+  PlanPatch,
+  ReplanCapabilityPolicy,
+  ReplanMode,
+  WorldState,
 } from "@pear-agent/core";
 import type { ContinuationClaimResult } from "../continuation/store.js";
+import type { ReplanMutationResult } from "../replan/store.js";
 
 import type { PearEnv } from "../env.js";
 import type { VoiceLeaseResult } from "../voice/results.js";
@@ -27,13 +33,20 @@ export type ExecutionSessionAgentRpc = {
   createSession(input: {
     initialState: MaterializedExecutionState;
     domainId: string;
+    domainVersion: number;
     normalizedInput?: unknown;
   }): Promise<{ ok: true }>;
   getState(): Promise<MaterializedExecutionState | null>;
   appendEvent(event: RuntimeEvent): Promise<AppendEventResult>;
+  appendReplanFailure(input: {
+    actorId: string;
+    attemptId: string;
+    reason: string;
+  }): Promise<AppendEventResult>;
   getSnapshot(options?: GetSnapshotOptions): Promise<RuntimeSnapshot | null>;
   putNormalizedInput(payload: unknown): Promise<{ ok: true }>;
   getNormalizedInput(): Promise<unknown | null>;
+  getNormalizedInputRecord(): Promise<{ payload: unknown; revision: number } | null>;
   getSyncState(): Promise<ExecutionSessionSyncState>;
   acquireVoiceLease(input: {
     actorId: string;
@@ -73,6 +86,25 @@ export type ExecutionSessionAgentRpc = {
     continuationId: string;
     attemptId: string;
   }): Promise<void>;
+  proposeReplan(input: {
+    actorId: string;
+    mode: ReplanMode;
+    patch: PlanPatch;
+    candidateWorldState: WorldState;
+    expectedCauseEventIds: string[];
+    expectedAffectedStepIds: string[];
+    domainVersion: number;
+    normalizedInputRevision: number | null;
+    capabilityPolicies: ReplanCapabilityPolicy[];
+  }): Promise<ReplanMutationResult>;
+  confirmReplan(input: {
+    actorId: string;
+    patchId: string;
+    humanConfirmed: boolean;
+    domainVersion: number;
+    capabilityPolicies: ReplanCapabilityPolicy[];
+  }): Promise<ReplanMutationResult>;
+  getLatestPlanChange(): Promise<PlanChange | null>;
 };
 
 export async function getExecutionSessionAgent(
@@ -88,6 +120,7 @@ export async function agentCreateSession(
   input: {
     sessionId: string;
     domainId: string;
+    domainVersion: number;
     initialState: MaterializedExecutionState;
     /** When set, stored in the same D1 batch as session create. */
     normalizedInput?: unknown;
@@ -97,6 +130,7 @@ export async function agentCreateSession(
   await agent.createSession({
     initialState: input.initialState,
     domainId: input.domainId,
+    domainVersion: input.domainVersion,
     ...(input.normalizedInput === undefined ? {} : { normalizedInput: input.normalizedInput }),
   });
 }
@@ -116,6 +150,14 @@ export async function agentAppendEvent(
 ): Promise<AppendEventResult> {
   const agent = await getExecutionSessionAgent(env, event.sessionId);
   return agent.appendEvent(event);
+}
+
+export async function agentAppendReplanFailure(
+  env: PearEnv,
+  sessionId: string,
+  input: { actorId: string; attemptId: string; reason: string },
+): Promise<AppendEventResult> {
+  return (await getExecutionSessionAgent(env, sessionId)).appendReplanFailure(input);
 }
 
 export async function agentGetSnapshot(
@@ -144,6 +186,14 @@ export async function agentGetNormalizedInput(
   const agent = await getExecutionSessionAgent(env, sessionId);
   const payload = await agent.getNormalizedInput();
   return payload === null ? undefined : payload;
+}
+
+export async function agentGetNormalizedInputRecord(
+  env: PearEnv,
+  sessionId: string,
+): Promise<{ payload: unknown; revision: number } | undefined> {
+  const record = await (await getExecutionSessionAgent(env, sessionId)).getNormalizedInputRecord();
+  return record ?? undefined;
 }
 
 export async function agentAcquireVoiceLease(
@@ -232,4 +282,27 @@ export async function agentFailContinuationResume(
     ...input,
     attemptId,
   });
+}
+
+export async function agentProposeReplan(
+  env: PearEnv,
+  sessionId: string,
+  input: Parameters<ExecutionSessionAgentRpc["proposeReplan"]>[0],
+): Promise<ReplanMutationResult> {
+  return (await getExecutionSessionAgent(env, sessionId)).proposeReplan(input);
+}
+
+export async function agentConfirmReplan(
+  env: PearEnv,
+  sessionId: string,
+  input: Parameters<ExecutionSessionAgentRpc["confirmReplan"]>[0],
+): Promise<ReplanMutationResult> {
+  return (await getExecutionSessionAgent(env, sessionId)).confirmReplan(input);
+}
+
+export async function agentGetLatestPlanChange(
+  env: PearEnv,
+  sessionId: string,
+): Promise<PlanChange | null> {
+  return (await getExecutionSessionAgent(env, sessionId)).getLatestPlanChange();
 }

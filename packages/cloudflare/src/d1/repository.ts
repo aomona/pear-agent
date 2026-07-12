@@ -11,7 +11,7 @@ import {
   type RuntimeEvent,
   type RuntimeSnapshot,
 } from "@pear-agent/core";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import {
   EventIdentityConflictError,
@@ -32,14 +32,17 @@ import {
   normalizedInputs,
   rawInputs,
   runtimeEvents,
+  planVersions,
 } from "./schema.js";
 
 /**
  * Cloudflare-only create fields. Not part of Core {@link ExecutionStateRepository}:
- * `domainId` is D1 session-row provenance; `normalizedInput` is stored in the same batch.
+ * Domain identity/version are D1 session-row provenance; `normalizedInput` is
+ * stored in the same batch.
  */
 export type D1CreateOptions = {
   domainId: string;
+  domainVersion: number;
   normalizedInput?: unknown;
 };
 
@@ -64,7 +67,7 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
   async create(initialState: MaterializedExecutionState): Promise<void> {
     void initialState;
     throw new Error(
-      "D1ExecutionStateRepository.create requires domain metadata; use createWithDomain(state, { domainId })",
+      "D1ExecutionStateRepository.create requires domain metadata; use createWithDomain(state, { domainId, domainVersion })",
     );
   }
 
@@ -81,6 +84,7 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
     const sessionInsert = this.db.insert(executionSessions).values({
       id: sessionId,
       domainId,
+      domainVersion: createOptions.domainVersion,
       status: state.session.status,
       planId: state.session.planId,
       planVersion: state.session.planVersion,
@@ -94,20 +98,30 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
       stateJson: serializeExecutionState(state),
       updatedAt: now,
     });
+    const planVersionInsert = this.db.insert(planVersions).values({
+      sessionId,
+      version: state.plan.version,
+      planJson: serializeJson(state.plan),
+      patchId: null,
+      status: "active",
+      createdAt: now,
+    });
 
     try {
       if (createOptions.normalizedInput !== undefined) {
         await this.db.batch([
           sessionInsert,
           stateInsert,
+          planVersionInsert,
           this.db.insert(normalizedInputs).values({
             sessionId,
             payloadJson: serializeJson(createOptions.normalizedInput),
+            revision: 1,
             updatedAt: now,
           }),
         ]);
       } else {
-        await this.db.batch([sessionInsert, stateInsert]);
+        await this.db.batch([sessionInsert, stateInsert, planVersionInsert]);
       }
     } catch (error) {
       if (isUniqueConstraintError(error)) {
@@ -206,7 +220,9 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
         : (
             await this.db.query.runtimeEvents.findMany({
               where: eq(runtimeEvents.sessionId, sessionId),
-              orderBy: [desc(runtimeEvents.occurredAt), desc(runtimeEvents.id)],
+              // Event-log order is append order, never the caller-controlled
+              // occurredAt timestamp. SQLite rowid is monotonic for this table.
+              orderBy: [desc(sql`rowid`)],
               limit,
             })
           )
@@ -233,23 +249,31 @@ export class D1ExecutionStateRepository implements ExecutionStateRepository {
       .values({
         sessionId,
         payloadJson: serializeJson(payload),
+        revision: 1,
         updatedAt,
       })
       .onConflictDoUpdate({
         target: normalizedInputs.sessionId,
         set: {
           payloadJson: serializeJson(payload),
+          revision: sql`${normalizedInputs.revision} + 1`,
           updatedAt,
         },
       });
   }
 
   async getNormalizedInput(sessionId: string): Promise<unknown | undefined> {
+    return (await this.getNormalizedInputRecord(sessionId))?.payload;
+  }
+
+  async getNormalizedInputRecord(
+    sessionId: string,
+  ): Promise<{ payload: unknown; revision: number } | undefined> {
     const row = await this.db.query.normalizedInputs.findFirst({
       where: eq(normalizedInputs.sessionId, sessionId),
     });
     if (!row) return undefined;
-    return JSON.parse(row.payloadJson) as unknown;
+    return { payload: JSON.parse(row.payloadJson) as unknown, revision: row.revision };
   }
 }
 

@@ -1,8 +1,14 @@
-import { outingGoal, outingPlan } from "../../../examples/outing-domain/src/domain.js";
+import {
+  outingDomain,
+  outingGoal,
+  outingPlan,
+} from "../../../examples/outing-domain/src/domain.js";
+import { PlanPatchValidationError } from "@pear-agent/core";
 
 import { allowAllAuthorize, AuthorizationError, type AuthorizeFn } from "./authorize.js";
 import { ExecutionSessionAgent } from "./agent/execution-session-agent.js";
 import { createStaticPlanGenerator } from "./planner.js";
+import { createStaticReplanGenerator } from "./replan/engine.js";
 import { createPearWorker } from "./worker.js";
 
 export { ExecutionSessionAgent };
@@ -25,6 +31,122 @@ const authorize: AuthorizeFn = async (operation, context) => {
 const worker = createPearWorker({
   authorize,
   planGenerator: createStaticPlanGenerator(outingPlan),
+  replanRuntime: {
+    generator: createStaticReplanGenerator({
+      assessment: (input) => {
+        if (input.instructions !== outingDomain.replanning.instructions) {
+          throw new Error("Domain replanning instructions were not forwarded");
+        }
+        const cause = [...input.recentEvents]
+          .reverse()
+          .find((event) => event.type === "domain_event" && event.domainType === "delay");
+        if (
+          cause?.type === "domain_event" &&
+          typeof cause.payload === "object" &&
+          cause.payload !== null &&
+          !Array.isArray(cause.payload) &&
+          cause.payload["minutes"] === 999
+        ) {
+          throw new Error("provider request failed: api_key=do-not-persist");
+        }
+        return cause
+          ? {
+              needsReplan: true,
+              causeEventIds: [cause.id],
+              directlyAffectedStepIds: ["charge"],
+              reason: "A delay changes the charging window",
+            }
+          : {
+              needsReplan: false,
+              causeEventIds: [],
+              directlyAffectedStepIds: [],
+              reason: "No delay event requires replanning",
+            };
+      },
+      patch: (input) => {
+        const charge = input.plan.steps.find(({ id }) => id === "charge");
+        if (!charge) throw new Error("Test plan has no charge step");
+        const cause = input.recentEvents.find(
+          (event) => event.id === input.assessment.causeEventIds[0],
+        );
+        const missingResource =
+          cause?.type === "domain_event" &&
+          typeof cause.payload === "object" &&
+          cause.payload !== null &&
+          !Array.isArray(cause.payload) &&
+          cause.payload["minutes"] === 777;
+        return {
+          id: `patch-${crypto.randomUUID()}`,
+          basePlanId: input.plan.id,
+          basePlanVersion: input.plan.version,
+          baseLastEventId:
+            input.recentEvents
+              .filter(
+                ({ type }) =>
+                  type !== "replan_proposed" &&
+                  type !== "replan_failed" &&
+                  type !== "plan_updated" &&
+                  !type.startsWith("continuation_"),
+              )
+              .at(-1)?.id ?? null,
+          causeEventIds: input.assessment.causeEventIds,
+          affectedStepIds: input.affectedStepIds,
+          operations: [
+            {
+              type: "update_step",
+              stepId: charge.id,
+              step: {
+                ...charge,
+                estimatedDurationSeconds: charge.estimatedDurationSeconds + 60,
+                requirements: missingResource ? ["battery"] : charge.requirements,
+                // The Domain schema intentionally strips this generated field;
+                // integration tests assert the normalized Patch is persisted.
+                domainData: { ...charge.domainData, discardedByDomainSchema: "secret" },
+              },
+            },
+          ],
+          summary: "Extend charging by one minute after the delay",
+        };
+      },
+    }),
+    resolveConfiguration: (domainId) => ({
+      instructions: outingDomain.replanning.instructions,
+      domainVersion: outingDomain.version,
+      defaultMode: domainId === "outing-confirm" ? "confirm" : outingDomain.replanning.defaultMode,
+      capabilityPolicies: outingDomain.capabilities.map(({ id, executionMode, riskLevel }) => ({
+        id,
+        executionMode,
+        riskLevel,
+      })),
+      stepDataSchema: outingDomain.schemas.stepData,
+      reconcileWorldState: (plan, worldState) => {
+        outingDomain.schemas.worldState.parse(worldState.facts);
+        const availableResources = new Set(worldState.resources.map(({ id }) => id));
+        for (const step of plan.steps) {
+          const unavailable = step.requirements.find((id) => !availableResources.has(id));
+          if (unavailable) {
+            throw new PlanPatchValidationError(
+              `Unavailable WorldState resource ${unavailable} for step ${step.id}`,
+            );
+          }
+        }
+        return {
+          ...worldState,
+          resources: [
+            ...worldState.resources.filter(({ id }) => id !== "plan-utilization"),
+            {
+              id: "plan-utilization",
+              state: {
+                requirementsByStep: Object.fromEntries(
+                  plan.steps.map((step) => [step.id, step.requirements]),
+                ),
+              },
+            },
+          ],
+        };
+      },
+    }),
+  },
   // Integration tests mint tokens without calling Google.
   voiceTokenMinter: async (input) => ({
     token: `test-token-${input.lease.id}`,

@@ -107,6 +107,10 @@ const snapshot = await repository.getSnapshot(initialState.session.id);
 
 CoreはSession、WorldState、Runtime Event、Timer、materialized state、Snapshot、transactional Repository Portを提供します。Stepは`step_paused` / `step_skipped`、WorldStateは全文置換に加え`world_state_facts_patched`（**トップレベル key の shallow merge**。ネストした object は置換）、Planは`plan_updated`（version増加、completed/skipped/active の保護、構造変更された非保護 Step の再 ready、automatic 完了の再評価）で更新できます。`domain_event`は既定でobservationsへ記録します。
 
+## Partial Replanning
+
+`analyzeAffectedSubgraph()`は直接影響を受けたStepから下流依存を展開します。`applyPlanPatch({ phase })`は`PlanPatch`を不変データとして検証・適用し、追加・更新・削除のdiffとreconcile済みWorldStateを返します。`phase: "proposal"`は候補検証（active/paused を検査可能）、`phase: "activation"`は中断後の active 禁止と paused/failed の人間確認を強制します。`currentLastEventId`は operational cursor（replan/continuation 監査 Event を除く）を明示します。base Plan、原因Event、affected範囲、DAG、Capability、Domain step schema、WorldState/resource整合性を検証し、completed/skippedを変更しません。Domain schemaのdefault/coerce/transformは変更対象Stepだけへ反映し、unaffected Stepは保持します。
+
 `InMemoryExecutionStateRepository`は永続ストアではありません。Cloudflare/D1への永続化と AI SDK 計画・再計画は Adapter 側で提供します。Core は `ExecutionContinuation` と Wake Condition の共通契約を公開し、永続化と Scheduler は `@pear-agent/cloudflare` が担当します。
 
 Issue #6 以降、Core は `VoiceProvider` / `VoiceConnection` / `VoiceLease` / `FakeVoiceProvider` の薄い契約も export します（Gemini 依存なし）。

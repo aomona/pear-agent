@@ -108,6 +108,7 @@ describe("createRuntimeSnapshot", () => {
     expect(snapshot.activeStepIds).toEqual(["charge"]);
     expect(snapshot.blockedStepIds).toEqual([]);
     expect(snapshot.generatedAt).toBeInstanceOf(Date);
+    expect(snapshot.latestPlanChange).toBeNull();
     expect(snapshot.stepStates).not.toHaveProperty("stale");
   });
 
