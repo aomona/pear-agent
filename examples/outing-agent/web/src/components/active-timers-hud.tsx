@@ -2,7 +2,7 @@ import { useExecutionSession, useRuntimeSnapshot } from "@pear-agent/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { playTimerAlarmBeeps } from "../lib/timer-beep";
+import { playTimerAlarmBeepsThenWait } from "../lib/timer-beep";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -10,8 +10,8 @@ type ActiveTimersHudProps = {
   sessionId: string | null;
 };
 
-/** Repeat ピピピピ while at 00:00 until complete — leave a clear gap between bursts. */
-const ALARM_REPEAT_MS = 8_000;
+/** After a full ピピピピ burst ends, wait this long before the next burst. */
+const ALARM_GAP_AFTER_BURST_MS = 1_000;
 
 function formatMmSs(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -37,13 +37,12 @@ function labelForTimer(
 
 /**
  * Floating countdown for running execution timers (bottom-right, above voice dock).
- * At zero: keep beeping until the timer is completed (button or Live 「完了して」).
+ * At zero: beep burst → wait 1s → beep again, until complete_timer (UI or Live).
  */
 export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
   const { snapshot, refetch } = useRuntimeSnapshot(sessionId);
   const session = useExecutionSession(sessionId);
   const [now, setNow] = useState(() => Date.now());
-  /** Done-timer keys we already toasted for (alarm still repeats). */
   const toastedDoneKeyRef = useRef("");
 
   const running = snapshot?.activeTimers ?? [];
@@ -79,7 +78,8 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     .sort()
     .join(",");
 
-  // ピピピピ repeat until Live/UI complete_timer removes the timer from activeTimers.
+  // Sequential loop: play burst → wait 1s after it ends → play again.
+  // Abort on cleanup so React Strict Mode / complete_timer cannot stack loops.
   useEffect(() => {
     if (!doneKey) {
       toastedDoneKeyRef.current = "";
@@ -90,18 +90,21 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
       toastedDoneKeyRef.current = doneKey;
       const labels = doneCards.map((c) => c.label).join("、");
       toast.message(`${labels} が終了しました`, {
-        description: "ピピピピ… Live に「完了して」と言うか、完了を押すまで繰り返します",
+        description: "ピピピピ…「完了して」と言うか完了を押すまで、1秒おきに繰り返します",
         duration: 6_000,
       });
     }
 
-    void playTimerAlarmBeeps();
-    const intervalId = window.setInterval(() => {
-      void playTimerAlarmBeeps();
-    }, ALARM_REPEAT_MS);
+    let cancelled = false;
+
+    void (async () => {
+      while (!cancelled) {
+        await playTimerAlarmBeepsThenWait(ALARM_GAP_AFTER_BURST_MS);
+      }
+    })();
 
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
     };
   }, [doneKey, doneCards]);
 
