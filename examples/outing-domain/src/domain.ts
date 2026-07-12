@@ -278,11 +278,7 @@ export const outingGoal: ExecutionGoal = {
       description: "必要な機器が充電済みである",
       evaluator: { type: "state_rule" },
     },
-    {
-      id: "tasks_done",
-      description: "出発前の準備タスクが完了している",
-      evaluator: { type: "state_rule" },
-    },
+    // Task completion is tracked via step status (task:*), not a separate criterion.
   ],
   completionPolicy: "automatic",
 };
