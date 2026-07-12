@@ -238,6 +238,20 @@ export class PearClient {
     return planArtifactDetailSchema.parse(body.artifact);
   }
 
+  /**
+   * Structure one free-text field (deterministic + optional LLM).
+   * Used when the user confirms an add-item modal — not while typing.
+   */
+  async resolvePlanField(
+    planId: string,
+    input: { field: string; freeText: string },
+  ): Promise<{ field: string; value: unknown }> {
+    return this.requestJson(`/plans/${planId}/resolve-field`, {
+      method: "POST",
+      body: input,
+    });
+  }
+
   async improvePlan(
     planId: string,
     input: { request: string; constraints?: unknown },

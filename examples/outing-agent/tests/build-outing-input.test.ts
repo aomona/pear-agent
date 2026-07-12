@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  belongingServerValueToRows,
   buildOutingInputFromForm,
   createEmptyBelongingRow,
   defaultDepartureLocal,
-  resolveBelongingModalDraft,
+  resolveBelongingModalDraftLocal,
   slugFromName,
   structureBelongingFreeText,
 } from "../web/src/lib/build-outing-input.js";
@@ -17,37 +18,51 @@ describe("structureBelongingFreeText", () => {
   });
 });
 
-describe("resolveBelongingModalDraft", () => {
-  it("structures free text into rows", () => {
-    const rows = resolveBelongingModalDraft({
+describe("resolveBelongingModalDraftLocal", () => {
+  it("structures free text locally when deterministic", () => {
+    const result = resolveBelongingModalDraftLocal({
       freeText: "phone:Phone:20",
       name: "",
       id: "",
       chargePercent: "",
     });
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: "phone", name: "Phone", chargePercent: "20" });
+    expect(result.kind).toBe("structured");
+    if (result.kind === "structured") {
+      expect(result.rows[0]).toMatchObject({ id: "phone", name: "Phone", chargePercent: "20" });
+    }
+  });
+
+  it("defers ambiguous free text to server (structure on Add only)", () => {
+    const result = resolveBelongingModalDraftLocal({
+      freeText: "whatever i usually take when leaving home in the morning",
+      name: "",
+      id: "",
+      chargePercent: "",
+    });
+    expect(result).toEqual({
+      kind: "needs_server",
+      freeText: "whatever i usually take when leaving home in the morning",
+    });
   });
 
   it("uses structured fields when free text empty", () => {
-    const rows = resolveBelongingModalDraft({
+    const result = resolveBelongingModalDraftLocal({
       freeText: "",
       name: "Wallet",
       id: "",
       chargePercent: "",
     });
-    expect(rows[0]).toMatchObject({ id: "wallet", name: "Wallet", chargePercent: "" });
+    expect(result.kind).toBe("structured");
+    if (result.kind === "structured") {
+      expect(result.rows[0]).toMatchObject({ id: "wallet", name: "Wallet" });
+    }
   });
+});
 
-  it("throws when free text cannot be structured", () => {
-    expect(() =>
-      resolveBelongingModalDraft({
-        freeText: "whatever i usually take when leaving home in the morning",
-        name: "",
-        id: "",
-        chargePercent: "",
-      }),
-    ).toThrow(/構造化できませんでした/);
+describe("belongingServerValueToRows", () => {
+  it("maps server JSON to form rows", () => {
+    const rows = belongingServerValueToRows([{ id: "keys", name: "Keys" }]);
+    expect(rows[0]).toMatchObject({ id: "keys", name: "Keys", chargePercent: "" });
   });
 });
 

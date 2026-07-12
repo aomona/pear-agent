@@ -134,7 +134,7 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
               <div>
                 <h3 className="text-sm font-semibold">持ち物</h3>
                 <p className="text-xs text-muted-foreground">
-                  追加ボタン → モーダルで入力 → 構造化されて一覧に出る
+                  追加 → モーダルで入力 →「構造化して追加」の瞬間だけ構造化
                 </p>
               </div>
               <Button type="button" size="sm" onClick={() => setAddOpen(true)}>
@@ -202,7 +202,12 @@ export function PlanInputPanel({ planId, artifact, onNormalized, onBack }: PlanI
         </CardContent>
       </Card>
 
-      <AddBelongingModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={handleAddRows} />
+      <AddBelongingModal
+        open={addOpen}
+        planId={planId}
+        onClose={() => setAddOpen(false)}
+        onAdd={handleAddRows}
+      />
     </>
   );
 }

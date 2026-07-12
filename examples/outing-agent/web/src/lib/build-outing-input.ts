@@ -3,6 +3,7 @@ import {
   type OutingBelongingInput,
   type OutingInput,
 } from "@pear-agent/outing-domain-example";
+import { z } from "zod";
 
 /** One belongings row already structured in the list. */
 export type BelongingFormRow = {
@@ -81,20 +82,26 @@ export type AddBelongingModalDraft = {
   chargePercent: string;
 };
 
+export type BelongingModalLocalResult =
+  | { kind: "structured"; rows: BelongingFormRow[] }
+  /** Free text needs server (LLM) — only resolve when user presses Add. */
+  | { kind: "needs_server"; freeText: string };
+
 /**
- * Resolve modal draft → structured rows.
- * Prefer free-text parse when freeText is non-empty; otherwise use structured fields.
+ * Local-only resolve at modal Add time (no network).
+ * Free text that cannot be parsed deterministically returns `needs_server`.
+ * Does not structure while the user is typing — call only on submit.
  */
-export function resolveBelongingModalDraft(draft: AddBelongingModalDraft): BelongingFormRow[] {
+export function resolveBelongingModalDraftLocal(
+  draft: AddBelongingModalDraft,
+): BelongingModalLocalResult {
   const free = draft.freeText.trim();
   if (free) {
     const parsed = structureBelongingFreeText(free);
-    if (!parsed || parsed.length === 0) {
-      throw new Error(
-        "自由文を構造化できませんでした。例:「Phone 30」や「phone:Phone:30」。または下の項目欄に直接入力してください。",
-      );
+    if (parsed && parsed.length > 0) {
+      return { kind: "structured", rows: parsed.map(belongingInputToRow) };
     }
-    return parsed.map(belongingInputToRow);
+    return { kind: "needs_server", freeText: free };
   }
 
   const name = draft.name.trim();
@@ -106,14 +113,37 @@ export function resolveBelongingModalDraft(draft: AddBelongingModalDraft): Belon
     throw new Error("id を入力するか、名前から生成できる文字列にしてください");
   }
   const chargeRaw = draft.chargePercent.trim();
-  const row = createEmptyBelongingRow({ id, name, chargePercent: chargeRaw });
   if (chargeRaw !== "") {
     const charge = Number(chargeRaw);
     if (Number.isNaN(charge) || charge < 0 || charge > 100) {
       throw new Error("充電%は 0〜100 で入力してください");
     }
   }
-  return [row];
+  return {
+    kind: "structured",
+    rows: [createEmptyBelongingRow({ id, name, chargePercent: chargeRaw })],
+  };
+}
+
+/** Map server resolve-field value for belongings into form rows. */
+export function belongingServerValueToRows(value: unknown): BelongingFormRow[] {
+  const items = z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().min(1),
+        chargePercent: z.number().min(0).max(100).optional(),
+      }),
+    )
+    .min(1)
+    .parse(value);
+  return items.map((item) =>
+    belongingInputToRow({
+      id: item.id,
+      name: item.name,
+      ...(item.chargePercent !== undefined ? { chargePercent: item.chargePercent } : {}),
+    }),
+  );
 }
 
 /** Build Domain input from the multi-field form (belongings always structured). */

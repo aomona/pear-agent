@@ -46,6 +46,17 @@ export type PlanLibraryOptions = {
     freeTextResolver?: FreeTextFieldResolver;
     context: unknown;
   }) => Promise<unknown>;
+  /**
+   * Resolve a single free-text field (e.g. modal "Add" for one belonging).
+   * Hosts typically run deterministic parse then freeTextResolver (LLM).
+   */
+  resolveDomainFreeTextField?: (input: {
+    domainId: string;
+    field: string;
+    freeText: string;
+    freeTextResolver?: FreeTextFieldResolver;
+    context: unknown;
+  }) => Promise<unknown>;
 };
 
 function resolveFreeTextResolver(
@@ -315,6 +326,57 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       normalizedInput,
     });
     return c.json(artifactJson(stored));
+  });
+
+  /**
+   * Structure one free-text field without writing the full artifact normalizedInput.
+   * Intended for UI "add item" modals (structure happens on confirm, not while typing).
+   */
+  app.post("/plans/:planId/resolve-field", async (c) => {
+    const context = c.get("pearContext");
+    const planId = c.req.param("planId");
+    await options.authorize({ type: "plan.update", planId }, context);
+
+    if (!options.resolveDomainFreeTextField) {
+      throw new HTTPException(501, {
+        message: "resolveDomainFreeTextField is not configured on this Worker",
+      });
+    }
+
+    const body = z
+      .object({
+        field: z.string().min(1),
+        freeText: z.string().trim().min(1).max(4_000),
+      })
+      .parse(await c.req.json());
+
+    const repository = repo(c.env);
+    const existing = await repository.getStored(planId);
+    if (!existing) throw new PlanArtifactNotFoundError(planId);
+
+    const freeTextResolver = resolveFreeTextResolver(options, c.env);
+    const resolveInput: {
+      domainId: string;
+      field: string;
+      freeText: string;
+      freeTextResolver?: FreeTextFieldResolver;
+      context: unknown;
+    } = {
+      domainId: existing.domainId,
+      field: body.field,
+      freeText: body.freeText,
+      context,
+    };
+    if (freeTextResolver !== undefined) {
+      resolveInput.freeTextResolver = freeTextResolver;
+    }
+
+    try {
+      const value = await options.resolveDomainFreeTextField(resolveInput);
+      return c.json({ field: body.field, value });
+    } catch (error) {
+      asHttpError(error);
+    }
   });
 
   app.post("/plans/:planId/normalize", async (c) => {

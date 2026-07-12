@@ -4,7 +4,13 @@ import {
   PEAR_CONTEXT_HEADER,
   resolvePearContextFromHeader,
 } from "@pear-agent/cloudflare";
-import { outingDomain } from "@pear-agent/outing-domain-example";
+import { resolveMaybeFreeTextField } from "@pear-agent/core";
+import {
+  outingDomain,
+  parseOutingBelongingsFreeText,
+  parseOutingDepartureFreeText,
+} from "@pear-agent/outing-domain-example";
+import { z } from "zod";
 
 import { authorize } from "./authorize.js";
 import { handleCorsPreflight, withCors } from "./cors.js";
@@ -35,6 +41,53 @@ const worker = createPearWorker({
         ...(freeTextResolver !== undefined ? { freeTextResolver } : {}),
         context,
       });
+    },
+    /** Single-field structure for modal "Add" (deterministic → Gemini). */
+    resolveDomainFreeTextField: async ({
+      domainId,
+      field,
+      freeText,
+      freeTextResolver,
+      context,
+    }) => {
+      if (domainId !== outingDomain.id) {
+        throw new Error(`Unknown domain: ${domainId}`);
+      }
+      if (field === "departureAt") {
+        return resolveMaybeFreeTextField({
+          domainId,
+          field,
+          value: { freeText },
+          ...(freeTextResolver !== undefined ? { freeTextResolver } : {}),
+          parseDeterministic: parseOutingDepartureFreeText,
+          parse: (value): string => z.iso.datetime().parse(value),
+          hint: "ISO-8601 datetime string",
+          context,
+        });
+      }
+      if (field === "belongings") {
+        return resolveMaybeFreeTextField({
+          domainId,
+          field,
+          value: { freeText },
+          ...(freeTextResolver !== undefined ? { freeTextResolver } : {}),
+          parseDeterministic: parseOutingBelongingsFreeText,
+          parse: (value) =>
+            z
+              .array(
+                z.object({
+                  id: z.string().min(1),
+                  name: z.string().min(1),
+                  chargePercent: z.number().min(0).max(100).optional(),
+                }),
+              )
+              .min(1)
+              .parse(value),
+          hint: "Array of { id, name, chargePercent? }",
+          context,
+        });
+      }
+      throw new Error(`Unsupported free-text field: ${field}`);
     },
     createFreeTextResolver: (env) =>
       createGeminiFreeTextResolver({

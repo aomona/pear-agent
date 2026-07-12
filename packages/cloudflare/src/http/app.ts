@@ -81,6 +81,7 @@ export type CreatePearAppOptions = {
     | "planImprover"
     | "createPlanImprover"
     | "normalizeDomainInput"
+    | "resolveDomainFreeTextField"
   >;
 };
 
