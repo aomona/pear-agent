@@ -50,11 +50,10 @@ export function useRuntimeSnapshot(
   options: UseRuntimeSnapshotOptions = {},
 ): UseRuntimeSnapshotResult {
   const pear = usePearContext();
-  const realtime = options.realtime ?? pear.realtime;
 
   const channelOptions = useMemo(
     () => ({
-      realtime,
+      realtime: options.realtime ?? pear.realtime,
       agentName: pear.agentName,
       agentSecure: pear.agentSecure,
       baseUrl: pear.baseUrl,
@@ -64,12 +63,13 @@ export function useRuntimeSnapshot(
         : { recentEventLimit: options.recentEventLimit }),
     }),
     [
-      realtime,
+      options.realtime,
+      options.recentEventLimit,
+      pear.realtime,
       pear.agentName,
       pear.agentSecure,
       pear.baseUrl,
       pear.getContext,
-      options.recentEventLimit,
     ],
   );
 

@@ -9,7 +9,7 @@ import {
   type ContinuationWakeCondition,
   type ExecutionContinuation,
 } from "@pear-agent/core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { usePearContext } from "./provider.js";
 import { attachBrowserVoiceMedia, type BrowserVoiceMediaHandle } from "./voice/browser-media.js";
@@ -82,21 +82,22 @@ export function useVoiceSession(
 ): UseVoiceSessionResult {
   const { client } = usePearContext();
   const providerRef = useRef<VoiceProvider>(options.provider ?? new GeminiLiveVoiceProvider());
-  if (options.provider) {
-    providerRef.current = options.provider;
-  }
-
   const clientRef = useRef(client);
-  clientRef.current = client;
-
   const enableBrowserMediaRef = useRef(options.enableBrowserMedia);
-  enableBrowserMediaRef.current = options.enableBrowserMedia;
   const openingTextRef = useRef(options.openingText);
-  openingTextRef.current = options.openingText;
-
   /** Prop-facing session id (for connect / refetch). */
   const sessionIdRef = useRef(sessionId);
-  sessionIdRef.current = sessionId;
+
+  // Sync latest props into refs after commit — never during render.
+  useLayoutEffect(() => {
+    if (options.provider) {
+      providerRef.current = options.provider;
+    }
+    clientRef.current = client;
+    enableBrowserMediaRef.current = options.enableBrowserMedia;
+    openingTextRef.current = options.openingText;
+    sessionIdRef.current = sessionId;
+  }, [client, options.provider, options.enableBrowserMedia, options.openingText, sessionId]);
 
   /**
    * Session that currently owns the voice connection / lease.
