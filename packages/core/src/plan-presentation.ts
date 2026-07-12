@@ -1,9 +1,9 @@
 import {
   computeCriticalPathIds,
   estimateCriticalPathDurationSeconds,
-  type ExecutionPlan,
-  type ExecutionStep,
-} from "./plan.js";
+  topologicalDepths,
+} from "./plan-graph.js";
+import type { ExecutionPlan, ExecutionStep } from "./plan.js";
 import type { StepStates } from "./step-state.js";
 
 export type PlanPresentationNode = {
@@ -43,30 +43,9 @@ function stepLabel(step: ExecutionStep): string {
   return step.label ?? step.id;
 }
 
-function topologicalDepths(steps: readonly ExecutionStep[]): Map<string, number> {
-  const byId = new Map(steps.map((step) => [step.id, step]));
-  const depths = new Map<string, number>();
-
-  const depthOf = (id: string): number => {
-    const cached = depths.get(id);
-    if (cached !== undefined) return cached;
-    const step = byId.get(id);
-    if (!step || step.after.length === 0) {
-      depths.set(id, 0);
-      return 0;
-    }
-    const d = 1 + Math.max(...step.after.map((depId) => depthOf(depId)));
-    depths.set(id, d);
-    return d;
-  };
-
-  for (const step of steps) depthOf(step.id);
-  return depths;
-}
-
 /**
  * CE-06: pure presentation model for Plan UI / Devtools.
- * Does not schedule absolute times; Wave B timeline can enrich nodes later.
+ * Prefer scheduled `timeline` on nodes when present; duration-based critical path otherwise.
  */
 export function buildPlanPresentation(
   plan: ExecutionPlan,

@@ -4,6 +4,7 @@ export * from "./domain.js";
 export * from "./free-text.js";
 export * from "./goal.js";
 export * from "./plan.js";
+export * from "./plan-graph.js";
 export * from "./plan-presentation.js";
 export * from "./plan-schedule.js";
 export * from "./plan-diff.js";

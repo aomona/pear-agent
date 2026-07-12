@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { freeTextValueSchema, isFreeTextValue, resolveMaybeFreeTextField } from "./free-text.js";
+
+const iso = z.iso.datetime();
 
 describe("freeTextValueSchema", () => {
   it("accepts non-empty free text", () => {
@@ -15,14 +18,26 @@ describe("freeTextValueSchema", () => {
 });
 
 describe("resolveMaybeFreeTextField", () => {
-  it("passes structured values through", async () => {
+  it("parses structured values through schema", async () => {
     await expect(
       resolveMaybeFreeTextField({
         domainId: "outing",
         field: "departureAt",
         value: "2026-07-12T01:00:00.000Z",
+        parse: (v) => iso.parse(v),
       }),
     ).resolves.toBe("2026-07-12T01:00:00.000Z");
+  });
+
+  it("rejects invalid structured values", async () => {
+    await expect(
+      resolveMaybeFreeTextField({
+        domainId: "outing",
+        field: "departureAt",
+        value: "not-a-date",
+        parse: (v) => iso.parse(v),
+      }),
+    ).rejects.toThrow();
   });
 
   it("uses deterministic parser before resolver", async () => {
@@ -37,12 +52,13 @@ describe("resolveMaybeFreeTextField", () => {
           const t = Date.parse(text);
           return Number.isNaN(t) ? null : new Date(t).toISOString();
         },
+        parse: (v) => iso.parse(v),
       }),
     ).resolves.toBe("2026-07-12T02:00:00.000Z");
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it("falls back to freeTextResolver when deterministic parse fails", async () => {
+  it("falls back to freeTextResolver and validates output", async () => {
     await expect(
       resolveMaybeFreeTextField({
         domainId: "outing",
@@ -54,6 +70,7 @@ describe("resolveMaybeFreeTextField", () => {
           },
         },
         parseDeterministic: () => null,
+        parse: (v) => z.array(z.object({ id: z.string(), name: z.string() })).parse(v),
       }),
     ).resolves.toEqual([{ id: "keys", name: "Keys" }]);
   });
@@ -65,6 +82,7 @@ describe("resolveMaybeFreeTextField", () => {
         field: "belongings",
         value: { freeText: "???" },
         parseDeterministic: () => null,
+        parse: (v) => v as string,
       }),
     ).rejects.toThrow(/no freeTextResolver/);
   });

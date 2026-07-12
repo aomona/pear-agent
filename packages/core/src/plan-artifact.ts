@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 import { dateSchema } from "./date.js";
-import { executionGoalSchema, type ExecutionGoal } from "./goal.js";
-import { executionPlanSchema, type ExecutionPlan } from "./plan.js";
+import { executionGoalSchema } from "./goal.js";
+import { executionPlanSchema } from "./plan.js";
 
 /** CE-12 */
 export const planChangeReasonSchema = z.enum([
@@ -24,31 +24,11 @@ export const planVersionRecordSchema = z.object({
   createdAt: dateSchema,
 });
 
-export type PlanVersionRecord = {
-  planId: string;
-  version: number;
-  plan: ExecutionPlan;
-  parentVersion?: number | null;
-  changeReason: PlanChangeReason;
-  summary?: string;
-  createdAt: Date;
-};
+export type PlanVersionRecord = z.infer<typeof planVersionRecordSchema>;
 
 /** CE-11 */
 export const planArtifactStatusSchema = z.enum(["draft", "ready", "archived"]);
 export type PlanArtifactStatus = z.infer<typeof planArtifactStatusSchema>;
-
-export type PlanArtifact = {
-  id: string;
-  domainId: string;
-  status: PlanArtifactStatus;
-  currentPlan: ExecutionPlan;
-  version: number;
-  goal: ExecutionGoal;
-  title?: string;
-  createdAt: Date;
-  updatedAt: Date;
-};
 
 export const planArtifactSchema = z.object({
   id: z.string().min(1),
@@ -62,6 +42,8 @@ export const planArtifactSchema = z.object({
   updatedAt: dateSchema,
 });
 
+export type PlanArtifact = z.infer<typeof planArtifactSchema>;
+
 /**
  * CE-11 Port: durable plan library (Adapter implements with D1 etc.).
  */
@@ -69,14 +51,14 @@ export type PlanRepository = {
   create(input: {
     id?: string;
     domainId: string;
-    plan: ExecutionPlan;
+    plan: z.infer<ReturnType<typeof executionPlanSchema>>;
     status?: PlanArtifactStatus;
   }): Promise<PlanArtifact>;
   get(id: string): Promise<PlanArtifact | null>;
   list(filter?: { domainId?: string; status?: PlanArtifactStatus }): Promise<PlanArtifact[]>;
   saveVersion(input: {
     artifactId: string;
-    plan: ExecutionPlan;
+    plan: PlanArtifact["currentPlan"];
     changeReason: PlanChangeReason;
     summary?: string;
     status?: PlanArtifactStatus;
@@ -86,7 +68,7 @@ export type PlanRepository = {
 
 export function createPlanVersionRecord(input: {
   planId: string;
-  plan: ExecutionPlan;
+  plan: PlanArtifact["currentPlan"];
   changeReason: PlanChangeReason;
   parentVersion?: number | null;
   summary?: string;

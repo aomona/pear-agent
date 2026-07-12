@@ -85,7 +85,8 @@ const departureAt = await resolveMaybeFreeTextField({
 
 ## Plan foundation（Waves A+B）
 
-- Step: `label` / `summary` / `instructions` / `notes`、構造化 `timers`、`resourceRequirements`、`timeline`
+- Step: `label` / `summary` / `instructions` / `notes`、構造化 `timers`、`resourceRequirements`（量付き・推奨）、`requirements`（id 列挙・後方互換）、`timeline`
+- DAG ヘルパは `plan-graph`（`validatePlanGraph` / `topologicalOrder` / critical path）に集約
 - Plan: `title` / `metadata`
 - `buildPlanPresentation` — レーン・critical path・ready/blocked
 - `schedulePlan` — 依存 + 資源 capacity で timeline を埋める

@@ -1,7 +1,11 @@
 import {
   computeCriticalPathIds,
-  effectiveResourceRequirements,
   estimateCriticalPathDurationSeconds,
+  topologicalOrder,
+  validatePlanGraph,
+} from "./plan-graph.js";
+import {
+  effectiveResourceRequirements,
   type ExecutionPlan,
   type ExecutionStep,
   type ResourceCapacity,
@@ -47,11 +51,15 @@ export function schedulePlan<TStepData>(
 ): SchedulePlanResult<TStepData> {
   const resolveCapacity = options.resolveCapacity !== false;
   const capacityById = new Map(
-    (options.capacities ?? []).map((c) => [c.id, c.mode === "exclusive" ? 1 : c.capacity]),
+    (options.capacities ?? []).map((c) => [
+      c.id,
+      // exclusive ⇒ capacity 1 regardless of numeric capacity field
+      c.mode === "exclusive" ? 1 : c.capacity,
+    ]),
   );
 
-  const graph = validateAcyclic(plan.steps);
-  if (!graph.ok) {
+  const graph = validatePlanGraph(plan.steps);
+  if (!graph.valid) {
     throw new Error(`Cannot schedule plan: ${graph.reason}`);
   }
 
@@ -122,66 +130,7 @@ export function schedulePlan<TStepData>(
   };
 }
 
-function validateAcyclic(
-  steps: readonly ExecutionStep[],
-): { ok: true } | { ok: false; reason: string } {
-  const ids = new Set(steps.map((s) => s.id));
-  for (const step of steps) {
-    for (const dep of step.after) {
-      if (!ids.has(dep)) return { ok: false, reason: `missing dependency ${dep}` };
-    }
-  }
-  // Reuse cycle detection via simple DFS
-  const deps = new Map(steps.map((s) => [s.id, s.after]));
-  const visited = new Set<string>();
-  const stack = new Set<string>();
-  const visit = (id: string): boolean => {
-    if (stack.has(id)) return false;
-    if (visited.has(id)) return true;
-    visited.add(id);
-    stack.add(id);
-    for (const d of deps.get(id) ?? []) {
-      if (!visit(d)) return false;
-    }
-    stack.delete(id);
-    return true;
-  };
-  for (const step of steps) {
-    if (!visit(step.id)) return { ok: false, reason: "cycle" };
-  }
-  return { ok: true };
-}
-
-function topologicalOrder(steps: readonly ExecutionStep[]): string[] {
-  const indegree = new Map(steps.map((s) => [s.id, 0]));
-  const children = new Map<string, string[]>();
-  for (const step of steps) {
-    for (const dep of step.after) {
-      indegree.set(step.id, (indegree.get(step.id) ?? 0) + 1);
-      const list = children.get(dep) ?? [];
-      list.push(step.id);
-      children.set(dep, list);
-    }
-  }
-  const queue = steps.filter((s) => (indegree.get(s.id) ?? 0) === 0).map((s) => s.id);
-  const order: string[] = [];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    order.push(id);
-    for (const child of children.get(id) ?? []) {
-      const next = (indegree.get(child) ?? 0) - 1;
-      indegree.set(child, next);
-      if (next === 0) queue.push(child);
-    }
-  }
-  if (order.length !== steps.length) {
-    throw new Error("Cannot schedule plan: cycle");
-  }
-  return order;
-}
-
 function peakUsage(intervals: readonly Interval[], start: number, end: number): number {
-  // Sweep events inside [start, end)
   const events: { t: number; delta: number }[] = [];
   for (const iv of intervals) {
     if (iv.end <= start || iv.start >= end) continue;
@@ -206,7 +155,6 @@ function findEarliestStart(
   usage: Map<string, Interval[]>,
 ): number {
   let start = earliest;
-  // Bound search: push by residual peaks until fit (simple iterative delay).
   for (let attempt = 0; attempt < 10_000; attempt++) {
     let delayTo = start;
     let ok = true;
@@ -217,7 +165,6 @@ function findEarliestStart(
       const peak = peakUsage(intervals, start, start + duration);
       if (peak + req.quantity > cap) {
         ok = false;
-        // Jump to next interval end that reduces usage after start
         let next = start + duration;
         for (const iv of intervals) {
           if (iv.end > start && iv.end < next) next = iv.end;

@@ -122,30 +122,33 @@ export const outingDomain = defineDomain({
     ]),
   },
   normalizeInput: async (input, ctx?: NormalizeInputContext) => {
-    const departureAt = await resolveMaybeFreeTextField({
+    // Only attach optional host fields when present (exactOptionalPropertyTypes).
+    const fieldOpts = {
       domainId: "outing",
+      ...(ctx?.freeTextResolver !== undefined ? { freeTextResolver: ctx.freeTextResolver } : {}),
+      ...(ctx?.context !== undefined ? { context: ctx.context } : {}),
+    };
+
+    const departureAt = await resolveMaybeFreeTextField({
+      ...fieldOpts,
       field: "departureAt",
       value: input.departureAt,
-      ...(ctx?.freeTextResolver ? { freeTextResolver: ctx.freeTextResolver } : {}),
-      ...(ctx?.context !== undefined ? { context: ctx.context } : {}),
       parseDeterministic: parseOutingDepartureFreeText,
+      parse: (value): string => z.iso.datetime().parse(value),
       hint: "ISO-8601 datetime string",
     });
 
-    const belongingsRaw = await resolveMaybeFreeTextField({
-      domainId: "outing",
+    const belongings = await resolveMaybeFreeTextField({
+      ...fieldOpts,
       field: "belongings",
       value: input.belongings,
-      ...(ctx?.freeTextResolver ? { freeTextResolver: ctx.freeTextResolver } : {}),
-      ...(ctx?.context !== undefined ? { context: ctx.context } : {}),
       parseDeterministic: parseOutingBelongingsFreeText,
+      parse: (value): OutingBelongingInput[] => belongingInputSchema.array().min(1).parse(value),
       hint: "Array of { id, name, chargePercent? }",
     });
 
-    const belongings = belongingInputSchema.array().min(1).parse(belongingsRaw);
-
     return {
-      departureAt: z.iso.datetime().parse(departureAt),
+      departureAt,
       belongings: belongings.map((belonging) => ({
         ...belonging,
         chargePercent: belonging.chargePercent ?? null,

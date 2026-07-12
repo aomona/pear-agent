@@ -485,11 +485,11 @@ Wave C の後に **PEAR Cook**（Issue #11 相当）を Domain として接続�
 
 base: `dev`（またはマージ済みの sample ブランチ）
 
-| ブランチ | 含む CE | 目的 |
-| --- | --- | --- |
-| `feat/cli-outing-sample` | — | Issue #9（merged to `dev`） |
-| `feat/core-plan-foundation` | Wave A+B（CE-01–09, 11–12, 16–18, 21） | 読める / スケジュール可能 / Improve・Artifact |
-| `feat/core-wave-c-cook-ready` | CE-10, 13–15, 19, 20, 22–24 | PEAR Cook 接続前の残拡張 |
+| ブランチ                      | 含む CE                                | 目的                                          |
+| ----------------------------- | -------------------------------------- | --------------------------------------------- |
+| `feat/cli-outing-sample`      | —                                      | Issue #9（merged to `dev`）                   |
+| `feat/core-plan-foundation`   | Wave A+B（CE-01–09, 11–12, 16–18, 21） | 読める / スケジュール可能 / Improve・Artifact |
+| `feat/core-wave-c-cook-ready` | CE-10, 13–15, 19, 20, 22–24            | PEAR Cook 接続前の残拡張                      |
 
 ### 運用
 
