@@ -10,6 +10,9 @@ type ActiveTimersHudProps = {
   sessionId: string | null;
 };
 
+/** Repeat ピピピピ while any timer is at 00:00 until complete_timer (UI or Live). */
+const ALARM_REPEAT_MS = 2_200;
+
 function formatMmSs(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
   const m = Math.floor(s / 60);
@@ -34,13 +37,14 @@ function labelForTimer(
 
 /**
  * Floating countdown for running execution timers (bottom-right, above voice dock).
+ * At zero: keep beeping until the timer is completed (button or Live 「完了して」).
  */
 export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
   const { snapshot, refetch } = useRuntimeSnapshot(sessionId);
   const session = useExecutionSession(sessionId);
   const [now, setNow] = useState(() => Date.now());
-  /** Timer ids that already played the zero alarm (avoid repeat every tick). */
-  const alarmedIdsRef = useRef(new Set<string>());
+  /** Done-timer keys we already toasted for (alarm still repeats). */
+  const toastedDoneKeyRef = useRef("");
 
   const running = snapshot?.activeTimers ?? [];
 
@@ -49,14 +53,6 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [running.length]);
-
-  // Drop alarm memory for timers that left the snapshot (completed / cancelled).
-  useEffect(() => {
-    const live = new Set(running.map((t) => t.id));
-    for (const id of [...alarmedIdsRef.current]) {
-      if (!live.has(id)) alarmedIdsRef.current.delete(id);
-    }
-  }, [running]);
 
   const cards = useMemo(() => {
     return running.map((timer) => {
@@ -77,23 +73,44 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
     });
   }, [running, now, snapshot?.plan]);
 
-  // ピピピピ when a countdown first hits zero.
+  const doneCards = useMemo(() => cards.filter((c) => c.done), [cards]);
+  const doneKey = doneCards
+    .map((c) => c.id)
+    .sort()
+    .join(",");
+
+  // ピピピピ repeat until Live/UI complete_timer removes the timer from activeTimers.
   useEffect(() => {
-    for (const card of cards) {
-      if (!card.done) continue;
-      if (alarmedIdsRef.current.has(card.id)) continue;
-      alarmedIdsRef.current.add(card.id);
-      void playTimerAlarmBeeps();
-      toast.message(`${card.label} が終了しました`, { description: "ピピピピ" });
+    if (!doneKey) {
+      toastedDoneKeyRef.current = "";
+      return;
     }
-  }, [cards]);
+
+    if (toastedDoneKeyRef.current !== doneKey) {
+      toastedDoneKeyRef.current = doneKey;
+      const labels = doneCards.map((c) => c.label).join("、");
+      toast.message(`${labels} が終了しました`, {
+        description: "ピピピピ… Live に「完了して」と言うか、完了を押すまで繰り返します",
+        duration: 6_000,
+      });
+    }
+
+    void playTimerAlarmBeeps();
+    const intervalId = window.setInterval(() => {
+      void playTimerAlarmBeeps();
+    }, ALARM_REPEAT_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [doneKey, doneCards]);
 
   if (!sessionId || cards.length === 0) return null;
 
   async function completeTimer(timerId: string) {
     try {
       await session.completeTimer({ timerId });
-      toast.success("タイマー完了");
+      toast.success("タイマー完了（アラーム停止）");
       await refetch();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -110,7 +127,7 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
           key={card.id}
           className={cn(
             "pointer-events-auto overflow-hidden rounded-xl border bg-background/95 shadow-lg backdrop-blur",
-            card.done ? "border-emerald-300" : "border-primary/30",
+            card.done ? "border-emerald-300 animate-pulse" : "border-primary/30",
           )}
         >
           <div className="px-3 pt-2.5 pb-2">
@@ -127,6 +144,11 @@ export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
                 >
                   {card.done ? "00:00" : formatMmSs(card.remaining)}
                 </p>
+                {card.done ? (
+                  <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                    Live に「完了して」か下の完了
+                  </p>
+                ) : null}
               </div>
               {card.done ? (
                 <Button

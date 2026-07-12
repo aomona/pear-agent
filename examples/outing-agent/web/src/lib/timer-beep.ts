@@ -1,6 +1,6 @@
 /**
  * Short alarm beeps via Web Audio (no asset files).
- * "ピピピピ" — four short tones when a timer hits zero.
+ * "ピピピピ" — four short tones; hosts may call repeatedly until the timer is completed.
  */
 
 let sharedCtx: AudioContext | null = null;
