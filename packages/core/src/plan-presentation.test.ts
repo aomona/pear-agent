@@ -84,4 +84,19 @@ describe("buildPlanPresentation", () => {
     void title;
     expect(buildPlanPresentation(withoutTitle).title).toBe("Be ready");
   });
+
+  it("uses scheduled makespan when timelines are present", () => {
+    const scheduled = {
+      ...plan,
+      steps: plan.steps.map((step, index) => ({
+        ...step,
+        timeline: {
+          startOffsetSeconds: index === 0 ? 0 : 300,
+          endOffsetSeconds: index === 0 ? 300 : 600,
+        },
+      })),
+    };
+
+    expect(buildPlanPresentation(scheduled).totalDurationSeconds).toBe(600);
+  });
 });

@@ -97,6 +97,36 @@ describe("schedulePlan", () => {
     ).toThrow(/requires 2 of stove but capacity is 1/);
   });
 
+  it("aggregates duplicate legacy requirements before checking capacity", () => {
+    const plan: ExecutionPlan = {
+      ...basePlan,
+      steps: [
+        {
+          ...basePlan.steps[0]!,
+          id: "duplicate",
+          requirements: ["stove", "stove"],
+        },
+      ],
+    };
+
+    expect(() => schedulePlan(plan, { capacities: [{ id: "stove", capacity: 1 }] })).toThrow(
+      /requires 2 of stove but capacity is 1/,
+    );
+  });
+
+  it("keeps zero-duration timelines valid", () => {
+    const plan: ExecutionPlan = {
+      ...basePlan,
+      steps: [{ ...basePlan.steps[0]!, id: "instant", estimatedDurationSeconds: 0 }],
+    };
+
+    const result = schedulePlan(plan);
+    expect(result.plan.steps[0]?.timeline).toEqual({
+      startOffsetSeconds: 0,
+      endOffsetSeconds: 0,
+    });
+  });
+
   it("handles many parallel steps competing for an exclusive resource (fast convergence)", () => {
     const parallelCount = 500;
     const steps = Array.from({ length: parallelCount }, (_, i) => ({

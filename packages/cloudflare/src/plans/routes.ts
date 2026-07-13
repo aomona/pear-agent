@@ -298,7 +298,17 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       });
     }
 
-    const goal = body.goal !== undefined ? executionGoalSchema.parse(body.goal) : existing.goal;
+    if (body.goal !== undefined) {
+      const requestedGoal = executionGoalSchema.parse(body.goal);
+      const goalMatch = assertPlanMatchesGoal({ goal: existing.goal }, requestedGoal);
+      if (!goalMatch.ok) {
+        throw new HTTPException(400, {
+          message: `Generation goal must match artifact goal (${goalMatch.reason})`,
+        });
+      }
+    }
+
+    const goal = existing.goal;
 
     const generated = await resolvePlanGenerator(options, c.env).generatePlan({
       domainId: existing.domainId,
@@ -307,7 +317,7 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       context,
     });
 
-    const match = assertPlanMatchesGoal(generated, goal);
+    const match = assertPlanMatchesGoal(generated, existing.goal);
     if (!match.ok) {
       throw new HTTPException(400, {
         message: `Planner goal must match the artifact goal (${match.reason})`,

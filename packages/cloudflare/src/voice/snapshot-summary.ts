@@ -1,4 +1,4 @@
-import type { RuntimeSnapshot } from "@pear-agent/core";
+import { timerDefinitionSchema, type RuntimeSnapshot } from "@pear-agent/core";
 
 /** Compact, typed view of runtime state for Gemini Live system + tools. */
 export type VoiceStepSummary = {
@@ -74,12 +74,18 @@ export function summarizeSnapshotForVoice(snapshot: RuntimeSnapshot): VoiceRunti
       status,
       estimatedDurationSeconds: step.estimatedDurationSeconds ?? null,
       instructions: step.instructions ?? step.summary ?? null,
-      timers: step.timers.map((timer) => ({
-        id: timer.id,
-        label: timer.label ?? timer.id,
-        durationSeconds: timer.durationSeconds,
-        autoStart: timer.autoStart ?? false,
-      })),
+      timers: step.timers.flatMap((rawTimer) => {
+        const timer = timerDefinitionSchema.safeParse(rawTimer);
+        if (!timer.success) return [];
+        return [
+          {
+            id: timer.data.id,
+            label: timer.data.label ?? timer.data.id,
+            durationSeconds: timer.data.durationSeconds,
+            autoStart: timer.data.autoStart ?? false,
+          },
+        ];
+      }),
     };
   });
 

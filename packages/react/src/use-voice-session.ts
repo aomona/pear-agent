@@ -201,40 +201,44 @@ export function useVoiceSession(
   const handleToolCalls = useCallback(
     async (sid: string, conn: VoiceConnection, calls: VoiceToolCall[], epoch: number) => {
       if (!isCurrent(epoch)) return;
-      const responses = await Promise.all(
-        calls.map(async (call) => {
-          appendTranscript({ role: "tool", text: `tool: ${call.name}` });
-          try {
-            const result = await clientRef.current.executeVoiceTool(sid, {
-              toolName: call.name,
-              args: call.args,
-              callId: call.id,
+      const responses: Array<{
+        id: string;
+        name: string;
+        response: { result: unknown } | { error: true; message: string };
+      }> = [];
+      for (const call of calls) {
+        appendTranscript({ role: "tool", text: `tool: ${call.name}` });
+        try {
+          const result = await clientRef.current.executeVoiceTool(sid, {
+            toolName: call.name,
+            args: call.args,
+            callId: call.id,
+          });
+          if (result.ok) {
+            responses.push({
+              id: call.id,
+              name: call.name,
+              response: { result: result.result ?? null },
             });
-            if (result.ok) {
-              return {
-                id: call.id,
-                name: call.name,
-                response: { result: result.result ?? null },
-              };
-            }
-            return {
+          } else {
+            responses.push({
               id: call.id,
               name: call.name,
               response: {
-                error: true as const,
+                error: true,
                 message: result.message ?? `Tool failed: ${call.name}`,
               },
-            };
-          } catch (caught) {
-            const message = caught instanceof Error ? caught.message : String(caught);
-            return {
-              id: call.id,
-              name: call.name,
-              response: { error: true as const, message },
-            };
+            });
           }
-        }),
-      );
+        } catch (caught) {
+          const message = caught instanceof Error ? caught.message : String(caught);
+          responses.push({
+            id: call.id,
+            name: call.name,
+            response: { error: true, message },
+          });
+        }
+      }
       if (!isCurrent(epoch)) return;
       conn.sendToolResponse(responses);
     },
@@ -277,6 +281,7 @@ export function useVoiceSession(
         appendTranscript(entry);
       },
       onResumeHandle: (handle) => {
+        if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
         resumeSyncRef.current?.schedule(handle);
       },
       onToolCall: (calls) => {
@@ -301,17 +306,18 @@ export function useVoiceSession(
     const epoch = epochRef.current;
     // Always release the session that holds the connection, not the latest prop.
     const sid = boundSessionIdRef.current;
+    const resumeSync = resumeSyncRef.current;
+    const conn = connectionRef.current;
+    connectionRef.current = null;
     try {
       stopBrowserMedia();
       clearSubscriptions();
       // Persist latest Live resumption handle before releasing the lease.
       if (sid) {
-        await resumeSyncRef.current?.flush();
+        await resumeSync?.flush();
       }
-      resumeSyncRef.current?.dispose();
-      resumeSyncRef.current = null;
-      const conn = connectionRef.current;
-      connectionRef.current = null;
+      resumeSync?.dispose();
+      if (resumeSyncRef.current === resumeSync) resumeSyncRef.current = null;
       if (isCurrent(epoch)) {
         setConnection(null);
       }
@@ -332,7 +338,7 @@ export function useVoiceSession(
       } else if (isCurrent(epoch)) {
         setLease(null);
       }
-      boundSessionIdRef.current = null;
+      if (boundSessionIdRef.current === sid) boundSessionIdRef.current = null;
       connectingRef.current = false;
       if (isCurrent(epoch)) {
         setView((v) => ({
@@ -600,7 +606,6 @@ export function useVoiceSession(
     });
 
     return () => {
-      epochRef.current += 1;
       // disconnect flushes then disposes resume-handle sync; do not dispose first
       // or a handle still in the debounce window is dropped on unmount/session switch.
       void disconnect();

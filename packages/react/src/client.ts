@@ -167,8 +167,6 @@ export class PearClient {
     return createSessionResultSchema.parse(body);
   }
 
-  // --- Plan library (CE-11) ---
-
   async listPlans(filter?: {
     domainId?: string;
     status?: "draft" | "ready" | "archived";
@@ -308,8 +306,6 @@ export class PearClient {
     return body.normalizedInput;
   }
 
-  // --- Typed convenience actions (build RuntimeEvents) ---
-
   async startSession(sessionId: string, input: AppendEventInput = {}): Promise<AppendEventResult> {
     return this.appendBuiltEvent(sessionId, "session_started", {}, input);
   }
@@ -375,8 +371,6 @@ export class PearClient {
     );
   }
 
-  // --- Voice Lease / token / tool bridge (Issue #6) ---
-
   async acquireVoiceLease(
     sessionId: string,
     input: { ttlMs?: number; leaseId?: string } = {},
@@ -441,8 +435,6 @@ export class PearClient {
     });
   }
 
-  // --- Continuation Runtime (Issue #7) ---
-
   async suspendContinuation(
     sessionId: string,
     input: {
@@ -503,8 +495,6 @@ export class PearClient {
     );
     return parseExecutionContinuation(body.continuation);
   }
-
-  // --- Partial Replanning (Issue #8) ---
 
   async requestReplan(sessionId: string, mode?: ReplanMode): Promise<RequestReplanResult> {
     const body = await this.requestJson<Record<string, unknown>>(`/sessions/${sessionId}/replans`, {

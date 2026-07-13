@@ -45,10 +45,8 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       .catch(() => undefined)
       .then(async () => {
         if (lastPersisted === handle) return;
-        if (!isCurrent()) return;
         try {
           await options.put(handle);
-          if (!isCurrent()) return;
           lastPersisted = handle;
         } catch {
           // best-effort; next flush may retry
@@ -92,9 +90,9 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
     async flush() {
       clearTimer();
       const toWrite = pending;
-      if (toWrite === undefined) return;
       pending = undefined;
-      await persist(toWrite);
+      if (toWrite !== undefined) await persist(toWrite);
+      await chain;
     },
 
     async clearRemote() {

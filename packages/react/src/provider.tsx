@@ -74,8 +74,6 @@ export function PearProvider(props: PearProviderProps) {
     client: injectedClient,
   } = props;
 
-  // Latest getContext without forcing PearClient recreation.
-  // Write the ref in layout effect only — never during render (React may discard renders).
   const getContextRef = useRef(getContext);
   useLayoutEffect(() => {
     getContextRef.current = getContext;
@@ -92,7 +90,6 @@ export function PearProvider(props: PearProviderProps) {
     });
   }, [baseUrl, fetchImpl, injectedClient, stableGetContext]);
 
-  // Keep injected clients on the stable resolver (layout effect — not during render).
   useLayoutEffect(() => {
     if (!injectedClient) return;
     injectedClient.setGetContext(stableGetContext);
