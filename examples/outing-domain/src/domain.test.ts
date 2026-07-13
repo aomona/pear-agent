@@ -48,6 +48,21 @@ describe("outingDomain", () => {
     });
   });
 
+  it("defaults fields added after the original normalized input shape", () => {
+    expect(
+      outingDomain.schemas.normalizedInput.parse({
+        departureAt: "2026-07-11T03:00:00Z",
+        belongings: [{ id: "keys", name: "Keys", chargePercent: null }],
+      }),
+    ).toEqual({
+      departureAt: "2026-07-11T03:00:00Z",
+      belongings: [{ id: "keys", name: "Keys", chargePercent: null }],
+      tasks: [],
+      originLabel: null,
+      destinationLabel: null,
+    });
+  });
+
   it("requires freeTextResolver for free-text fields (no deterministic free-text path)", async () => {
     await expect(
       outingDomain.normalizeInput({
@@ -175,7 +190,7 @@ describe("outingDomain", () => {
       domainType: "delay",
       payload: { minutes: 15 },
     };
-    const assessment = assessOutingDelayReplan({ recentEvents: [delayEvent] });
+    const assessment = assessOutingDelayReplan({ plan: outingPlan, recentEvents: [delayEvent] });
     expect(assessment.needsReplan).toBe(true);
     expect(assessment.directlyAffectedStepIds).toEqual(["charge"]);
 
@@ -196,6 +211,32 @@ describe("outingDomain", () => {
           OUTING_DELAY_CHARGE_EXTENSION_SECONDS,
       );
     }
+  });
+
+  it("does not replan a delay when the plan has no charge step", () => {
+    const plan = buildOutingPlan({
+      departureAt: "2026-08-20T09:00:00Z",
+      belongings: [],
+      tasks: [{ id: "shoes", title: "Put on shoes", estimatedDurationSeconds: null, notes: null }],
+      originLabel: null,
+      destinationLabel: null,
+    });
+    const assessment = assessOutingDelayReplan({
+      plan,
+      recentEvents: [
+        {
+          id: "evt-delay-task-only",
+          type: "domain_event",
+          domainType: "delay",
+          payload: { minutes: 15 },
+        },
+      ],
+    });
+    expect(assessment).toMatchObject({
+      needsReplan: false,
+      causeEventIds: ["evt-delay-task-only"],
+      directlyAffectedStepIds: [],
+    });
   });
 
   it("reconciles world state with plan utilization resource", () => {

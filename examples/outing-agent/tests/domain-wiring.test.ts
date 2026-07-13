@@ -26,6 +26,7 @@ describe("outing-agent domain wiring", () => {
     expect(world.facts.departureAt).toBe("2026-08-20T10:00:00Z");
 
     const assessment = assessOutingDelayReplan({
+      plan,
       recentEvents: [
         {
           id: "e1",

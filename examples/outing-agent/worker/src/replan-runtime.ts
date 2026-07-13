@@ -26,6 +26,7 @@ export const replanRuntime: ReplanRuntime = {
   generator: createStaticReplanGenerator({
     assessment: (input) =>
       assessOutingDelayReplan({
+        plan: input.plan,
         recentEvents: toOutingReplanEvents(input.recentEvents),
       }),
     patch: (input) =>

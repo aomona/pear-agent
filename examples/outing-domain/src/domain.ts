@@ -94,9 +94,9 @@ const outingNormalizedInputSchema = z
   .object({
     departureAt: z.iso.datetime(),
     belongings: z.array(belongingSchema),
-    tasks: z.array(taskSchema),
-    originLabel: placeLabelSchema.nullable(),
-    destinationLabel: placeLabelSchema.nullable(),
+    tasks: z.array(taskSchema).default([]),
+    originLabel: placeLabelSchema.nullable().default(null),
+    destinationLabel: placeLabelSchema.nullable().default(null),
   })
   .superRefine((value, ctx) => {
     if (value.belongings.length === 0 && value.tasks.length === 0) {
@@ -422,6 +422,7 @@ function isDelayEvent(
  * Static assess: a delay domain event impacts the charge step (if present).
  */
 export function assessOutingDelayReplan(input: {
+  plan: ExecutionPlan;
   recentEvents: readonly OutingReplanEventLike[];
 }): ReplanAssessment {
   const cause = [...input.recentEvents].reverse().find(isDelayEvent);
@@ -431,6 +432,14 @@ export function assessOutingDelayReplan(input: {
       causeEventIds: [],
       directlyAffectedStepIds: [],
       reason: "No delay event requires replanning",
+    };
+  }
+  if (!input.plan.steps.some(({ id }) => id === "charge")) {
+    return {
+      needsReplan: false,
+      causeEventIds: [cause.id],
+      directlyAffectedStepIds: [],
+      reason: "The plan has no charge step affected by the delay",
     };
   }
   return {
