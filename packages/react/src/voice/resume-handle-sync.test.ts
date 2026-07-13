@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createResumeHandleSync } from "./resume-handle-sync.js";
+import { attachResumeHandleLifecycleFlush, createResumeHandleSync } from "./resume-handle-sync.js";
 
 describe("createResumeHandleSync", () => {
   it("flushes an in-flight write before resolving", async () => {
@@ -72,5 +72,47 @@ describe("createResumeHandleSync", () => {
 
     await sync.flush();
     expect(writes).toEqual(["retry-me", "retry-me"]);
+  });
+
+  it("flushes pending handles on hidden/pagehide without PUT spam", async () => {
+    vi.useFakeTimers();
+    const writes: Array<string | null> = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle) => {
+        writes.push(handle);
+      },
+    });
+    const pageTarget = new EventTarget();
+    const visibilityTarget = Object.assign(new EventTarget(), { visibilityState: "visible" });
+    const detach = attachResumeHandleLifecycleFlush({
+      getSync: () => sync,
+      pageTarget,
+      visibilityTarget,
+    });
+
+    sync.schedule("hidden-handle");
+    visibilityTarget.dispatchEvent(new Event("visibilitychange"));
+    await vi.runAllTicks();
+    expect(writes).toEqual([]);
+
+    visibilityTarget.visibilityState = "hidden";
+    visibilityTarget.dispatchEvent(new Event("visibilitychange"));
+    await vi.runAllTicks();
+    await sync.flush();
+    expect(writes).toEqual(["hidden-handle"]);
+
+    visibilityTarget.dispatchEvent(new Event("visibilitychange"));
+    await sync.flush();
+    expect(writes).toEqual(["hidden-handle"]);
+
+    sync.schedule("pagehide-handle");
+    pageTarget.dispatchEvent(new Event("pagehide"));
+    await vi.runAllTicks();
+    await sync.flush();
+    expect(writes).toEqual(["hidden-handle", "pagehide-handle"]);
+
+    detach();
+    vi.useRealTimers();
   });
 });

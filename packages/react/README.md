@@ -102,6 +102,10 @@ Optional peer: `@google/genai` for `GeminiLiveVoiceProvider` (default when no `p
 
 Live defaults (gemini-live-api-dev skill): model `gemini-3.1-flash-live-preview`, ephemeral tokens from the Worker, `sendRealtimeInput` for audio/text, `audioStreamEnd` on mute, flush playback on `interrupted`.
 
+Resume handles are debounced during a Live session and flushed before disconnect/suspend. The hook
+also performs a best-effort flush on `pagehide` and when `visibilitychange` enters `hidden`, reducing
+the chance of leaving a newer handle only in memory when a tab is closed or discarded.
+
 ### Partial Replanning
 
 Use `PearClient.requestReplan(sessionId, mode)`, `confirmPlanPatch(sessionId, patchId)`, and `getLatestPlanChange(sessionId)` for the three Replan modes. `RuntimeSnapshot.latestPlanChange` carries the latest Patch status, cause Events, failure reason, and operation list, so UI can distinguish proposed/rejected/applied diffs without diffing whole Plans.

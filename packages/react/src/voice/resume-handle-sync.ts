@@ -25,6 +25,38 @@ export type ResumeHandleSync = {
   dispose: () => void;
 };
 
+type LifecycleEventTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
+
+export type ResumeHandleLifecycleFlushOptions = {
+  getSync: () => Pick<ResumeHandleSync, "flush"> | null;
+  pageTarget: LifecycleEventTarget;
+  visibilityTarget: LifecycleEventTarget & { visibilityState: string };
+};
+
+/**
+ * Best-effort persistence when a page is hidden or leaves the back/forward lifecycle.
+ * `flush()` itself deduplicates persisted handles, so ordinary visibility changes do not PUT.
+ */
+export function attachResumeHandleLifecycleFlush(
+  options: ResumeHandleLifecycleFlushOptions,
+): () => void {
+  const flush = () => {
+    void options
+      .getSync()
+      ?.flush()
+      .catch(() => undefined);
+  };
+  const onVisibilityChange = () => {
+    if (options.visibilityTarget.visibilityState === "hidden") flush();
+  };
+  options.pageTarget.addEventListener("pagehide", flush);
+  options.visibilityTarget.addEventListener("visibilitychange", onVisibilityChange);
+  return () => {
+    options.pageTarget.removeEventListener("pagehide", flush);
+    options.visibilityTarget.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+}
+
 export function createResumeHandleSync(options: ResumeHandleSyncOptions): ResumeHandleSync {
   let lastPersisted: string | null | undefined = undefined;
   let pending: string | null | undefined = undefined;

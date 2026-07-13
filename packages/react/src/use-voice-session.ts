@@ -15,7 +15,11 @@ import { usePearContext } from "./provider.js";
 import { attachBrowserVoiceMedia, type BrowserVoiceMediaHandle } from "./voice/browser-media.js";
 import { GeminiLiveVoiceProvider } from "./voice/gemini-live-provider.js";
 import { attachVoiceConnectionListeners } from "./voice/attach-connection-listeners.js";
-import { createResumeHandleSync, type ResumeHandleSync } from "./voice/resume-handle-sync.js";
+import {
+  attachResumeHandleLifecycleFlush,
+  createResumeHandleSync,
+  type ResumeHandleSync,
+} from "./voice/resume-handle-sync.js";
 
 /**
  * Gemini Live emits sessionResumptionUpdate very frequently.
@@ -153,6 +157,15 @@ export function useVoiceSession(
   const disconnectingRef = useRef(false);
   const connectingRef = useRef(false);
   const resumeSyncRef = useRef<ResumeHandleSync | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    return attachResumeHandleLifecycleFlush({
+      getSync: () => resumeSyncRef.current,
+      pageTarget: window,
+      visibilityTarget: document,
+    });
+  }, []);
 
   const stopBrowserMedia = useCallback(() => {
     mediaRef.current?.stop();
