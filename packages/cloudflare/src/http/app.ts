@@ -392,6 +392,25 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     authorize: options.authorize,
     voiceTokenMinter,
     ...(options.geminiLiveModel === undefined ? {} : { geminiLiveModel: options.geminiLiveModel }),
+    requestReplan: async ({ request, env, sessionId, mode }) => {
+      const url = new URL(request.url);
+      url.pathname = `/sessions/${encodeURIComponent(sessionId)}/replans`;
+      url.search = "";
+      const response = await app.request(
+        url,
+        {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify({ mode }),
+        },
+        env,
+      );
+      const result = (await response.json()) as { message?: string } & Record<string, unknown>;
+      if (!response.ok) {
+        throw new Error(result.message ?? `Replan request failed (${response.status})`);
+      }
+      return result;
+    },
   });
   registerContinuationRoutes(app, options.authorize);
   registerReplanRoutes(app, options.authorize, options.replanRuntime, options.createReplanRuntime);
