@@ -11,13 +11,14 @@ import {
   outingFreeTextHints,
   outingFreeTextParse,
 } from "@pear-agent/outing-domain-example";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 
 import { authorize } from "./authorize.js";
 import { handleCorsPreflight, withCors } from "./cors.js";
 import { createGeminiFreeTextResolver } from "./free-text-resolver.js";
 import { createOutingPlanGenerator, planGenerator } from "./plan-generator.js";
 import { createGeminiPlanImprover } from "./plan-improver.js";
-import { replanRuntime } from "./replan-runtime.js";
+import { createOutingReplanRuntime } from "./replan-runtime.js";
 
 export { ExecutionSessionAgent };
 
@@ -36,7 +37,13 @@ const worker = createPearWorker({
       getApiKey: () => env.GEMINI_API_KEY,
       refineOrder: true,
     }),
-  replanRuntime,
+  createReplanRuntime: (env) => {
+    if (!env.GEMINI_API_KEY) {
+      throw new Error("AI model API key is not configured for replanning");
+    }
+    const provider = createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY });
+    return createOutingReplanRuntime(provider("gemini-3.1-flash-lite"));
+  },
   planLibrary: {
     normalizeDomainInput: async ({ domainId, input, freeTextResolver, context }) => {
       if (domainId !== outingDomain.id) {

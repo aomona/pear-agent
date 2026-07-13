@@ -111,9 +111,13 @@ export function registerReplanRoutes(
   app: ReplanHono,
   authorize: AuthorizeFn,
   runtime?: ReplanRuntime,
+  createRuntime?: (env: PearEnv) => ReplanRuntime,
 ): void {
   app.post("/sessions/:sessionId/replans", async (c) => {
-    if (!runtime) throw new HTTPException(501, { message: "Replan runtime is not configured" });
+    const resolvedRuntime = createRuntime?.(c.env) ?? runtime;
+    if (!resolvedRuntime) {
+      throw new HTTPException(501, { message: "Replan runtime is not configured" });
+    }
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
     const body = requestBodySchema.parse(await c.req.json().catch(() => ({})));
@@ -122,7 +126,7 @@ export function registerReplanRoutes(
     await authorize({ type: "replan.preflight", sessionId }, context);
     const domain = await sessionDomain(c.env.DB, sessionId);
     const configuration = validateReplanConfiguration(
-      await runtime.resolveConfiguration(domain.id),
+      await resolvedRuntime.resolveConfiguration(domain.id),
     );
     const mode = mostRestrictiveReplanMode(configuration.defaultMode, body.mode);
     await authorize({ type: "replan.request", sessionId, mode }, context);
@@ -169,7 +173,7 @@ export function registerReplanRoutes(
       };
       let generatedAssessment: unknown;
       try {
-        generatedAssessment = await runtime.generator.assess(generatorInput);
+        generatedAssessment = await resolvedRuntime.generator.assess(generatorInput);
       } catch {
         throw new ReplanGeneratorError("assessment");
       }
@@ -195,7 +199,7 @@ export function registerReplanRoutes(
       const affected = analyzeAffectedSubgraph(snapshot.plan, assessment.directlyAffectedStepIds);
       let generatedPatch: unknown;
       try {
-        generatedPatch = await runtime.generator.generatePatch({
+        generatedPatch = await resolvedRuntime.generator.generatePatch({
           ...generatorInput,
           assessment,
           affectedStepIds: affected.stepIds,
