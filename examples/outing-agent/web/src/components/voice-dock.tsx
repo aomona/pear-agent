@@ -75,18 +75,7 @@ export function VoiceDock({ sessionId }: VoiceDockProps) {
       }
 
       if (canResume && cont) {
-        const claimed = cont.resumeAttemptId
-          ? { continuation: cont }
-          : await continuation.claimResume(cont.id);
-        const attemptId = claimed.continuation.resumeAttemptId ?? cont.resumeAttemptId;
         await voice.connect({ continuationId: cont.id });
-        if (attemptId) {
-          try {
-            await continuation.complete(cont.id, attemptId);
-          } catch {
-            // Connect is enough for demo if complete races
-          }
-        }
         toast.success("音声を再開しました");
         return;
       }

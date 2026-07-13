@@ -7,7 +7,7 @@
  * Fast structured extraction — lite model, thinking disabled.
  * Override per-call via `model` if needed.
  */
-export const OUTING_GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite-preview";
+export const OUTING_GEMINI_TEXT_MODEL = "gemini-3.1-flash-lite";
 
 export class GeminiServiceError extends Error {
   readonly status: 400 | 502 | 503;
