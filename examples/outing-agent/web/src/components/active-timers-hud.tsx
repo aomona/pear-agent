@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { startTimerAlarmLoop } from "../lib/timer-alarm-loop";
+import { findPlanTimer } from "../lib/plan-timers";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 
@@ -20,17 +21,9 @@ function formatMmSs(totalSeconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
 }
 
-function labelForTimer(
-  timerId: string,
-  plan:
-    | { steps: Array<{ timers: Array<{ id: string; label?: string | undefined }> }> }
-    | null
-    | undefined,
-): string {
-  for (const step of plan?.steps ?? []) {
-    const def = step.timers.find((t) => t.id === timerId);
-    if (def?.label) return def.label;
-  }
+function labelForTimer(timerId: string, plan: Parameters<typeof findPlanTimer>[0]): string {
+  const def = findPlanTimer(plan, timerId);
+  if (def?.label) return def.label;
   if (timerId === "charge-wait") return "充電タイマー";
   return timerId;
 }
