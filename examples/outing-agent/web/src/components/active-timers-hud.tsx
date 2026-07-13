@@ -1,0 +1,167 @@
+import { useExecutionSession, useRuntimeSnapshot } from "@pear-agent/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+
+import { startTimerAlarmLoop } from "../lib/timer-alarm-loop";
+import { findPlanTimer } from "../lib/plan-timers";
+import { cn } from "../lib/utils";
+import { Button } from "./ui/button";
+
+type ActiveTimersHudProps = {
+  sessionId: string | null;
+};
+
+/** After a full ピピピピ burst ends, wait this long before the next burst. */
+const ALARM_GAP_AFTER_BURST_MS = 1_000;
+
+function formatMmSs(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+}
+
+function labelForTimer(timerId: string, plan: Parameters<typeof findPlanTimer>[0]): string {
+  const def = findPlanTimer(plan, timerId);
+  if (def?.label) return def.label;
+  if (timerId === "charge-wait") return "充電タイマー";
+  return timerId;
+}
+
+/**
+ * Floating countdown for running execution timers (bottom-right, above voice dock).
+ * At zero: abortable alarm loop until complete_timer (UI or Live).
+ */
+export function ActiveTimersHud({ sessionId }: ActiveTimersHudProps) {
+  const { snapshot, refetch } = useRuntimeSnapshot(sessionId);
+  const session = useExecutionSession(sessionId);
+  const [now, setNow] = useState(() => Date.now());
+  const toastedDoneKeyRef = useRef("");
+
+  useEffect(() => {
+    if (!snapshot?.activeTimers?.length) return;
+    const id = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(id);
+  }, [snapshot?.activeTimers]);
+
+  const cards = useMemo(() => {
+    const running = snapshot?.activeTimers ?? [];
+    return running.map((timer) => {
+      const endsAtMs = timer.endsAt ? new Date(timer.endsAt).getTime() : NaN;
+      const remaining =
+        Number.isFinite(endsAtMs) && !Number.isNaN(endsAtMs)
+          ? Math.max(0, (endsAtMs - now) / 1000)
+          : timer.remainingSeconds;
+      const duration = timer.durationSeconds > 0 ? timer.durationSeconds : remaining;
+      const progress = duration > 0 ? 1 - remaining / duration : 0;
+      return {
+        id: timer.id,
+        remaining,
+        progress: Math.min(1, Math.max(0, progress)),
+        label: labelForTimer(timer.id, snapshot?.plan),
+        done: remaining <= 0,
+      };
+    });
+  }, [snapshot?.activeTimers, snapshot?.plan, now]);
+
+  const doneCards = useMemo(() => cards.filter((c) => c.done), [cards]);
+  const doneKey = doneCards
+    .map((c) => c.id)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (!doneKey) {
+      toastedDoneKeyRef.current = "";
+      return;
+    }
+
+    const labels = doneCards.map((c) => c.label).join("、");
+    const loop = startTimerAlarmLoop({
+      gapAfterBurstMs: ALARM_GAP_AFTER_BURST_MS,
+      onFirstBurst: () => {
+        if (toastedDoneKeyRef.current === doneKey) return;
+        toastedDoneKeyRef.current = doneKey;
+        toast.message(`${labels} 終了`);
+      },
+    });
+
+    return () => {
+      loop.stop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- arm only when done set changes
+  }, [doneKey]);
+
+  if (!sessionId || cards.length === 0) return null;
+
+  async function completeTimer(timerId: string) {
+    try {
+      await session.completeTimer({ timerId });
+      toast.success("タイマー完了（アラーム停止）");
+      await refetch();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div
+      className="pointer-events-none fixed bottom-[7.5rem] right-3 z-30 flex w-[min(100vw-1.5rem,16rem)] flex-col gap-2 sm:bottom-28"
+      aria-label="実行中のタイマー"
+    >
+      {cards.map((card) => (
+        <div
+          key={card.id}
+          className={cn(
+            "pointer-events-auto overflow-hidden rounded-xl border bg-background/95 shadow-lg backdrop-blur",
+            card.done ? "border-emerald-300 animate-pulse" : "border-primary/30",
+          )}
+        >
+          <div className="px-3 pt-2.5 pb-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-[11px] font-medium text-muted-foreground">
+                  {card.label}
+                </p>
+                <p
+                  className={cn(
+                    "font-mono text-2xl font-semibold tabular-nums tracking-tight",
+                    card.done ? "text-emerald-700" : "text-foreground",
+                  )}
+                >
+                  {card.done ? "00:00" : formatMmSs(card.remaining)}
+                </p>
+                {card.done ? (
+                  <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                    Live に「完了して」か下の完了
+                  </p>
+                ) : null}
+              </div>
+              {card.done ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 shrink-0 text-xs"
+                  onClick={() => void completeTimer(card.id)}
+                >
+                  完了
+                </Button>
+              ) : (
+                <span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-primary" />
+              )}
+            </div>
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-[width] duration-200",
+                  card.done ? "bg-emerald-500" : "bg-primary",
+                )}
+                style={{ width: `${Math.round(card.progress * 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

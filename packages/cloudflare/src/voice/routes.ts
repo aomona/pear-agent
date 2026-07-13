@@ -12,6 +12,7 @@ import {
 import type { AuthorizeFn } from "../authorize.js";
 import type { PearRequestContext } from "../context.js";
 import type { PearEnv } from "../env.js";
+import type { ReplanMode } from "@pear-agent/core";
 import {
   SessionNotFoundError,
   VoiceLeaseConflictError,
@@ -32,6 +33,12 @@ export type RegisterVoiceRoutesOptions = {
   authorize: AuthorizeFn;
   voiceTokenMinter: VoiceTokenMinter;
   geminiLiveModel?: string;
+  requestReplan?: (input: {
+    request: Request;
+    env: PearEnv;
+    sessionId: string;
+    mode: ReplanMode;
+  }) => Promise<unknown>;
 };
 
 function unwrapLease(sessionId: string, result: VoiceLeaseResult) {
@@ -179,6 +186,17 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         return snapshot;
       },
       appendEvent: (event) => agentAppendEvent(c.env, event),
+      ...(options.requestReplan === undefined
+        ? {}
+        : {
+            requestReplan: (mode) =>
+              options.requestReplan!({
+                request: c.req.raw,
+                env: c.env,
+                sessionId,
+                mode,
+              }),
+          }),
     });
 
     return c.json({

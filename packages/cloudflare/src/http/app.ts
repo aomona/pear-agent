@@ -75,6 +75,8 @@ export type CreatePearAppOptions = {
   voiceTokenMinter?: VoiceTokenMinter;
   /** Host-injected Assess/Replan runtime, normally backed by AI SDK. */
   replanRuntime?: ReplanRuntime;
+  /** Per-request Replan runtime for models/providers that need Worker env bindings. */
+  createReplanRuntime?: (env: PearEnv) => ReplanRuntime;
   /**
    * Optional plan-library host hooks (normalize free-text, improve plan).
    * Plan CRUD always uses D1; these only power /plans/:id/normalize|improve.
@@ -390,9 +392,28 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     authorize: options.authorize,
     voiceTokenMinter,
     ...(options.geminiLiveModel === undefined ? {} : { geminiLiveModel: options.geminiLiveModel }),
+    requestReplan: async ({ request, env, sessionId, mode }) => {
+      const url = new URL(request.url);
+      url.pathname = `/sessions/${encodeURIComponent(sessionId)}/replans`;
+      url.search = "";
+      const response = await app.request(
+        url,
+        {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify({ mode }),
+        },
+        env,
+      );
+      const result = (await response.json()) as { message?: string } & Record<string, unknown>;
+      if (!response.ok) {
+        throw new Error(result.message ?? `Replan request failed (${response.status})`);
+      }
+      return result;
+    },
   });
   registerContinuationRoutes(app, options.authorize);
-  registerReplanRoutes(app, options.authorize, options.replanRuntime);
+  registerReplanRoutes(app, options.authorize, options.replanRuntime, options.createReplanRuntime);
   registerPlanRoutes(app, {
     authorize: options.authorize,
     planGenerator: options.planGenerator,

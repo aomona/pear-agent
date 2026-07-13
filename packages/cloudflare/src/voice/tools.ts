@@ -1,6 +1,7 @@
 import {
   runtimeEventSchema,
   type AppendEventResult,
+  type ReplanMode,
   type RuntimeEvent,
   type RuntimeSnapshot,
 } from "@pear-agent/core";
@@ -29,6 +30,7 @@ export const BUILTIN_VOICE_TOOL_NAMES = [
   "complete_timer",
   "cancel_timer",
   "report_domain_event",
+  "request_replan",
 ] as const;
 
 export type BuiltinVoiceToolName = (typeof BUILTIN_VOICE_TOOL_NAMES)[number];
@@ -50,6 +52,7 @@ export type VoiceToolExecuteContext = {
   callId?: string;
   getSnapshot: () => Promise<RuntimeSnapshot>;
   appendEvent: (event: RuntimeEvent) => Promise<AppendEventResult>;
+  requestReplan?: (mode: ReplanMode) => Promise<unknown>;
   now?: Date;
 };
 
@@ -73,6 +76,9 @@ const timerArgsSchema = z.object({ timerId: z.string().min(1) });
 const domainEventArgsSchema = z.object({
   domainType: z.string().min(1),
   payload: z.record(z.string(), z.unknown()).default({}),
+});
+const requestReplanArgsSchema = z.object({
+  mode: z.enum(["automatic", "confirm", "suggest"]).default("automatic"),
 });
 
 type ToolDef = {
@@ -265,6 +271,29 @@ const BUILTIN_TOOLS = {
           sessionStatus: result.state.session.status,
         },
       };
+    },
+  },
+  request_replan: {
+    description:
+      "Request Runtime assessment and partial replanning after relevant events have been recorded. The Runtime validates and applies or proposes the generated patch.",
+    parameters: {
+      type: "object" as const,
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["automatic", "confirm", "suggest"],
+          description: "Use automatic unless the user requests review before applying changes.",
+        },
+      },
+    },
+    args: requestReplanArgsSchema,
+    authorizeEventType: null,
+    run: async (args, ctx) => {
+      if (!ctx.requestReplan) {
+        return { ok: false as const, error: true as const, message: "Replan is not configured" };
+      }
+      const { mode } = args as z.infer<typeof requestReplanArgsSchema>;
+      return { ok: true as const, result: await ctx.requestReplan(mode) };
     },
   },
 } as const satisfies Record<string, ToolDef>;

@@ -15,7 +15,7 @@ UI は **shadcn/ui**（sample app のみ。`@pear-agent/react` は hooks-only）
 
 - monorepo ルートで `pnpm install` 済み
 - Node 20+
-- 任意: Gemini API キー（Voice 用）
+- 任意: Gemini API キー（Voice / 自由文 normalize / plan improve 用）
 
 ## セットアップ
 
@@ -70,6 +70,26 @@ Worker 側で **CORS**（`OPTIONS` 含む）を許可しているので、Vite �
 4. マイクで話す（文字起こしはパネルに表示）
 
 初回応答の体感遅延にはモデル/ネットワーク分が残ります。クライアント側は ~40ms チャンク送信 + 再生キュー上限で積み遅延を抑えています。
+
+### Plan ライブラリ（保存 → 生成 → 実行）
+
+Session と独立した Plan を D1 に保存できます（migration `0005_plan_artifacts`）。
+
+| 操作                                | API                                                            |
+| ----------------------------------- | -------------------------------------------------------------- |
+| 下書き作成                          | `POST /plans`                                                  |
+| 自由文 normalize（決定論 → Gemini） | `POST /plans/:id/normalize` body `{ input }`                   |
+| 実行計画生成                        | `POST /plans/:id/generate`                                     |
+| 改善（自然文）                      | `POST /plans/:id/improve` body `{ request }`                   |
+| ready 化                            | `PATCH /plans/:id` `{ "status": "ready" }`                     |
+| 実行開始                            | `POST /sessions` `{ planArtifactId, domainId, actorIds, ... }` |
+
+- 自由文の構造化は **常に Gemini**（決定論 free-text パースは使わない）。`GEMINI_API_KEY` 必須（未設定時 503）
+- モデル: **`gemini-3.1-flash-lite-preview`** + **`thinkingBudget: 0`**（reasoning なし・低遅延）
+- 入力: **出発時刻 / 行き先(from-to) / 持ち物 / 準備タスク**
+- 持ち物・タスクはモーダル追加で即一覧表示し、Gemini を並行実行
+- Plan 生成: pack / charge / `task:*` ステップ（行き先は title・instructions に反映）
+- Web UI: **一覧 → 入力 → 計画 → 実行** の 4 フェーズ
 
 ## デプロイ
 

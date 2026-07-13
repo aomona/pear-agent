@@ -1,73 +1,228 @@
-import { PearProvider } from "@pear-agent/react";
-import { useCallback, useEffect, useState } from "react";
+import { outingDomain } from "@pear-agent/outing-domain-example";
+import { PearProvider, usePearContext, type PlanArtifactDetail } from "@pear-agent/react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
-import { DelayReplanPanel } from "./components/delay-replan-panel";
-import { PlanStepsPanel } from "./components/plan-steps-panel";
-import { SetupPanel } from "./components/setup-panel";
-import { VoiceContinuationPanel } from "./components/voice-continuation-panel";
+import { ActiveTimersHud } from "./components/active-timers-hud";
+import { ExecuteScreen } from "./components/execute-screen";
+import { PhaseStepper } from "./components/phase-stepper";
+import { PlanDraftPanel } from "./components/plan-draft-panel";
+import { PlanInputPanel } from "./components/plan-input-panel";
+import { PlanListPanel } from "./components/plan-list-panel";
+import { VoiceDock } from "./components/voice-dock";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
-import { loadStoredSessionId, storeSessionId } from "./lib/session-storage";
+import {
+  loadStoredPhase,
+  loadStoredPlanId,
+  storePhase,
+  storePlanId,
+  type DemoPhase,
+} from "./lib/plan-storage";
+import { loadStoredSession, storeSession, type StoredSession } from "./lib/session-storage";
 
 const API_BASE = import.meta.env.VITE_PEAR_API_BASE ?? "http://127.0.0.1:8787";
 const ACTOR_ID = "demo-user";
 
 function DemoShell() {
-  const [sessionId, setSessionId] = useState<string | null>(() => loadStoredSessionId());
+  const { client } = usePearContext();
+  const [phase, setPhase] = useState<DemoPhase>(() => loadStoredPhase() ?? "list");
+  const [planId, setPlanId] = useState<string | null>(() => loadStoredPlanId());
+  const [artifact, setArtifact] = useState<PlanArtifactDetail | null>(null);
+  const [session, setSession] = useState<StoredSession | null>(() => loadStoredSession());
+  const [loadingPlan, setLoadingPlan] = useState(false);
+
+  const sessionForCurrentPlan =
+    session !== null && planId !== null && session.planId === planId ? session.sessionId : null;
 
   useEffect(() => {
-    storeSessionId(sessionId);
-  }, [sessionId]);
+    storePhase(phase);
+  }, [phase]);
 
-  const onSessionCreated = useCallback((id: string) => {
-    setSessionId(id);
-  }, []);
+  useEffect(() => {
+    storePlanId(planId);
+  }, [planId]);
+
+  useEffect(() => {
+    storeSession(session);
+  }, [session]);
+
+  const loadArtifact = useCallback(
+    async (id: string) => {
+      setLoadingPlan(true);
+      try {
+        const next = await client.getPlan(id);
+        if (next.domainId !== outingDomain.id) {
+          throw new Error(`Unexpected domain ${next.domainId}`);
+        }
+        setArtifact(next);
+        setPlanId(id);
+        return next;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : String(error));
+        setArtifact(null);
+        return null;
+      } finally {
+        setLoadingPlan(false);
+      }
+    },
+    [client],
+  );
+
+  useEffect(() => {
+    if (planId && phase !== "list") {
+      void loadArtifact(planId);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- hydrate once on mount
+
+  const canGo = useMemo(
+    (): Partial<Record<DemoPhase, boolean>> => ({
+      list: true,
+      input: Boolean(planId),
+      plan: Boolean(planId && artifact && artifact.currentPlan.steps.length > 0),
+      execute: Boolean(sessionForCurrentPlan),
+    }),
+    [planId, artifact, sessionForCurrentPlan],
+  );
+
+  const leaveSession = () => {
+    setSession(null);
+    if (planId && artifact && artifact.currentPlan.steps.length > 0) setPhase("plan");
+    else if (planId) setPhase("input");
+    else setPhase("list");
+  };
+
+  const goList = () => {
+    setPhase("list");
+    setPlanId(null);
+    setArtifact(null);
+  };
+
+  const selectPhase = (next: DemoPhase) => {
+    if (next === "list") {
+      goList();
+      return;
+    }
+    if (!canGo[next] && next !== phase) {
+      toast.message("このフェーズにはまだ進めません");
+      return;
+    }
+    setPhase(next);
+  };
+
+  const openPlan = async (id: string) => {
+    const next = await loadArtifact(id);
+    if (!next) return;
+
+    // Only resume execute when the stored session belongs to this plan.
+    if (session?.sessionId && session.planId === id) {
+      setPhase("execute");
+      return;
+    }
+
+    if (next.currentPlan.steps.length > 0) {
+      setPhase("plan");
+    } else {
+      setPhase("input");
+    }
+  };
+
+  const onCreatedPlan = async (id: string) => {
+    await loadArtifact(id);
+    setPhase("input");
+  };
+
+  const onPlanBuilt = (next: PlanArtifactDetail) => {
+    setArtifact(next);
+    setPhase("plan");
+  };
+
+  const onSessionStarted = (id: string, fromPlanId: string) => {
+    setSession({ sessionId: id, planId: fromPlanId });
+    setPhase("execute");
+  };
 
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">PEAR Outing Agent</h1>
-            <p className="text-xs text-muted-foreground">
-              Plan → Execute → Assess → Replan · demo UI (shadcn/ui)
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {sessionId ? (
-              <>
-                <Badge variant="outline" className="font-mono text-xs max-w-[220px] truncate">
-                  {sessionId}
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight">PEAR Outing Agent</h1>
+              <p className="text-xs text-muted-foreground">
+                一覧 → 入力 → 計画 → 実行 · 主ボタンは「計画をつくる」「実行を開始」
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {planId ? (
+                <Badge variant="outline" className="font-mono text-xs max-w-[140px] truncate">
+                  plan {planId.slice(0, 8)}…
                 </Badge>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(sessionId);
-                  }}
-                >
-                  Copy id
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => setSessionId(null)}>
-                  Clear
-                </Button>
-              </>
-            ) : (
-              <Badge variant="secondary">no session</Badge>
-            )}
+              ) : null}
+              {sessionForCurrentPlan ? (
+                <>
+                  <Badge variant="outline" className="font-mono text-xs max-w-[140px] truncate">
+                    sess {sessionForCurrentPlan.slice(0, 8)}…
+                  </Badge>
+                  <Button size="sm" variant="outline" onClick={leaveSession}>
+                    実行を離れる
+                  </Button>
+                </>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={goList}>
+                一覧
+              </Button>
+            </div>
           </div>
+          <PhaseStepper phase={phase} canGo={canGo} onSelect={selectPhase} />
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-5xl gap-6 px-4 py-6 md:grid-cols-2">
-        <div className="space-y-6 md:col-span-2">
-          <SetupPanel onSessionCreated={onSessionCreated} />
-        </div>
-        <PlanStepsPanel sessionId={sessionId} />
-        <VoiceContinuationPanel sessionId={sessionId} />
-        <div className="md:col-span-2">
-          <DelayReplanPanel sessionId={sessionId} />
-        </div>
+      <main
+        className={
+          phase === "execute"
+            ? "mx-auto flex max-w-5xl flex-col px-4 py-4 pb-28"
+            : "mx-auto grid max-w-5xl gap-6 px-4 py-6"
+        }
+        style={phase === "execute" ? { minHeight: "calc(100dvh - 7.5rem)" } : undefined}
+      >
+        {phase === "list" ? (
+          <PlanListPanel
+            onOpenPlan={(id) => void openPlan(id)}
+            onCreatedPlan={(id) => void onCreatedPlan(id)}
+          />
+        ) : null}
+
+        {phase === "input" && planId ? (
+          loadingPlan && !artifact ? (
+            <p className="text-sm text-muted-foreground">読み込み中…</p>
+          ) : (
+            <PlanInputPanel
+              planId={planId}
+              artifact={artifact}
+              onPlanBuilt={onPlanBuilt}
+              onBack={goList}
+            />
+          )
+        ) : null}
+
+        {phase === "plan" && planId && artifact ? (
+          <PlanDraftPanel
+            planId={planId}
+            artifact={artifact}
+            onArtifactChange={setArtifact}
+            onBackToInput={() => setPhase("input")}
+            onSessionStarted={(id) => onSessionStarted(id, planId)}
+          />
+        ) : null}
+
+        {phase === "execute" ? (
+          <>
+            <ExecuteScreen sessionId={sessionForCurrentPlan} />
+            <ActiveTimersHud sessionId={sessionForCurrentPlan} />
+            <VoiceDock sessionId={sessionForCurrentPlan} />
+          </>
+        ) : null}
       </main>
     </div>
   );

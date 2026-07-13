@@ -13,6 +13,56 @@ import { contextHeaders, createSession, pearEnv } from "../test/integration-help
 import { summarizeSnapshotForVoice } from "../voice/tools.js";
 
 describe("cloudflare replan integration", () => {
+  it("lets a Live tool record a delay and request Runtime replanning", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+    expect(
+      (
+        await exports.default.fetch(
+          new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...contextHeaders() },
+            body: "{}",
+          }),
+        )
+      ).status,
+    ).toBe(201);
+
+    const report = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          toolName: "report_domain_event",
+          args: { domainType: "delay", payload: { minutes: 15 } },
+          callId: `delay-${crypto.randomUUID()}`,
+        }),
+      }),
+    );
+    expect(report.status).toBe(200);
+    expect(((await report.json()) as { ok: boolean }).ok).toBe(true);
+
+    const replan = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          toolName: "request_replan",
+          args: { mode: "automatic" },
+          callId: `replan-${crypto.randomUUID()}`,
+        }),
+      }),
+    );
+    expect(replan.status).toBe(200);
+    const body = (await replan.json()) as {
+      ok: boolean;
+      result: { kind: string; state: { plan: { version: number } } };
+    };
+    expect(body.ok).toBe(true);
+    expect(body.result.kind).toBe("applied");
+    expect(body.result.state.plan.version).toBe(2);
+  });
+
   it("automatically applies a delay patch only to the affected subgraph", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     expect((await createSession(sessionId)).status).toBe(201);
@@ -80,6 +130,7 @@ describe("cloudflare replan integration", () => {
     );
     expect(body.state.plan.steps.find(({ id }) => id === "pack")).toEqual(packBefore);
     expect(body.state.plan.steps.find(({ id }) => id === "charge")?.domainData).toEqual({
+      kind: "charge",
       belongingIds: ["phone"],
     });
     expect(body.state.worldState.resources).toContainEqual({

@@ -22,7 +22,7 @@ import {
 } from "./domain.js";
 
 describe("outingDomain", () => {
-  it("normalizes departure time, belongings, and charge state", async () => {
+  it("normalizes structured departure, belongings, tasks, and places", async () => {
     await expect(
       outingDomain.normalizeInput({
         departureAt: "2026-07-11T03:00:00Z",
@@ -30,6 +30,9 @@ describe("outingDomain", () => {
           { id: "phone", name: "Phone", chargePercent: 80 },
           { id: "keys", name: "Keys" },
         ],
+        tasks: [{ id: "weather", title: "Check weather" }],
+        originLabel: "Home",
+        destinationLabel: "Station",
       }),
     ).resolves.toEqual({
       departureAt: "2026-07-11T03:00:00Z",
@@ -37,6 +40,63 @@ describe("outingDomain", () => {
         { id: "phone", name: "Phone", chargePercent: 80 },
         { id: "keys", name: "Keys", chargePercent: null },
       ],
+      tasks: [
+        { id: "weather", title: "Check weather", estimatedDurationSeconds: null, notes: null },
+      ],
+      originLabel: "Home",
+      destinationLabel: "Station",
+    });
+  });
+
+  it("defaults fields added after the original normalized input shape", () => {
+    expect(
+      outingDomain.schemas.normalizedInput.parse({
+        departureAt: "2026-07-11T03:00:00Z",
+        belongings: [{ id: "keys", name: "Keys", chargePercent: null }],
+      }),
+    ).toEqual({
+      departureAt: "2026-07-11T03:00:00Z",
+      belongings: [{ id: "keys", name: "Keys", chargePercent: null }],
+      tasks: [],
+      originLabel: null,
+      destinationLabel: null,
+    });
+  });
+
+  it("requires freeTextResolver for free-text fields (no deterministic free-text path)", async () => {
+    await expect(
+      outingDomain.normalizeInput({
+        departureAt: { freeText: "2026-07-11T03:00:00.000Z" },
+        belongings: { freeText: "phone:Phone:80" },
+      }),
+    ).rejects.toThrow(/no freeTextResolver/);
+  });
+
+  it("uses freeTextResolver for all free-text fields", async () => {
+    await expect(
+      outingDomain.normalizeInput(
+        {
+          departureAt: { freeText: "tomorrow morning" },
+          belongings: { freeText: "whatever the model says" },
+        },
+        {
+          freeTextResolver: {
+            async resolve({ field }) {
+              if (field === "departureAt") return "2026-07-12T00:00:00.000Z";
+              if (field === "belongings") {
+                return [{ id: "wallet", name: "Wallet", chargePercent: 10 }];
+              }
+              throw new Error(`unexpected field ${field}`);
+            },
+          },
+        },
+      ),
+    ).resolves.toEqual({
+      departureAt: "2026-07-12T00:00:00.000Z",
+      belongings: [{ id: "wallet", name: "Wallet", chargePercent: 10 }],
+      tasks: [],
+      originLabel: null,
+      destinationLabel: null,
     });
   });
 
@@ -78,17 +138,28 @@ describe("outingDomain", () => {
         { id: "wallet", name: "Wallet", chargePercent: null },
         { id: "laptop", name: "Laptop", chargePercent: 40 },
       ],
+      tasks: [{ id: "lock", title: "Lock the door", estimatedDurationSeconds: 30, notes: null }],
+      originLabel: "Home",
+      destinationLabel: "Office",
     };
     const plan = buildOutingPlan(normalized);
-    expect(plan.steps.map((s) => s.id)).toEqual(["pack", "charge"]);
+    expect(plan.steps.map((s) => s.id)).toEqual(["pack", "charge", "task:lock"]);
     expect(plan.steps.find((s) => s.id === "pack")?.domainData.belongingIds).toEqual([
       "wallet",
       "laptop",
     ]);
     expect(plan.steps.find((s) => s.id === "charge")?.domainData.belongingIds).toEqual(["laptop"]);
     expect(plan.steps.find((s) => s.id === "charge")?.timers).toEqual([
-      { id: OUTING_CHARGE_TIMER_ID, durationSeconds: 300 },
+      {
+        id: OUTING_CHARGE_TIMER_ID,
+        label: "Charge wait",
+        durationSeconds: 300,
+        autoStart: false,
+      },
     ]);
+    expect(plan.steps.find((s) => s.id === "task:lock")?.label).toBe("Lock the door");
+    expect(plan.title).toBe("Home → Office");
+    expect(plan.metadata?.originLabel).toBe("Home");
 
     const world = buildOutingWorldState(normalized, {
       updatedAt: new Date("2026-08-20T00:00:00.000Z"),
@@ -100,6 +171,18 @@ describe("outingDomain", () => {
     });
   });
 
+  it("builds task-only plan without belongings", () => {
+    const plan = buildOutingPlan({
+      departureAt: "2026-08-20T09:00:00Z",
+      belongings: [],
+      tasks: [{ id: "shoes", title: "Put on shoes", estimatedDurationSeconds: null, notes: null }],
+      originLabel: null,
+      destinationLabel: null,
+    });
+    expect(plan.steps.map((s) => s.id)).toEqual(["task:shoes"]);
+    expect(plan.title).toBe("Outing preparation");
+  });
+
   it("assesses delay events and builds a charge-only patch", () => {
     const delayEvent = {
       id: "evt-delay-1",
@@ -107,7 +190,7 @@ describe("outingDomain", () => {
       domainType: "delay",
       payload: { minutes: 15 },
     };
-    const assessment = assessOutingDelayReplan({ recentEvents: [delayEvent] });
+    const assessment = assessOutingDelayReplan({ plan: outingPlan, recentEvents: [delayEvent] });
     expect(assessment.needsReplan).toBe(true);
     expect(assessment.directlyAffectedStepIds).toEqual(["charge"]);
 
@@ -128,6 +211,32 @@ describe("outingDomain", () => {
           OUTING_DELAY_CHARGE_EXTENSION_SECONDS,
       );
     }
+  });
+
+  it("does not replan a delay when the plan has no charge step", () => {
+    const plan = buildOutingPlan({
+      departureAt: "2026-08-20T09:00:00Z",
+      belongings: [],
+      tasks: [{ id: "shoes", title: "Put on shoes", estimatedDurationSeconds: null, notes: null }],
+      originLabel: null,
+      destinationLabel: null,
+    });
+    const assessment = assessOutingDelayReplan({
+      plan,
+      recentEvents: [
+        {
+          id: "evt-delay-task-only",
+          type: "domain_event",
+          domainType: "delay",
+          payload: { minutes: 15 },
+        },
+      ],
+    });
+    expect(assessment).toMatchObject({
+      needsReplan: false,
+      causeEventIds: ["evt-delay-task-only"],
+      directlyAffectedStepIds: [],
+    });
   });
 
   it("reconciles world state with plan utilization resource", () => {
