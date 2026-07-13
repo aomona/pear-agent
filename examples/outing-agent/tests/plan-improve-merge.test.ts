@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { timerDefinitionSchema } from "@pear-agent/core";
 import { outingPlan } from "@pear-agent/outing-domain-example";
 
 import { applyPlanImproveEdits } from "../worker/src/plan-improver.js";
@@ -29,7 +30,10 @@ describe("applyPlanImproveEdits", () => {
     expect(pack?.estimatedDurationSeconds).toBe(30);
     expect(charge?.estimatedDurationSeconds).toBe(120);
     expect(charge?.instructions).toBe("Plug in phone only");
-    const chargeWait = charge?.timers.find((t) => t.id === "charge-wait");
+    const chargeWait = charge?.timers.flatMap((timer) => {
+      const parsedTimer = timerDefinitionSchema.safeParse(timer);
+      return parsedTimer.success && parsedTimer.data.id === "charge-wait" ? [parsedTimer.data] : [];
+    })[0];
     expect(chargeWait?.durationSeconds).toBe(120);
   });
 

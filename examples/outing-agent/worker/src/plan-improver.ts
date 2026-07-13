@@ -1,5 +1,6 @@
 import {
   executionPlanSchema,
+  timerDefinitionSchema,
   type ExecutionPlan,
   type ExecutionStep,
   type PlanImprover,
@@ -78,11 +79,11 @@ export function applyPlanImproveEdits(
       edit.estimatedDurationSeconds !== undefined &&
       Array.isArray(next.timers)
     ) {
-      next.timers = next.timers.map((timer) =>
-        timer.id === "charge-wait"
-          ? { ...timer, durationSeconds: edit.estimatedDurationSeconds! }
-          : timer,
-      );
+      next.timers = next.timers.map((timer) => {
+        const parsedTimer = timerDefinitionSchema.safeParse(timer);
+        if (!parsedTimer.success || parsedTimer.data.id !== "charge-wait") return timer;
+        return { ...parsedTimer.data, durationSeconds: edit.estimatedDurationSeconds! };
+      });
     }
     return next;
   });
