@@ -31,6 +31,9 @@ export const timerDefinitionSchema = z.object({
 
 export type TimerDefinition = z.infer<typeof timerDefinitionSchema>;
 
+const timerDefinitionsSchema = z.union([z.array(timerDefinitionSchema), z.array(z.unknown())]);
+type LegacyTimerDefinition = unknown;
+
 /** CE-03: quantity-bearing resource need (optional; complements requirements[]). */
 export const resourceRequirementSchema = z.object({
   resourceId: z.string().min(1),
@@ -46,10 +49,10 @@ export const stepTimelineSchema = z
     endOffsetSeconds: z.number().nonnegative(),
   })
   .superRefine((value, context) => {
-    if (value.endOffsetSeconds <= value.startOffsetSeconds) {
+    if (value.endOffsetSeconds < value.startOffsetSeconds) {
       context.addIssue({
         code: "custom",
-        message: "timeline.endOffsetSeconds must be greater than startOffsetSeconds",
+        message: "timeline.endOffsetSeconds must be at least startOffsetSeconds",
         path: ["endOffsetSeconds"],
       });
     }
@@ -74,7 +77,8 @@ export type ExecutionStep<TStepData = unknown> = {
   after: string[];
   requirements: string[];
   estimatedDurationSeconds: number;
-  timers: TimerDefinition[];
+  /** Legacy persisted timer payloads are intentionally unstructured and must be parsed before use. */
+  timers: TimerDefinition[] | LegacyTimerDefinition[];
   domainData: TStepData;
   /** CE-01: short human-facing title for UI / Voice. */
   label?: string;
@@ -129,7 +133,8 @@ export function executionStepSchema<TStepDataSchema extends z.ZodType>(
     after: z.array(z.string().min(1)),
     requirements: z.array(z.string().min(1)),
     estimatedDurationSeconds: z.number().nonnegative(),
-    timers: z.array(timerDefinitionSchema),
+    // The second branch preserves plans written before timers became structured.
+    timers: timerDefinitionsSchema,
     domainData: jsonSafeDomainDataSchema(domainDataSchema),
     label: nonEmptyTrimmed(160).optional(),
     summary: nonEmptyTrimmed(280).optional(),
@@ -165,7 +170,10 @@ export function executionPlanSchema<TStepDataSchema extends z.ZodType>(
       const stepIds = new Set(steps.map(({ id }) => id));
       const timerIds = new Set<string>();
       steps.forEach((step, stepIndex) => {
-        for (const [timerIndex, timer] of step.timers.entries()) {
+        for (const [timerIndex, rawTimer] of step.timers.entries()) {
+          const parsedTimer = timerDefinitionSchema.safeParse(rawTimer);
+          if (!parsedTimer.success) continue;
+          const timer = parsedTimer.data;
           if (timerIds.has(timer.id)) {
             context.addIssue({
               code: "custom",
@@ -217,10 +225,18 @@ export function executionPlanSchema<TStepDataSchema extends z.ZodType>(
 export function effectiveResourceRequirements(
   step: Pick<ExecutionStep, "requirements" | "resourceRequirements">,
 ): ResourceRequirement[] {
-  if (step.resourceRequirements && step.resourceRequirements.length > 0) {
-    return step.resourceRequirements;
+  const quantities = new Map<string, number>();
+  const requirements =
+    step.resourceRequirements && step.resourceRequirements.length > 0
+      ? step.resourceRequirements
+      : step.requirements.map((resourceId) => ({ resourceId, quantity: 1 }));
+  for (const requirement of requirements) {
+    quantities.set(
+      requirement.resourceId,
+      (quantities.get(requirement.resourceId) ?? 0) + requirement.quantity,
+    );
   }
-  return step.requirements.map((resourceId) => ({ resourceId, quantity: 1 }));
+  return [...quantities].map(([resourceId, quantity]) => ({ resourceId, quantity }));
 }
 
 // Graph helpers live in plan-graph.ts; re-exported for a stable public API.

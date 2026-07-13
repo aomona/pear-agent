@@ -1,4 +1,5 @@
 import {
+  assertPlanMatchesGoal,
   executionGoalSchema,
   executionPlanSchema,
   planArtifactStatusSchema,
@@ -83,6 +84,17 @@ function resolvePlanImprover(
   env: { GEMINI_API_KEY?: string },
 ): PlanImprover | undefined {
   return resolveOptionalEnvService(options.createPlanImprover, options.planImprover, env);
+}
+
+function assertReadyPlanHasSteps(
+  status: z.infer<typeof planArtifactStatusSchema>,
+  plan: ExecutionPlan,
+) {
+  if (status === "ready" && plan.steps.length === 0) {
+    throw new HTTPException(400, {
+      message: "A ready plan artifact must contain at least one step",
+    });
+  }
 }
 
 function asHttpError(error: unknown): never {
@@ -181,11 +193,19 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
     let stored: StoredPlanArtifact;
     if (body.plan !== undefined) {
       const plan = planSchema.parse(body.plan);
+      const match = assertPlanMatchesGoal(plan, goal);
+      if (!match.ok) {
+        throw new HTTPException(400, {
+          message: `Plan goal must match the requested goal (${match.reason})`,
+        });
+      }
+      const status = body.status ?? "draft";
+      assertReadyPlanHasSteps(status, plan);
       stored = await repository.createStored({
         ...(body.id !== undefined ? { id: body.id } : {}),
         domainId: body.domainId,
         plan,
-        status: body.status ?? "draft",
+        status,
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.normalizedInput !== undefined ? { normalizedInput: body.normalizedInput } : {}),
         ownerActorId: context.actorId,
@@ -196,14 +216,9 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
         domainId: body.domainId,
         goal,
         ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.normalizedInput !== undefined ? { normalizedInput: body.normalizedInput } : {}),
         ownerActorId: context.actorId,
       });
-      if (body.normalizedInput !== undefined) {
-        stored = await repository.updateMeta({
-          artifactId: stored.id,
-          normalizedInput: body.normalizedInput,
-        });
-      }
     }
 
     return c.json(artifactJson(stored), 201);
@@ -241,11 +256,18 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
 
     if (body.plan !== undefined) {
       const nextPlan = planSchema.parse(body.plan) as ExecutionPlan;
+      const match = assertPlanMatchesGoal(nextPlan, existing.goal);
+      if (!match.ok) {
+        throw new HTTPException(400, {
+          message: `Replacement plan goal must match artifact goal (${match.reason})`,
+        });
+      }
       const versioned: ExecutionPlan = {
         ...nextPlan,
         version: existing.version + 1,
         ...(body.title !== undefined && body.title !== null ? { title: body.title } : {}),
       };
+      assertReadyPlanHasSteps(body.status ?? existing.status, versioned);
       const stored = await repository.saveVersionStored({
         artifactId: planId,
         plan: versioned,
@@ -257,6 +279,9 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       return c.json(artifactJson(stored));
     }
 
+    if (body.status !== undefined) {
+      assertReadyPlanHasSteps(body.status, existing.currentPlan);
+    }
     const stored = await repository.updateMeta({
       artifactId: planId,
       ...(body.title !== undefined ? { title: body.title } : {}),
@@ -290,7 +315,17 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       });
     }
 
-    const goal = body.goal !== undefined ? executionGoalSchema.parse(body.goal) : existing.goal;
+    if (body.goal !== undefined) {
+      const requestedGoal = executionGoalSchema.parse(body.goal);
+      const goalMatch = assertPlanMatchesGoal({ goal: existing.goal }, requestedGoal);
+      if (!goalMatch.ok) {
+        throw new HTTPException(400, {
+          message: `Generation goal must match artifact goal (${goalMatch.reason})`,
+        });
+      }
+    }
+
+    const goal = existing.goal;
 
     const generated = await resolvePlanGenerator(options, c.env).generatePlan({
       domainId: existing.domainId,
@@ -299,9 +334,10 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       context,
     });
 
-    if (generated.goal.id !== goal.id) {
+    const match = assertPlanMatchesGoal(generated, existing.goal);
+    if (!match.ok) {
       throw new HTTPException(400, {
-        message: "Planner goal id must match the artifact goal id",
+        message: `Planner goal must match the artifact goal (${match.reason})`,
       });
     }
 
@@ -315,7 +351,7 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
     const stored = await repository.saveVersionStored({
       artifactId: planId,
       plan,
-      changeReason: "initial",
+      changeReason: existing.currentPlan.steps.length === 0 ? "initial" : "improve",
       summary: existing.currentPlan.steps.length === 0 ? "Generated plan" : "Regenerated plan",
       normalizedInput,
     });
@@ -466,6 +502,12 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
 
     try {
       const result = await planImprover.improve(improveInput);
+      const match = assertPlanMatchesGoal(result.plan, existing.goal);
+      if (!match.ok) {
+        throw new HTTPException(400, {
+          message: `Improved plan goal must match the artifact goal (${match.reason})`,
+        });
+      }
       const nextPlan: ExecutionPlan = {
         ...result.plan,
         version: existing.version + 1,

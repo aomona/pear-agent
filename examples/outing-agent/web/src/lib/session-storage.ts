@@ -66,7 +66,7 @@ export function storeSession(session: StoredSession | null): void {
       }
     }
   } catch {
-    // ignore quota / private mode
+    // Storage may be unavailable or over quota.
   }
 }
 

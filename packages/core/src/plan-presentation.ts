@@ -94,6 +94,13 @@ export function buildPlanPresentation(
     }
   }
 
+  const scheduledDuration = plan.steps.reduce(
+    (max, step) => Math.max(max, step.timeline?.endOffsetSeconds ?? 0),
+    0,
+  );
+  const hasSchedule =
+    plan.steps.length > 0 && plan.steps.every((step) => step.timeline !== undefined);
+
   return {
     planId: plan.id,
     planVersion: plan.version,
@@ -101,7 +108,9 @@ export function buildPlanPresentation(
     nodes,
     edges,
     lanes,
-    totalDurationSeconds: estimateCriticalPathDurationSeconds(plan.steps),
+    totalDurationSeconds: hasSchedule
+      ? scheduledDuration
+      : estimateCriticalPathDurationSeconds(plan.steps),
     criticalPath: computeCriticalPathIds(plan.steps),
     readyIds,
     blockedIds,

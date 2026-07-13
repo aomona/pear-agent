@@ -71,6 +71,8 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
   useLayoutEffect(() => {
     if (controlled) {
       sessionIdRef.current = sessionId ?? null;
+    } else {
+      sessionIdRef.current = null;
     }
   }, [controlled, sessionId]);
 

@@ -211,6 +211,30 @@ describe("execution plan schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("preserves legacy unstructured timer payloads", () => {
+    const schema = executionPlanSchema(z.object({}));
+    const legacyTimer = { name: "old-timer", seconds: 30 };
+    const result = schema.safeParse({
+      id: "legacy",
+      version: 1,
+      goal,
+      steps: [
+        {
+          id: "wait",
+          executor: { type: "human" },
+          after: [],
+          requirements: [],
+          estimatedDurationSeconds: 30,
+          timers: [legacyTimer],
+          domainData: {},
+        },
+      ],
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.steps[0]?.timers).toEqual([legacyTimer]);
+  });
+
   it("rejects empty label and duplicate timer ids across the plan", () => {
     const schema = executionPlanSchema(z.object({}));
     expect(

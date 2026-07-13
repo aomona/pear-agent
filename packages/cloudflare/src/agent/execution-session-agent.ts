@@ -197,9 +197,6 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
     return this.state;
   }
 
-  // --- Voice Lease (Issue #6); does not mutate Execution Session status ---
-  // Returns Result objects so DO RPC does not strip typed HTTP errors.
-
   async acquireVoiceLease(input: {
     actorId: string;
     leaseId?: string;
@@ -239,8 +236,6 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
       return store.setResumeHandle(this.sessionId(), input.actorId, input.handle);
     });
   }
-
-  // --- Continuation Runtime (Issue #7) ---
 
   async suspendContinuation(input: {
     id?: string;
@@ -380,8 +375,6 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
       if (continuation) this.bumpPulse(null, continuation);
     });
   }
-
-  // --- Partial Replanning (Issue #8) ---
 
   async proposeReplan(input: {
     actorId: string;

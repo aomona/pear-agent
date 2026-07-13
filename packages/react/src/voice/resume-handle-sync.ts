@@ -28,6 +28,7 @@ export type ResumeHandleSync = {
 export function createResumeHandleSync(options: ResumeHandleSyncOptions): ResumeHandleSync {
   let lastPersisted: string | null | undefined = undefined;
   let pending: string | null | undefined = undefined;
+  let latestRequested: string | null | undefined = undefined;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
 
@@ -45,13 +46,21 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       .catch(() => undefined)
       .then(async () => {
         if (lastPersisted === handle) return;
-        if (!isCurrent()) return;
         try {
           await options.put(handle);
-          if (!isCurrent()) return;
           lastPersisted = handle;
         } catch {
-          // best-effort; next flush may retry
+          // Keep the latest failed handle available for a cleanup flush or retry.
+          if (latestRequested === handle && pending === undefined) {
+            pending = handle;
+            timer = setTimeout(() => {
+              timer = null;
+              const toWrite = pending;
+              if (toWrite === undefined) return;
+              pending = undefined;
+              void persist(toWrite);
+            }, options.debounceMs);
+          }
         }
       });
     return chain;
@@ -60,6 +69,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   return {
     noteKnown(handle) {
       lastPersisted = handle;
+      latestRequested = handle;
       if (pending === handle) {
         pending = undefined;
         clearTimer();
@@ -69,6 +79,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
     schedule(handle) {
       if (!isCurrent()) return;
       options.onOptimistic?.(handle);
+      latestRequested = handle;
 
       if (lastPersisted === handle) {
         if (pending === handle) {
@@ -92,14 +103,15 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
     async flush() {
       clearTimer();
       const toWrite = pending;
-      if (toWrite === undefined) return;
       pending = undefined;
-      await persist(toWrite);
+      if (toWrite !== undefined) await persist(toWrite);
+      await chain;
     },
 
     async clearRemote() {
       clearTimer();
       pending = undefined;
+      latestRequested = null;
       await persist(null);
     },
 
