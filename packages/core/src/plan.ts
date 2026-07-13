@@ -32,6 +32,7 @@ export const timerDefinitionSchema = z.object({
 export type TimerDefinition = z.infer<typeof timerDefinitionSchema>;
 
 const timerDefinitionsSchema = z.union([z.array(timerDefinitionSchema), z.array(z.unknown())]);
+type LegacyTimerDefinition = unknown;
 
 /** CE-03: quantity-bearing resource need (optional; complements requirements[]). */
 export const resourceRequirementSchema = z.object({
@@ -76,7 +77,8 @@ export type ExecutionStep<TStepData = unknown> = {
   after: string[];
   requirements: string[];
   estimatedDurationSeconds: number;
-  timers: TimerDefinition[];
+  /** Legacy persisted timer payloads are intentionally unstructured and must be parsed before use. */
+  timers: TimerDefinition[] | LegacyTimerDefinition[];
   domainData: TStepData;
   /** CE-01: short human-facing title for UI / Voice. */
   label?: string;

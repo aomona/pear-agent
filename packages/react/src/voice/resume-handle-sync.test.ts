@@ -53,4 +53,24 @@ describe("createResumeHandleSync", () => {
 
     expect(writes).toEqual(["cleanup-handle"]);
   });
+
+  it("keeps failed writes pending so a later flush retries them", async () => {
+    let attempts = 0;
+    const writes: Array<string | null> = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle) => {
+        writes.push(handle);
+        attempts += 1;
+        if (attempts === 1) throw new Error("temporary failure");
+      },
+    });
+
+    sync.schedule("retry-me");
+    await sync.flush();
+    expect(writes).toEqual(["retry-me"]);
+
+    await sync.flush();
+    expect(writes).toEqual(["retry-me", "retry-me"]);
+  });
 });

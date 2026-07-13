@@ -134,6 +134,37 @@ describe("plan library (CE-11)", () => {
     expect(res.status).toBe(404);
   });
 
+  it("rejects ready artifacts with no executable steps", async () => {
+    const createReadyRes = await fetchApi("/plans", {
+      method: "POST",
+      body: JSON.stringify({
+        domainId: "outing",
+        goal: outingGoal,
+        plan: {
+          id: "empty-ready-plan",
+          version: 1,
+          goal: outingGoal,
+          steps: [],
+        },
+        status: "ready",
+      }),
+    });
+    expect(createReadyRes.status).toBe(400);
+
+    const createDraftRes = await fetchApi("/plans", {
+      method: "POST",
+      body: JSON.stringify({ domainId: "outing", goal: outingGoal }),
+    });
+    expect(createDraftRes.status).toBe(201);
+    const created = (await createDraftRes.json()) as { artifact: { id: string } };
+
+    const patchReadyRes = await fetchApi(`/plans/${created.artifact.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status: "ready" }),
+    });
+    expect(patchReadyRes.status).toBe(400);
+  });
+
   // --- Fix B: POST /plans with body.plan but mismatched body.goal returns 400 ---
   it("rejects POST /plans with plan.goal mismatching body.goal", async () => {
     const res = await fetchApi("/plans", {

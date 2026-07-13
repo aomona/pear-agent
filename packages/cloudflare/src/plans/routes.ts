@@ -86,6 +86,17 @@ function resolvePlanImprover(
   return resolveOptionalEnvService(options.createPlanImprover, options.planImprover, env);
 }
 
+function assertReadyPlanHasSteps(
+  status: z.infer<typeof planArtifactStatusSchema>,
+  plan: ExecutionPlan,
+) {
+  if (status === "ready" && plan.steps.length === 0) {
+    throw new HTTPException(400, {
+      message: "A ready plan artifact must contain at least one step",
+    });
+  }
+}
+
 function asHttpError(error: unknown): never {
   if (error instanceof HTTPException) throw error;
   if (
@@ -188,11 +199,13 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
           message: `Plan goal must match the requested goal (${match.reason})`,
         });
       }
+      const status = body.status ?? "draft";
+      assertReadyPlanHasSteps(status, plan);
       stored = await repository.createStored({
         ...(body.id !== undefined ? { id: body.id } : {}),
         domainId: body.domainId,
         plan,
-        status: body.status ?? "draft",
+        status,
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.normalizedInput !== undefined ? { normalizedInput: body.normalizedInput } : {}),
         ownerActorId: context.actorId,
@@ -254,6 +267,7 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
         version: existing.version + 1,
         ...(body.title !== undefined && body.title !== null ? { title: body.title } : {}),
       };
+      assertReadyPlanHasSteps(body.status ?? existing.status, versioned);
       const stored = await repository.saveVersionStored({
         artifactId: planId,
         plan: versioned,
@@ -265,6 +279,9 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
       return c.json(artifactJson(stored));
     }
 
+    if (body.status !== undefined) {
+      assertReadyPlanHasSteps(body.status, existing.currentPlan);
+    }
     const stored = await repository.updateMeta({
       artifactId: planId,
       ...(body.title !== undefined ? { title: body.title } : {}),
