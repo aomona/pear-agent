@@ -550,6 +550,139 @@ describe("react hooks", () => {
     expect(cancelled).toBe(false);
   });
 
+  it("captures events emitted by an opening text turn before the next effect", async () => {
+    const provider = new FakeVoiceProvider();
+    const connectProvider = provider.connect.bind(provider);
+    provider.connect = async (options) => {
+      const connection = await connectProvider(options);
+      const fakeConnection = provider.connections.at(-1)!;
+      const sendText = connection.sendText?.bind(connection);
+      connection.sendText = (text) => {
+        sendText?.(text);
+        fakeConnection.emitTranscript({ role: "assistant", text: "early response" });
+      };
+      return connection;
+    };
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/voice/lease") && method === "POST") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-early",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/token") && method === "POST") {
+        return new Response(JSON.stringify({ token: "ephemeral", model: "fake-model" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/voice/lease") && method === "DELETE") {
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-early",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "released",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+    const { result } = renderHook(
+      () =>
+        useVoiceSession("s1", { provider, openingText: "Start now", enableBrowserMedia: false }),
+      { wrapper: createWrapper(client) },
+    );
+
+    await act(async () => {
+      await result.current.connect();
+    });
+
+    expect(result.current.transcript).toContainEqual({ role: "assistant", text: "early response" });
+    await act(async () => result.current.disconnect());
+  });
+
+  it("releases a lease acquired by a connect invalidated during unmount", async () => {
+    let resolveLease!: () => void;
+    const leaseReady = new Promise<void>((resolve) => {
+      resolveLease = resolve;
+    });
+    let released = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/voice/lease") && method === "POST") {
+        await leaseReady;
+        return new Response(
+          JSON.stringify({
+            lease: {
+              id: "lease-unmount",
+              sessionId: "s1",
+              actorId: "traveler",
+              status: "active",
+              acquiredAt: "2026-07-11T00:00:00.000Z",
+              expiresAt: "2026-07-11T00:30:00.000Z",
+              providerResumeHandle: null,
+            },
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/voice/lease") && method === "DELETE") {
+        released = true;
+        return new Response(JSON.stringify({ lease: null }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${method} ${url}`);
+    });
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: fetchMock as typeof fetch,
+    });
+    const { result, unmount } = renderHook(() => useVoiceSession("s1"), {
+      wrapper: createWrapper(client),
+    });
+
+    let connectPromise!: Promise<void>;
+    await act(async () => {
+      connectPromise = result.current.connect();
+      await Promise.resolve();
+    });
+    unmount();
+    resolveLease();
+    await connectPromise;
+
+    expect(released).toBe(true);
+  });
+
   it("debounces rapid resume-handle updates and flushes only the latest", async () => {
     vi.useFakeTimers();
     const provider = new FakeVoiceProvider();

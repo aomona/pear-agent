@@ -153,7 +153,6 @@ export function useVoiceSession(
   const disconnectingRef = useRef(false);
   const connectingRef = useRef(false);
   const resumeSyncRef = useRef<ResumeHandleSync | null>(null);
-  const bindMetaRef = useRef<{ sid: string; epoch: number } | null>(null);
 
   const stopBrowserMedia = useCallback(() => {
     mediaRef.current?.stop();
@@ -245,60 +244,53 @@ export function useVoiceSession(
     [appendTranscript, isCurrent],
   );
 
+  const attachConnectionListeners = useCallback(
+    (sid: string, conn: VoiceConnection, epoch: number) => {
+      const unsubscribe = attachVoiceConnectionListeners(conn, {
+        onStatus: (next) => {
+          if (!isCurrent(epoch)) return;
+          setStatus(next);
+        },
+        onError: (err) => {
+          if (!isCurrent(epoch)) return;
+          setView((v) => ({ ...v, error: err, status: "error" }));
+        },
+        onTranscript: (entry) => {
+          if (!isCurrent(epoch)) return;
+          appendTranscript(entry);
+        },
+        onResumeHandle: (handle) => {
+          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
+          resumeSyncRef.current?.schedule(handle);
+        },
+        onToolCall: (calls) => {
+          const queue = toolQueueRef.current ?? Promise.resolve();
+          toolQueueRef.current = queue
+            .catch(() => undefined)
+            .then(() => handleToolCalls(sid, conn, calls, epoch))
+            .catch((caught) => {
+              if (!isCurrent(epoch)) return;
+              const next = caught instanceof Error ? caught : new Error(String(caught));
+              setError(next);
+            });
+        },
+      });
+      unsubscribersRef.current = [unsubscribe];
+    },
+    [appendTranscript, handleToolCalls, isCurrent, setError, setStatus],
+  );
+
   const bindConnection = useCallback(
     (sid: string, conn: VoiceConnection, epoch: number) => {
       clearSubscriptions();
       connectionRef.current = conn;
       boundSessionIdRef.current = sid;
-      bindMetaRef.current = { sid, epoch };
       if (!isCurrent(epoch)) return;
+      attachConnectionListeners(sid, conn, epoch);
       setView((v) => ({ ...v, connection: conn, status: conn.status }));
     },
-    [clearSubscriptions, isCurrent],
+    [attachConnectionListeners, clearSubscriptions, isCurrent],
   );
-
-  // Lifecycle-owned subscriptions (cleanup on connection change / unmount).
-  // Registration lives in attachVoiceConnectionListeners so the effect returns a clear unsub.
-  useEffect(() => {
-    const conn = connection;
-    const meta = bindMetaRef.current;
-    if (!conn || !meta) {
-      return;
-    }
-    const { sid, epoch } = meta;
-
-    const unsubscribe = attachVoiceConnectionListeners(conn, {
-      onStatus: (next) => {
-        if (!isCurrent(epoch)) return;
-        setStatus(next);
-      },
-      onError: (err) => {
-        if (!isCurrent(epoch)) return;
-        setView((v) => ({ ...v, error: err, status: "error" }));
-      },
-      onTranscript: (entry) => {
-        if (!isCurrent(epoch)) return;
-        appendTranscript(entry);
-      },
-      onResumeHandle: (handle) => {
-        if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
-        resumeSyncRef.current?.schedule(handle);
-      },
-      onToolCall: (calls) => {
-        const queue = toolQueueRef.current ?? Promise.resolve();
-        toolQueueRef.current = queue
-          .catch(() => undefined)
-          .then(() => handleToolCalls(sid, conn, calls, epoch))
-          .catch((caught) => {
-            if (!isCurrent(epoch)) return;
-            const next = caught instanceof Error ? caught : new Error(String(caught));
-            setError(next);
-          });
-      },
-    });
-    unsubscribersRef.current = [unsubscribe];
-    return unsubscribe;
-  }, [connection, appendTranscript, handleToolCalls, isCurrent, setStatus, setError]);
 
   const disconnect = useCallback(async () => {
     if (disconnectingRef.current) return;
@@ -608,6 +600,8 @@ export function useVoiceSession(
     return () => {
       // disconnect flushes then disposes resume-handle sync; do not dispose first
       // or a handle still in the debounce window is dropped on unmount/session switch.
+      epochRef.current += 1;
+      connectingRef.current = false;
       void disconnect();
     };
   }, [sessionId, disconnect]);
