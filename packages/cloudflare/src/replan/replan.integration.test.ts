@@ -80,6 +80,7 @@ describe("cloudflare replan integration", () => {
     );
     expect(body.state.plan.steps.find(({ id }) => id === "pack")).toEqual(packBefore);
     expect(body.state.plan.steps.find(({ id }) => id === "charge")?.domainData).toEqual({
+      kind: "charge",
       belongingIds: ["phone"],
     });
     expect(body.state.worldState.resources).toContainEqual({
