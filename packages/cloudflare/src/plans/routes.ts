@@ -359,6 +359,71 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
   });
 
   /**
+   * Main plan-library path: normalize and generate without exposing a partially
+   * normalized artifact. D1 is updated only after both host operations succeed.
+   */
+  app.post("/plans/:planId/build", async (c) => {
+    const context = c.get("pearContext");
+    const planId = c.req.param("planId");
+    await options.authorize({ type: "plan.update", planId }, context);
+
+    if (!options.normalizeDomainInput) {
+      throw new HTTPException(501, {
+        message: "normalizeDomainInput is not configured on this Worker",
+      });
+    }
+
+    const body = z.object({ input: z.unknown() }).parse(await c.req.json());
+    const repository = repo(c.env);
+    const existing = await repository.getStored(planId);
+    if (!existing) throw new PlanArtifactNotFoundError(planId);
+
+    const freeTextResolver = resolveFreeTextResolver(options, c.env);
+    const normalizeInput: {
+      domainId: string;
+      input: unknown;
+      freeTextResolver?: FreeTextFieldResolver;
+      context: unknown;
+    } = {
+      domainId: existing.domainId,
+      input: body.input,
+      context,
+    };
+    if (freeTextResolver !== undefined) normalizeInput.freeTextResolver = freeTextResolver;
+
+    try {
+      const normalizedInput = await options.normalizeDomainInput(normalizeInput);
+      const generated = await resolvePlanGenerator(options, c.env).generatePlan({
+        domainId: existing.domainId,
+        goal: existing.goal,
+        normalizedInput,
+        context,
+      });
+      const match = assertPlanMatchesGoal(generated, existing.goal);
+      if (!match.ok) {
+        throw new HTTPException(400, {
+          message: `Planner goal must match the artifact goal (${match.reason})`,
+        });
+      }
+      const plan: ExecutionPlan = {
+        ...generated,
+        version: existing.version + 1,
+        id: existing.currentPlan.id,
+      };
+      const stored = await repository.saveVersionStored({
+        artifactId: planId,
+        plan,
+        changeReason: existing.currentPlan.steps.length === 0 ? "initial" : "improve",
+        summary: existing.currentPlan.steps.length === 0 ? "Built plan" : "Rebuilt plan",
+        normalizedInput,
+      });
+      return c.json(artifactJson(stored));
+    } catch (error) {
+      asHttpError(error);
+    }
+  });
+
+  /**
    * Structure one free-text field without writing the full artifact normalizedInput.
    * Intended for UI "add item" modals (structure happens on confirm, not while typing).
    */

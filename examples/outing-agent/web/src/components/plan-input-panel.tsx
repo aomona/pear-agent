@@ -190,8 +190,7 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
     setBuildBusy(true);
     try {
       const input = buildOutingInputFromForm(form);
-      await client.normalizePlanInput(planId, input);
-      const generated = await client.generatePlanArtifact(planId);
+      const generated = await client.buildPlanArtifact(planId, input);
       toast.success(generateSuccessMessage(generated.currentPlan));
       onPlanBuilt(generated);
     } catch (error) {
