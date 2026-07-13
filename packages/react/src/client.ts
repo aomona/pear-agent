@@ -1,7 +1,9 @@
 import {
+  dateSchema,
   executionPlanSchema,
   executionSessionSchema,
   affectedSubgraphSchema,
+  planArtifactStatusSchema,
   replanAssessmentSchema,
   runtimeEventSchema,
   stepStatesSchema,
@@ -38,6 +40,8 @@ import type {
   CreateSessionInput,
   DomainEventInput,
   PearClientContext,
+  PlanArtifactDetail,
+  PlanListItem,
   StepActionInput,
   TimerActionInput,
   TimerStartInput,
@@ -56,6 +60,7 @@ export type CreateSessionResult = {
   session: ExecutionSession;
   plan: ExecutionPlan;
   stepStates: StepStates;
+  planArtifactId?: string | undefined;
 };
 
 /**
@@ -77,6 +82,37 @@ const createSessionResultSchema = z.object({
   session: executionSessionSchema,
   plan: executionPlanSchema(z.unknown()),
   stepStates: stepStatesSchema,
+  planArtifactId: z.string().min(1).optional(),
+});
+
+const optionalTitle = z.preprocess(
+  (value) => (value === null || value === "" ? undefined : value),
+  z.string().min(1).max(160).optional(),
+);
+
+const planListItemSchema = z.object({
+  id: z.string().min(1),
+  domainId: z.string().min(1),
+  status: planArtifactStatusSchema,
+  title: optionalTitle,
+  version: z.number().int().positive(),
+  goalId: z.string().min(1),
+  createdAt: dateSchema,
+  updatedAt: dateSchema,
+});
+
+const planArtifactDetailSchema = z.object({
+  id: z.string().min(1),
+  domainId: z.string().min(1),
+  status: planArtifactStatusSchema,
+  title: optionalTitle,
+  version: z.number().int().positive(),
+  goal: z.unknown(),
+  currentPlan: executionPlanSchema(z.unknown()),
+  createdAt: dateSchema,
+  updatedAt: dateSchema,
+  normalizedInput: z.unknown().optional(),
+  ownerActorId: z.string().nullable().optional(),
 });
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -131,6 +167,100 @@ export class PearClient {
     return createSessionResultSchema.parse(body);
   }
 
+  async listPlans(filter?: {
+    domainId?: string;
+    status?: "draft" | "ready" | "archived";
+  }): Promise<PlanListItem[]> {
+    const params = new URLSearchParams();
+    if (filter?.domainId !== undefined) params.set("domainId", filter.domainId);
+    if (filter?.status !== undefined) params.set("status", filter.status);
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    const body = await this.requestJson<{ plans: unknown }>(`/plans${query}`);
+    return z.array(planListItemSchema).parse(body.plans);
+  }
+
+  async createPlan(input: {
+    id?: string;
+    domainId: string;
+    goal: unknown;
+    title?: string;
+    plan?: unknown;
+    status?: "draft" | "ready" | "archived";
+    normalizedInput?: unknown;
+  }): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>("/plans", {
+      method: "POST",
+      body: input,
+    });
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
+  async getPlan(planId: string): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}`);
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
+  async updatePlan(
+    planId: string,
+    input: {
+      title?: string | null;
+      status?: "draft" | "ready" | "archived";
+      normalizedInput?: unknown;
+      plan?: unknown;
+      summary?: string;
+    },
+  ): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}`, {
+      method: "PATCH",
+      body: input,
+    });
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
+  async generatePlanArtifact(
+    planId: string,
+    input?: { normalizedInput?: unknown; goal?: unknown },
+  ): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/generate`, {
+      method: "POST",
+      body: input ?? {},
+    });
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
+  async normalizePlanInput(planId: string, input: unknown): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/normalize`, {
+      method: "POST",
+      body: { input },
+    });
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
+  /**
+   * Structure one free-text field (deterministic + optional LLM).
+   * Used when the user confirms an add-item modal — not while typing.
+   */
+  async resolvePlanField(
+    planId: string,
+    input: { field: string; freeText: string },
+  ): Promise<{ field: string; value: unknown }> {
+    return this.requestJson(`/plans/${planId}/resolve-field`, {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  async improvePlan(
+    planId: string,
+    input: { request: string; constraints?: unknown },
+  ): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/improve`, {
+      method: "POST",
+      body: input,
+    });
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
   async getSession(sessionId: string): Promise<MaterializedExecutionState> {
     const body = await this.requestJson<{ state: unknown }>(`/sessions/${sessionId}`);
     return parseMaterializedState(body.state);
@@ -175,8 +305,6 @@ export class PearClient {
     );
     return body.normalizedInput;
   }
-
-  // --- Typed convenience actions (build RuntimeEvents) ---
 
   async startSession(sessionId: string, input: AppendEventInput = {}): Promise<AppendEventResult> {
     return this.appendBuiltEvent(sessionId, "session_started", {}, input);
@@ -243,8 +371,6 @@ export class PearClient {
     );
   }
 
-  // --- Voice Lease / token / tool bridge (Issue #6) ---
-
   async acquireVoiceLease(
     sessionId: string,
     input: { ttlMs?: number; leaseId?: string } = {},
@@ -309,8 +435,6 @@ export class PearClient {
     });
   }
 
-  // --- Continuation Runtime (Issue #7) ---
-
   async suspendContinuation(
     sessionId: string,
     input: {
@@ -371,8 +495,6 @@ export class PearClient {
     );
     return parseExecutionContinuation(body.continuation);
   }
-
-  // --- Partial Replanning (Issue #8) ---
 
   async requestReplan(sessionId: string, mode?: ReplanMode): Promise<RequestReplanResult> {
     const body = await this.requestJson<Record<string, unknown>>(`/sessions/${sessionId}/replans`, {

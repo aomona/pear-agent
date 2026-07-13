@@ -166,6 +166,47 @@ export const planPatches = sqliteTable(
   ],
 );
 
+/** CE-11: session-independent plan library (not runtime replan history). */
+export const planArtifacts = sqliteTable(
+  "plan_artifacts",
+  {
+    id: text("id").primaryKey(),
+    domainId: text("domain_id").notNull(),
+    status: text("status").notNull(),
+    title: text("title"),
+    goalJson: text("goal_json").notNull(),
+    currentPlanJson: text("current_plan_json").notNull(),
+    version: integer("version").notNull(),
+    normalizedInputJson: text("normalized_input_json"),
+    ownerActorId: text("owner_actor_id"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("plan_artifacts_domain_status").on(table.domainId, table.status),
+    index("plan_artifacts_updated").on(table.updatedAt),
+  ],
+);
+
+export const planArtifactVersions = sqliteTable(
+  "plan_artifact_versions",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => planArtifacts.id),
+    version: integer("version").notNull(),
+    planJson: text("plan_json").notNull(),
+    parentVersion: integer("parent_version"),
+    changeReason: text("change_reason").notNull(),
+    summary: text("summary"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("plan_artifact_versions_artifact_version").on(table.artifactId, table.version),
+    index("plan_artifact_versions_artifact").on(table.artifactId, table.version),
+  ],
+);
+
 export const pearSchema = {
   executionSessions,
   materializedStates,
@@ -176,4 +217,6 @@ export const pearSchema = {
   executionContinuations,
   planVersions,
   planPatches,
+  planArtifacts,
+  planArtifactVersions,
 };

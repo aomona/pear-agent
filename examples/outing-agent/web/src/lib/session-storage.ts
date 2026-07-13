@@ -13,6 +13,6 @@ export function storeSessionId(sessionId: string | null): void {
     if (sessionId) localStorage.setItem(SESSION_KEY, sessionId);
     else localStorage.removeItem(SESSION_KEY);
   } catch {
-    // ignore quota / private mode
+    // Storage may be unavailable or over quota.
   }
 }

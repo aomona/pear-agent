@@ -66,31 +66,40 @@ Migration `0004` marks pre-existing sessions with Domain version `0` (unknown/in
 
 ## HTTP API
 
-| Method   | Path                                                        | Notes                                                                |
-| -------- | ----------------------------------------------------------- | -------------------------------------------------------------------- |
-| `GET`    | `/health`                                                   | No auth                                                              |
-| `POST`   | `/sessions`                                                 | JSON: domainId, actorIds, goal, normalizedInput, optional worldState |
-| `GET`    | `/sessions/:id`                                             | Materialized state                                                   |
-| `GET`    | `/sessions/:id/snapshot`                                    | Runtime snapshot                                                     |
-| `POST`   | `/sessions/:id/events`                                      | Append runtime event                                                 |
-| `POST`   | `/sessions/:id/raw-inputs`                                  | `multipart/form-data` field `file` or `raw` (default max 10 MiB)     |
-| `GET`    | `/sessions/:id/raw-inputs/:inputId`                         | Raw input metadata                                                   |
-| `PUT`    | `/sessions/:id/normalized-input`                            | Replace normalized input                                             |
-| `GET`    | `/sessions/:id/normalized-input`                            | Read normalized input                                                |
-| `POST`   | `/sessions/:id/continuations`                               | Suspend and persist a Continuation checkpoint                        |
-| `GET`    | `/sessions/:id/continuation`                                | Read the active Continuation                                         |
-| `POST`   | `/sessions/:id/continuations/:continuationId/resume`        | Atomically claim resume                                              |
-| `POST`   | `/sessions/:id/continuations/:continuationId/complete`      | Complete a connected resume                                          |
-| `POST`   | `/sessions/:id/continuations/:continuationId/resume-failed` | Return a failed resume to `wake_pending`                             |
-| `POST`   | `/sessions/:id/replans`                                     | Assess impact and propose/apply a partial Plan Patch                 |
-| `POST`   | `/sessions/:id/plan-patches/:patchId/confirm`               | Confirm and activate a pending patch                                 |
-| `GET`    | `/sessions/:id/plan-patches/latest`                         | Read latest patch status and diff                                    |
-| `POST`   | `/sessions/:id/voice/lease`                                 | Acquire exclusive Voice Lease (Issue #6)                             |
-| `GET`    | `/sessions/:id/voice/lease`                                 | Active lease or null                                                 |
-| `DELETE` | `/sessions/:id/voice/lease`                                 | Release lease (does **not** stop Execution Session)                  |
-| `PUT`    | `/sessions/:id/voice/resume-handle`                         | Persist Gemini resume handle on the lease                            |
-| `POST`   | `/sessions/:id/voice/token`                                 | Mint Live ephemeral token (server `GEMINI_API_KEY`)                  |
-| `POST`   | `/sessions/:id/voice/tools`                                 | Tool bridge (authorize + built-in / capability tools → appendEvent)  |
+| Method   | Path                                                        | Notes                                                                                   |
+| -------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `GET`    | `/health`                                                   | No auth                                                                                 |
+| `POST`   | `/sessions`                                                 | JSON: domainId, actorIds; either (goal + normalizedInput) **or** ready `planArtifactId` |
+| `GET`    | `/plans?domainId=&status=`                                  | Plan library list (CE-11)                                                               |
+| `POST`   | `/plans`                                                    | Create draft/ready plan artifact                                                        |
+| `GET`    | `/plans/:id`                                                | Artifact + optional normalizedInput                                                     |
+| `PATCH`  | `/plans/:id`                                                | title / status / plan edit / normalizedInput                                            |
+| `POST`   | `/plans/:id/generate`                                       | Run PlanGenerator into artifact                                                         |
+| `POST`   | `/plans/:id/normalize`                                      | Domain normalize (+ optional freeTextResolver)                                          |
+| `POST`   | `/plans/:id/resolve-field`                                  | Single free-text field → structured (modal add / optional LLM)                          |
+| `POST`   | `/plans/:id/improve`                                        | PlanImprover (host-injected)                                                            |
+| `GET`    | `/plans/:id/versions`                                       | Artifact version history                                                                |
+| `GET`    | `/sessions/:id`                                             | Materialized state                                                                      |
+| `GET`    | `/sessions/:id/snapshot`                                    | Runtime snapshot                                                                        |
+| `POST`   | `/sessions/:id/events`                                      | Append runtime event                                                                    |
+| `POST`   | `/sessions/:id/raw-inputs`                                  | `multipart/form-data` field `file` or `raw` (default max 10 MiB)                        |
+| `GET`    | `/sessions/:id/raw-inputs/:inputId`                         | Raw input metadata                                                                      |
+| `PUT`    | `/sessions/:id/normalized-input`                            | Replace normalized input                                                                |
+| `GET`    | `/sessions/:id/normalized-input`                            | Read normalized input                                                                   |
+| `POST`   | `/sessions/:id/continuations`                               | Suspend and persist a Continuation checkpoint                                           |
+| `GET`    | `/sessions/:id/continuation`                                | Read the active Continuation                                                            |
+| `POST`   | `/sessions/:id/continuations/:continuationId/resume`        | Atomically claim resume                                                                 |
+| `POST`   | `/sessions/:id/continuations/:continuationId/complete`      | Complete a connected resume                                                             |
+| `POST`   | `/sessions/:id/continuations/:continuationId/resume-failed` | Return a failed resume to `wake_pending`                                                |
+| `POST`   | `/sessions/:id/replans`                                     | Assess impact and propose/apply a partial Plan Patch                                    |
+| `POST`   | `/sessions/:id/plan-patches/:patchId/confirm`               | Confirm and activate a pending patch                                                    |
+| `GET`    | `/sessions/:id/plan-patches/latest`                         | Read latest patch status and diff                                                       |
+| `POST`   | `/sessions/:id/voice/lease`                                 | Acquire exclusive Voice Lease (Issue #6)                                                |
+| `GET`    | `/sessions/:id/voice/lease`                                 | Active lease or null                                                                    |
+| `DELETE` | `/sessions/:id/voice/lease`                                 | Release lease (does **not** stop Execution Session)                                     |
+| `PUT`    | `/sessions/:id/voice/resume-handle`                         | Persist Gemini resume handle on the lease                                               |
+| `POST`   | `/sessions/:id/voice/token`                                 | Mint Live ephemeral token (server `GEMINI_API_KEY`)                                     |
+| `POST`   | `/sessions/:id/voice/tools`                                 | Tool bridge (authorize + built-in / capability tools → appendEvent)                     |
 
 Default auth context: `x-pear-context: {"actorId":"...","roles":[],"claims":{}}`.
 Replan requests call the host hook first with mode-neutral `replan.preflight` before reading session/config data, then with `replan.request` and the resolved effective mode.
@@ -101,6 +110,13 @@ Replan requests call the host hook first with mode-neutral `replan.preflight` be
 - Install optional peer `@google/genai` on the Worker when using the default Google minter.
 - Apply D1 migration `0002_voice_leases.sql`.
 - Inject `voiceTokenMinter` on `createPearApp` for tests (real mint uses `GEMINI_API_KEY` + optional `@google/genai`).
+
+### Plan library (CE-11)
+
+Session-independent plans live in D1 tables `plan_artifacts` / `plan_artifact_versions` (migration `0005_plan_artifacts.sql`). Do **not** confuse with session-scoped `plan_versions` (runtime replan history).
+
+- Status flow: `draft` → generate steps → `ready` → `POST /sessions` with `planArtifactId` (skips PlanGenerator).
+- Host may inject `planLibrary.normalizeDomainInput`, `freeTextResolver`, and `planImprover` on `createPearApp` / `createPearWorker`.
 
 ### Partial Replanning (Issue #8)
 

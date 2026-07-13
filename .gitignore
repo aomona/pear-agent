@@ -74,3 +74,6 @@ $RECYCLE.BIN/
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
+
+# deepwork session state
+.slim/deepwork/

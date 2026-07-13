@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { AppendEventResult, RuntimeEvent } from "@pear-agent/core";
 
@@ -47,6 +47,9 @@ export type UseExecutionSessionResult = {
  *
  * Concurrent actions share a single `status` / `error` (last write wins). Prefer
  * not overlapping mutations from the same hook instance.
+ *
+ * Note: `create()` then `startSession()` in the same async function is safe —
+ * the session id is written to a ref in the event path before state commits.
  */
 export function useExecutionSession(sessionId?: string | null): UseExecutionSessionResult {
   const { client } = usePearContext();
@@ -55,7 +58,25 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
   const [status, setStatus] = useState<AsyncStatus>("idle");
   const [error, setError] = useState<Error | null>(null);
 
-  const boundSessionId = controlled ? sessionId : unboundSessionId;
+  /**
+   * Sync source of truth for the active session id within the same tick as
+   * create/setSessionId. React state alone is too late for:
+   *   await create(...); await startSession();
+   *
+   * Never write this ref during render — only events + layout effect (controlled prop).
+   */
+  const sessionIdRef = useRef<string | null>(null);
+
+  // Controlled prop → ref after commit (safe if React discards a render).
+  useLayoutEffect(() => {
+    if (controlled) {
+      sessionIdRef.current = sessionId ?? null;
+    } else {
+      sessionIdRef.current = null;
+    }
+  }, [controlled, sessionId]);
+
+  const boundSessionId = controlled ? (sessionId ?? null) : unboundSessionId;
 
   const run = useCallback(async <T>(fn: () => Promise<T>): Promise<T> => {
     setStatus("loading");
@@ -73,11 +94,13 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
   }, []);
 
   const requireSessionId = useCallback((): string => {
-    if (!boundSessionId) {
+    // Prefer ref (immediate after create) then prop/state for display consistency.
+    const id = sessionIdRef.current ?? (controlled ? sessionId : unboundSessionId);
+    if (!id) {
       throw new Error("No sessionId bound. Call create() or setSessionId() first.");
     }
-    return boundSessionId;
-  }, [boundSessionId]);
+    return id;
+  }, [controlled, sessionId, unboundSessionId]);
 
   const setSessionId = useCallback(
     (next: string | null) => {
@@ -86,6 +109,8 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
           "useExecutionSession is controlled by a string sessionId prop; change the prop instead of setSessionId()",
         );
       }
+      // Event path: ref first, then pure state update (no ref work inside setState).
+      sessionIdRef.current = next;
       setUnboundSessionId(next);
     },
     [controlled],
@@ -93,15 +118,25 @@ export function useExecutionSession(sessionId?: string | null): UseExecutionSess
 
   const create = useCallback(
     async (input: CreateSessionInput) => {
-      return run(async () => {
+      setStatus("loading");
+      setError(null);
+      try {
         const result = await client.createSession(input);
         if (!controlled) {
+          // Event path: ref before state so follow-up startSession() sees the id.
+          sessionIdRef.current = result.sessionId;
           setUnboundSessionId(result.sessionId);
         }
+        setStatus("success");
         return result;
-      });
+      } catch (caught) {
+        const next = caught instanceof Error ? caught : new Error(String(caught));
+        setError(next);
+        setStatus("error");
+        throw next;
+      }
     },
-    [client, controlled, run],
+    [client, controlled],
   );
 
   const actions = useMemo(() => {

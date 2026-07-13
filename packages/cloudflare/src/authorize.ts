@@ -22,7 +22,11 @@ export type PearOperation =
   | { type: "replan.preflight"; sessionId: string }
   | { type: "replan.request"; sessionId: string; mode: "automatic" | "confirm" | "suggest" }
   | { type: "replan.confirm"; sessionId: string; patchId: string }
-  | { type: "replan.read"; sessionId: string };
+  | { type: "replan.read"; sessionId: string }
+  | { type: "plan.list" }
+  | { type: "plan.create"; domainId: string }
+  | { type: "plan.read"; planId: string }
+  | { type: "plan.update"; planId: string };
 
 /**
  * Host-supplied authorization hook. Throw {@link AuthorizationError} (or any

@@ -1,4 +1,12 @@
-import { createContext, useContext, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 
 import { PearClient } from "./client.js";
 import { PEAR_CONTEXT_QUERY_KEY } from "./context-wire.js";
@@ -66,10 +74,12 @@ export function PearProvider(props: PearProviderProps) {
     client: injectedClient,
   } = props;
 
-  // Always call the latest getContext without recreating PearClient.
   const getContextRef = useRef(getContext);
-  getContextRef.current = getContext;
-  const stableGetContext = useMemo(() => () => getContextRef.current(), []);
+  useLayoutEffect(() => {
+    getContextRef.current = getContext;
+  }, [getContext]);
+
+  const stableGetContext = useCallback(() => getContextRef.current(), []);
 
   const ownedClient = useMemo(() => {
     if (injectedClient) return null;
@@ -80,26 +90,27 @@ export function PearProvider(props: PearProviderProps) {
     });
   }, [baseUrl, fetchImpl, injectedClient, stableGetContext]);
 
-  // Keep injected clients on the stable resolver (layout effect — not during render).
   useLayoutEffect(() => {
     if (!injectedClient) return;
     injectedClient.setGetContext(stableGetContext);
   }, [injectedClient, stableGetContext]);
 
   const agentSecure = deriveAgentSecure(baseUrl, agentSecureProp);
-  const client = injectedClient ?? ownedClient!;
 
-  const value = useMemo<PearContextValue>(
-    () => ({
+  const value = useMemo<PearContextValue>(() => {
+    const client = injectedClient ?? ownedClient;
+    if (!client) {
+      throw new Error("PearProvider requires a client or enough props to create one");
+    }
+    return {
       client,
       baseUrl,
       getContext: stableGetContext,
       realtime,
       agentName,
       agentSecure,
-    }),
-    [client, baseUrl, stableGetContext, realtime, agentName, agentSecure],
-  );
+    };
+  }, [injectedClient, ownedClient, baseUrl, stableGetContext, realtime, agentName, agentSecure]);
 
   return <PearReactContext.Provider value={value}>{children}</PearReactContext.Provider>;
 }

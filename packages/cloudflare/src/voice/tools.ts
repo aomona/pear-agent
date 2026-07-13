@@ -6,6 +6,14 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
+import { summarizeSnapshotForVoice } from "./snapshot-summary.js";
+
+export {
+  summarizeSnapshotForVoice,
+  type VoiceRuntimeSummary,
+  type VoiceStepSummary,
+} from "./snapshot-summary.js";
+
 /** Built-in PEAR voice tools (v0.1). */
 export const BUILTIN_VOICE_TOOL_NAMES = [
   "get_runtime_snapshot",
@@ -196,12 +204,19 @@ const BUILTIN_TOOLS = {
   pause_step: stepTool("Pause an active plan step.", "step_paused"),
   skip_step: stepTool("Skip a plan step.", "step_skipped"),
   start_timer: {
-    description: "Start a timer by id.",
+    description:
+      "Start a plan timer by id. Prefer timerId + durationSeconds from the plan summary (steps[].timers). Do not ask the user for duration when the plan already defines it.",
     parameters: {
       type: "object" as const,
       properties: {
-        timerId: { type: "string" },
-        durationSeconds: { type: "number" },
+        timerId: {
+          type: "string",
+          description: "Timer id from plan step timers, e.g. charge-wait",
+        },
+        durationSeconds: {
+          type: "number",
+          description: "Duration from plan timer definition when first starting the timer",
+        },
       },
       required: ["timerId"],
     },
@@ -269,52 +284,6 @@ export function voiceToolAuthorizeEventType(
   const tool = BUILTIN_TOOLS[toolName as BuiltinVoiceToolName];
   if (!tool) return undefined;
   return tool.authorizeEventType;
-}
-
-export function summarizeSnapshotForVoice(snapshot: RuntimeSnapshot): Record<string, unknown> {
-  const planChange = snapshot.latestPlanChange;
-  const planDiff = planChange
-    ? {
-        status: planChange.status,
-        effect:
-          planChange.status === "applied"
-            ? "applied"
-            : planChange.status === "failed"
-              ? "rejected"
-              : "proposed",
-        mode: planChange.mode,
-        summary: planChange.patch.summary,
-        causeEventIds: planChange.patch.causeEventIds,
-        targetPlanVersion: planChange.targetPlanVersion,
-        failureReason: planChange.failureReason,
-        addedStepIds: planChange.patch.operations
-          .filter((operation) => operation.type === "add_step")
-          .map((operation) => operation.step.id),
-        updatedStepIds: planChange.patch.operations
-          .filter((operation) => operation.type === "update_step")
-          .map((operation) => operation.stepId),
-        removedStepIds: planChange.patch.operations
-          .filter((operation) => operation.type === "remove_step")
-          .map((operation) => operation.stepId),
-      }
-    : null;
-  return {
-    sessionId: snapshot.session.id,
-    sessionStatus: snapshot.session.status,
-    planId: snapshot.plan.id,
-    planVersion: snapshot.plan.version,
-    stepStates: Object.fromEntries(
-      Object.entries(snapshot.stepStates).map(([id, state]) => [id, state.status]),
-    ),
-    activeTimers: snapshot.activeTimers.map((t) => ({
-      id: t.id,
-      status: t.status,
-      remainingSeconds: t.remainingSeconds,
-    })),
-    recentEventTypes: snapshot.recentEvents.slice(-6).map((e) => e.type),
-    latestPlanChange: planDiff,
-    generatedAt: snapshot.generatedAt.toISOString(),
-  };
 }
 
 export async function executeVoiceTool(
