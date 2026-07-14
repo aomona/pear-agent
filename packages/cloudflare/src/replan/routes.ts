@@ -114,16 +114,16 @@ export function registerReplanRoutes(
   createRuntime?: (env: PearEnv) => ReplanRuntime,
 ): void {
   app.post("/sessions/:sessionId/replans", async (c) => {
-    const resolvedRuntime = createRuntime?.(c.env) ?? runtime;
-    if (!resolvedRuntime) {
-      throw new HTTPException(501, { message: "Replan runtime is not configured" });
-    }
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
     const body = requestBodySchema.parse(await c.req.json().catch(() => ({})));
     // Mode-neutral preflight before session/config reads prevents existence and
     // host-config side channels without fabricating a policy-significant mode.
     await authorize({ type: "replan.preflight", sessionId }, context);
+    const resolvedRuntime = createRuntime?.(c.env) ?? runtime;
+    if (!resolvedRuntime) {
+      throw new HTTPException(501, { message: "Replan runtime is not configured" });
+    }
     const domain = await sessionDomain(c.env.DB, sessionId);
     const configuration = validateReplanConfiguration(
       await resolvedRuntime.resolveConfiguration(domain.id),
@@ -312,12 +312,15 @@ export function registerReplanRoutes(
   });
 
   app.post("/sessions/:sessionId/plan-patches/:patchId/confirm", async (c) => {
-    if (!runtime) throw new HTTPException(501, { message: "Replan runtime is not configured" });
     const sessionId = c.req.param("sessionId");
     const patchId = c.req.param("patchId");
     const context = c.get("pearContext");
     confirmBodySchema.parse(await c.req.json());
     await authorize({ type: "replan.confirm", sessionId, patchId }, context);
+    const resolvedRuntime = createRuntime?.(c.env) ?? runtime;
+    if (!resolvedRuntime) {
+      throw new HTTPException(501, { message: "Replan runtime is not configured" });
+    }
     const patchRow = await c.env.DB.prepare(
       "SELECT status, validation_domain_version FROM plan_patches WHERE session_id = ? AND id = ?",
     )
@@ -332,7 +335,7 @@ export function registerReplanRoutes(
     if (patchRow.status === "pending_confirmation") {
       const domain = await sessionDomain(c.env.DB, sessionId);
       const configuration = validateReplanConfiguration(
-        await runtime.resolveConfiguration(domain.id),
+        await resolvedRuntime.resolveConfiguration(domain.id),
       );
       const snapshot = await agentGetSnapshot(c.env, sessionId);
       if (!snapshot) throw new SessionNotFoundError(sessionId);

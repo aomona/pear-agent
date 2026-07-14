@@ -181,8 +181,9 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     await options.authorize({ type: "session.create", domainId: raw.domainId }, context);
 
     const sessionId = raw.sessionId ?? crypto.randomUUID();
-    const domainVersion = options.replanRuntime
-      ? validateReplanConfiguration(await options.replanRuntime.resolveConfiguration(raw.domainId))
+    const replanRuntime = options.createReplanRuntime?.(c.env) ?? options.replanRuntime;
+    const domainVersion = replanRuntime
+      ? validateReplanConfiguration(await replanRuntime.resolveConfiguration(raw.domainId))
           .domainVersion
       : 0;
 

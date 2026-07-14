@@ -1,4 +1,5 @@
 # Server-only Gemini API key (Voice Live + free-text structure + plan improve).
-# Free-text structure uses gemini-3.1-flash-lite-preview with thinking off (low latency).
-# Optional: without it, Continuation / Plan / Replan still work; Voice + free-text fail.
+# Free-text structure uses gemini-3.1-flash-lite with thinking off (low latency).
+# Optional for the basic structured-input flow. Without it, Voice, free-text,
+# plan improve, Gemini ordering, and AI replanning are unavailable.
 GEMINI_API_KEY=

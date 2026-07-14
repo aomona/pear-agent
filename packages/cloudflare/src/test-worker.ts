@@ -55,7 +55,7 @@ const worker = createPearWorker({
       });
     },
   },
-  replanRuntime: {
+  createReplanRuntime: () => ({
     generator: createStaticReplanGenerator({
       assessment: (input) => {
         if (input.instructions !== outingDomain.replanning.instructions) {
@@ -170,7 +170,7 @@ const worker = createPearWorker({
         };
       },
     }),
-  },
+  }),
   // Integration tests mint tokens without calling Google.
   voiceTokenMinter: async (input) => ({
     token: `test-token-${input.lease.id}`,

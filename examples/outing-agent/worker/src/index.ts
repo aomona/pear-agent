@@ -16,6 +16,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { authorize } from "./authorize.js";
 import { handleCorsPreflight, withCors } from "./cors.js";
 import { createGeminiFreeTextResolver } from "./free-text-resolver.js";
+import { OUTING_GEMINI_TEXT_MODEL } from "./gemini-json.js";
 import { createOutingPlanGenerator, planGenerator } from "./plan-generator.js";
 import { createGeminiPlanImprover } from "./plan-improver.js";
 import { createOutingReplanRuntime } from "./replan-runtime.js";
@@ -38,11 +39,10 @@ const worker = createPearWorker({
       refineOrder: true,
     }),
   createReplanRuntime: (env) => {
-    if (!env.GEMINI_API_KEY) {
-      throw new Error("AI model API key is not configured for replanning");
-    }
-    const provider = createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY });
-    return createOutingReplanRuntime(provider("gemini-3.1-flash-lite"));
+    const provider = createGoogleGenerativeAI(
+      env.GEMINI_API_KEY === undefined ? {} : { apiKey: env.GEMINI_API_KEY },
+    );
+    return createOutingReplanRuntime(provider(OUTING_GEMINI_TEXT_MODEL));
   },
   planLibrary: {
     normalizeDomainInput: async ({ domainId, input, freeTextResolver, context }) => {
