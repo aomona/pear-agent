@@ -262,4 +262,30 @@ describe("createResumeHandleSync", () => {
     expect(normalExpected).toEqual([["server-current"]]);
     expect(serverHandle).toBe("latest");
   });
+
+  it("does not retry an old lifecycle handle after a newer handle is persisted", async () => {
+    const normalWrites: Array<string | null> = [];
+    const lifecycleWrites: Array<string | null> = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle) => {
+        normalWrites.push(handle);
+        return handle;
+      },
+      putKeepalive: async (handle) => {
+        lifecycleWrites.push(handle);
+        throw new Error("temporary lifecycle failure");
+      },
+    });
+    sync.noteKnown(null);
+    sync.schedule("older");
+    await sync.flushForLifecycle();
+
+    sync.schedule("newer");
+    await sync.flush();
+    await sync.flushForLifecycle();
+
+    expect(normalWrites).toEqual(["newer"]);
+    expect(lifecycleWrites).toEqual(["older"]);
+  });
 });

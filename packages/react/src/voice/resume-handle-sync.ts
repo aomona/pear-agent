@@ -134,6 +134,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
     noteKnown(handle) {
       lastPersisted = handle;
       latestRequested = handle;
+      lifecycleRetry = undefined;
       if (pending === handle) {
         pending = undefined;
         clearTimer();
@@ -144,6 +145,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       if (!isCurrent()) return;
       options.onOptimistic?.(handle);
       latestRequested = handle;
+      if (lifecycleRetry !== handle) lifecycleRetry = undefined;
 
       if (lastPersisted === handle) {
         if (pending === handle) {
@@ -189,7 +191,9 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
 
     async flushForLifecycle() {
       clearTimer();
-      const toWrite = pending ?? lifecycleRetry ?? latestRequested;
+      const retryHandle = lifecycleRetry === latestRequested ? lifecycleRetry : undefined;
+      if (lifecycleRetry !== retryHandle) lifecycleRetry = undefined;
+      const toWrite = pending ?? retryHandle ?? latestRequested;
       pending = undefined;
       if (lifecycleRetry === toWrite) lifecycleRetry = undefined;
       if (toWrite === undefined || lastPersisted === toWrite) return;
