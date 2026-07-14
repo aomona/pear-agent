@@ -137,6 +137,7 @@ export class PearClient {
   private getContext: PearClientOptions["getContext"];
   private readonly fetchImpl: typeof fetch;
   private cachedContextHeader: string | undefined;
+  private readonly voiceLeaseContextHeaders = new Map<string, string>();
 
   constructor(options: PearClientOptions) {
     this.baseUrl = options.baseUrl;
@@ -377,11 +378,15 @@ export class PearClient {
     sessionId: string,
     input: { ttlMs?: number; leaseId?: string } = {},
   ): Promise<VoiceLease> {
+    const contextHeader = await this.resolveContextHeader();
     const body = await this.requestJson<{ lease: unknown }>(`/sessions/${sessionId}/voice/lease`, {
       method: "POST",
       body: input,
+      contextHeader,
     });
-    return parseVoiceLease(body.lease);
+    const lease = parseVoiceLease(body.lease);
+    this.voiceLeaseContextHeaders.set(lease.id, contextHeader);
+    return lease;
   }
 
   async getVoiceLease(sessionId: string): Promise<VoiceLease | null> {
@@ -393,7 +398,9 @@ export class PearClient {
     const body = await this.requestJson<{ lease: unknown }>(`/sessions/${sessionId}/voice/lease`, {
       method: "DELETE",
     });
-    return parseVoiceLease(body.lease);
+    const lease = parseVoiceLease(body.lease);
+    this.voiceLeaseContextHeaders.delete(lease.id);
+    return lease;
   }
 
   async setVoiceResumeHandle(
@@ -405,6 +412,10 @@ export class PearClient {
       leaseId?: string;
     },
   ): Promise<VoiceLease> {
+    const leaseContextHeader =
+      options?.keepalive === true && options.leaseId !== undefined
+        ? this.voiceLeaseContextHeaders.get(options.leaseId)
+        : undefined;
     const body = await this.requestJson<{ lease: unknown }>(
       `/sessions/${sessionId}/voice/resume-handle`,
       {
@@ -417,6 +428,7 @@ export class PearClient {
             : {}),
         },
         ...(options?.keepalive === true ? { keepalive: true } : {}),
+        ...(leaseContextHeader === undefined ? {} : { contextHeader: leaseContextHeader }),
       },
     );
     return parseVoiceLease(body.lease);
@@ -611,13 +623,12 @@ export class PearClient {
 
   private async requestJson<T>(
     path: string,
-    init?: { method?: string; body?: unknown; keepalive?: boolean },
+    init?: { method?: string; body?: unknown; keepalive?: boolean; contextHeader?: string },
   ): Promise<T> {
-    let contextHeader = init?.keepalive === true ? this.cachedContextHeader : undefined;
+    let contextHeader =
+      init?.contextHeader ?? (init?.keepalive === true ? this.cachedContextHeader : undefined);
     if (contextHeader === undefined) {
-      const context = await this.getContext();
-      contextHeader = serializePearClientContext(context);
-      this.cachedContextHeader = contextHeader;
+      contextHeader = await this.resolveContextHeader();
     }
     const headers: Record<string, string> = {
       [PEAR_CONTEXT_HEADER]: contextHeader,
@@ -648,6 +659,13 @@ export class PearClient {
     }
 
     return (await response.json()) as T;
+  }
+
+  private async resolveContextHeader(): Promise<string> {
+    const context = await this.getContext();
+    const contextHeader = serializePearClientContext(context);
+    this.cachedContextHeader = contextHeader;
+    return contextHeader;
   }
 
   private async toError(response: Response): Promise<PearClientError> {

@@ -207,7 +207,7 @@ describe("PearClient", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("starts keepalive requests synchronously with the cached context", async () => {
+  it("starts keepalive requests synchronously with the lease context", async () => {
     const lease = {
       id: "lease-1",
       sessionId: "s1",
@@ -229,6 +229,8 @@ describe("PearClient", () => {
       getContext,
       fetch: fetchMock as typeof fetch,
     });
+    await client.acquireVoiceLease("s1", { leaseId: "lease-1" });
+    client.setGetContext(async () => ({ actorId: "other-actor" }));
     await client.getVoiceLease("s1");
 
     const request = client.setVoiceResumeHandle("s1", "latest", {
@@ -237,8 +239,8 @@ describe("PearClient", () => {
     });
 
     expect(getContext).toHaveBeenCalledOnce();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const keepaliveInit = fetchMock.mock.calls[1]?.[1];
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const keepaliveInit = fetchMock.mock.calls[2]?.[1];
     expect(keepaliveInit?.keepalive).toBe(true);
     expect(JSON.parse(String(keepaliveInit?.body))).toEqual({
       handle: "latest",
