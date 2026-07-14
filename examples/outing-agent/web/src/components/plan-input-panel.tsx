@@ -1,30 +1,15 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { usePearContext, type PlanArtifactDetail } from "@pear-agent/react";
-import { useEffect, useRef, useState } from "react";
+import type { PlanArtifactDetail } from "@pear-agent/react";
+import { useState } from "react";
 import { toast } from "sonner";
 
-import {
-  belongingServerValueToRows,
-  buildOutingInputFromForm,
-  createPendingRow,
-  defaultDepartureLocal,
-  formStateFromNormalized,
-  hasFailedItems,
-  hasInFlightItems,
-  readyItems,
-  taskServerValueToRows,
-  type ItemKind,
-  type OutingFormState,
-  type PrepListRow,
-} from "../lib/build-outing-input";
-import { generateSuccessMessage } from "../lib/order-meta";
 import { OUTING_PRESETS } from "../lib/presets";
-import { AddPrepModal, type AddPrepSubmit } from "./add-prep-modal";
+import { AddPrepModal } from "./add-prep-modal";
 import { InputSummary } from "./input-summary";
 import { DepartureFields, PlaceFields } from "./plan-input-fields";
 import { PrepListItem } from "./prep-list-item";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { usePlanInputController } from "./use-plan-input-controller";
 
 type PlanInputPanelProps = {
   planId: string;
@@ -34,177 +19,10 @@ type PlanInputPanelProps = {
   onBack: () => void;
 };
 
-type StructureVariables = {
-  pendingKey: string;
-  itemKind: ItemKind;
-  freeText: string;
-};
-
 export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanInputPanelProps) {
-  const { client } = usePearContext();
-  const queryClient = useQueryClient();
-  const [form, setForm] = useState<OutingFormState>({
-    departureMode: "structured",
-    departureLocal: defaultDepartureLocal(),
-    departureFreeText: "tomorrow morning 10:00",
-    originLabel: "",
-    destinationLabel: "",
-    items: [],
-  });
   const [addOpen, setAddOpen] = useState(false);
-  const [buildBusy, setBuildBusy] = useState(false);
-  const [placeBusy, setPlaceBusy] = useState<"origin" | "destination" | null>(null);
-  const hydratedPlanId = useRef<string | null>(null);
-
-  // Reset hydrate guard when switching plans.
-  useEffect(() => {
-    hydratedPlanId.current = null;
-    setForm({
-      departureMode: "structured",
-      departureLocal: defaultDepartureLocal(),
-      departureFreeText: "tomorrow morning 10:00",
-      originLabel: "",
-      destinationLabel: "",
-      items: [],
-    });
-  }, [planId]);
-
-  // Resume editing from saved normalizedInput once artifact is loaded for this plan.
-  useEffect(() => {
-    if (artifact === null) return;
-    if (hydratedPlanId.current === planId) return;
-    hydratedPlanId.current = planId;
-    const saved = artifact.normalizedInput;
-    if (!saved || typeof saved !== "object") return;
-    try {
-      setForm(formStateFromNormalized(saved as Parameters<typeof formStateFromNormalized>[0]));
-    } catch {
-      // keep defaults if shape is unexpected
-    }
-  }, [planId, artifact]);
-
-  const structureMutation = useMutation({
-    mutationKey: ["outing", "structure-prep", planId],
-    mutationFn: async ({ itemKind, freeText }: StructureVariables) => {
-      const field = itemKind === "belonging" ? "belongings" : "tasks";
-      const resolved = await client.resolvePlanField(planId, { field, freeText });
-      return itemKind === "belonging"
-        ? belongingServerValueToRows(resolved.value)
-        : taskServerValueToRows(resolved.value);
-    },
-    onSuccess: (rows, variables) => {
-      setForm((f) => ({
-        ...f,
-        items: f.items.flatMap((row) => (row.key === variables.pendingKey ? rows : [row])),
-      }));
-      toast.success(rows.length === 1 ? "追加しました" : `${rows.length} 件追加しました`);
-    },
-    onError: (error, variables) => {
-      const message = error instanceof Error ? error.message : String(error);
-      setForm((f) => ({
-        ...f,
-        items: f.items.map((row) =>
-          row.key === variables.pendingKey
-            ? { ...row, status: "error" as const, errorMessage: message }
-            : row,
-        ),
-      }));
-      toast.error(message);
-    },
-    onSettled: () => {
-      // Local form is SoT for prep rows; invalidate any plan-scoped caches.
-      void queryClient.invalidateQueries({ queryKey: ["outing", planId] });
-    },
-  });
-
-  function handleModalSubmit(result: AddPrepSubmit) {
-    if (result.kind === "ready") {
-      setForm((f) => ({ ...f, items: [...f.items, ...result.rows] }));
-      toast.success("項目を追加しました");
-      return;
-    }
-    const pending = createPendingRow(result.itemKind, result.freeText);
-    setForm((f) => ({ ...f, items: [...f.items, pending] }));
-    structureMutation.mutate({
-      pendingKey: pending.key,
-      itemKind: result.itemKind,
-      freeText: result.freeText,
-    });
-  }
-
-  function removeItem(key: string) {
-    setForm((f) => ({ ...f, items: f.items.filter((r) => r.key !== key) }));
-  }
-
-  function retryItem(row: PrepListRow) {
-    if (row.status !== "error" || !row.freeTextPreview) return;
-    const freeText = row.freeTextPreview;
-    setForm((f) => ({
-      ...f,
-      items: f.items.map((r) =>
-        r.key === row.key ? { ...r, status: "pending" as const, errorMessage: undefined } : r,
-      ),
-    }));
-    structureMutation.mutate({
-      pendingKey: row.key,
-      itemKind: row.kind,
-      freeText,
-    });
-  }
-
-  function patchItem(key: string, patch: Partial<PrepListRow>) {
-    setForm((f) => ({
-      ...f,
-      items: f.items.map((r) => {
-        if (r.key !== key) return r;
-        return { ...r, ...patch } as PrepListRow;
-      }),
-    }));
-  }
-
-  async function resolvePlace(which: "origin" | "destination") {
-    const raw = which === "origin" ? form.originLabel.trim() : form.destinationLabel.trim();
-    if (!raw) {
-      toast.error(which === "origin" ? "出発地を入力してください" : "目的地を入力してください");
-      return;
-    }
-    setPlaceBusy(which);
-    try {
-      const field = which === "origin" ? "originLabel" : "destinationLabel";
-      const resolved = await client.resolvePlanField(planId, { field, freeText: raw });
-      const label =
-        typeof resolved.value === "string" ? resolved.value : zPlaceLabel(resolved.value);
-      setForm((f) =>
-        which === "origin" ? { ...f, originLabel: label } : { ...f, destinationLabel: label },
-      );
-      toast.success(`${which === "origin" ? "出発地" : "目的地"}を整えました`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
-    } finally {
-      setPlaceBusy(null);
-    }
-  }
-
-  /** Main path: save input + generate ordered plan in one action. */
-  async function handleBuildPlan() {
-    setBuildBusy(true);
-    try {
-      const input = buildOutingInputFromForm(form);
-      await client.normalizePlanInput(planId, input);
-      const generated = await client.generatePlanArtifact(planId);
-      toast.success(generateSuccessMessage(generated.currentPlan));
-      onPlanBuilt(generated);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBuildBusy(false);
-    }
-  }
-
-  const inFlight = hasInFlightItems(form.items);
-  const hasFailed = hasFailedItems(form.items);
-  const readyCount = readyItems(form.items).length;
-  const canBuild = readyCount > 0 && !inFlight && !hasFailed && !buildBusy;
+  const controller = usePlanInputController({ planId, artifact, onPlanBuilt });
+  const { form, setForm, buildBusy, placeBusy, inFlight, canBuild } = controller;
 
   return (
     <>
@@ -254,7 +72,7 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
             form={form}
             setForm={setForm}
             placeBusy={placeBusy}
-            onResolvePlace={(which) => void resolvePlace(which)}
+            onResolvePlace={(which) => void controller.resolvePlace(which)}
           />
 
           <section className="space-y-3 rounded-lg border p-4">
@@ -281,9 +99,9 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
                     key={row.key}
                     row={row}
                     index={index}
-                    onRemove={() => removeItem(row.key)}
-                    onRetry={() => retryItem(row)}
-                    onChange={(patch) => patchItem(row.key, patch)}
+                    onRemove={() => controller.removeItem(row.key)}
+                    onRetry={() => controller.retryItem(row)}
+                    onChange={(patch) => controller.patchItem(row.key, patch)}
                   />
                 ))}
               </ul>
@@ -294,7 +112,7 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
             <Button
               className="w-full sm:w-auto"
               disabled={!canBuild}
-              onClick={() => void handleBuildPlan()}
+              onClick={() => void controller.buildPlan()}
             >
               {buildBusy
                 ? "計画を作成中…"
@@ -309,16 +127,11 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
         </CardContent>
       </Card>
 
-      <AddPrepModal open={addOpen} onClose={() => setAddOpen(false)} onSubmit={handleModalSubmit} />
+      <AddPrepModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onSubmit={controller.submitPrepItem}
+      />
     </>
   );
-}
-
-function zPlaceLabel(value: unknown): string {
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (value && typeof value === "object" && "label" in value) {
-    const label = (value as { label: unknown }).label;
-    if (typeof label === "string" && label.trim()) return label.trim();
-  }
-  throw new Error("Place label could not be parsed from Gemini response");
 }
