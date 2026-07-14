@@ -13,6 +13,19 @@ import { contextHeaders, createSession, pearEnv } from "../test/integration-help
 import { summarizeSnapshotForVoice } from "../voice/tools.js";
 
 describe("cloudflare replan integration", () => {
+  it("persists the configured Domain version from a per-request runtime factory", async () => {
+    const sessionId = `session-${crypto.randomUUID()}`;
+    expect((await createSession(sessionId)).status).toBe(201);
+
+    const row = await pearEnv.DB.prepare(
+      "SELECT domain_version FROM execution_sessions WHERE id = ?",
+    )
+      .bind(sessionId)
+      .first<{ domain_version: number }>();
+
+    expect(row?.domain_version).toBe(outingDomain.version);
+  });
+
   it("lets a Live tool record a delay and request Runtime replanning", async () => {
     const sessionId = `session-${crypto.randomUUID()}`;
     expect((await createSession(sessionId)).status).toBe(201);
