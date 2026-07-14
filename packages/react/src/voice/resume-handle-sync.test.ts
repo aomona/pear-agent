@@ -156,4 +156,39 @@ describe("createResumeHandleSync", () => {
     await sync.flushForLifecycle();
     expect(keepaliveExpected).toHaveLength(1);
   });
+
+  it("includes every in-flight lifecycle handle as an allowed predecessor", async () => {
+    const resolvers = new Map<string, (persisted: string | null) => void>();
+    const expectedByHandle = new Map<string, readonly (string | null)[]>();
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle) => handle,
+      putKeepalive: (handle, options) => {
+        if (handle === null) return Promise.resolve(null);
+        expectedByHandle.set(handle, options.expectedHandles);
+        return new Promise<string | null>((resolve) => {
+          resolvers.set(handle, resolve);
+        });
+      },
+    });
+    sync.noteKnown(null);
+
+    sync.schedule("lifecycle-a");
+    const flushA = sync.flushForLifecycle();
+    await Promise.resolve();
+    sync.schedule("lifecycle-b");
+    const flushB = sync.flushForLifecycle();
+    await Promise.resolve();
+    sync.schedule("lifecycle-c");
+    const flushC = sync.flushForLifecycle();
+    await Promise.resolve();
+
+    expect(expectedByHandle.get("lifecycle-b")).toEqual([null, "lifecycle-a"]);
+    expect(expectedByHandle.get("lifecycle-c")).toEqual([null, "lifecycle-a", "lifecycle-b"]);
+
+    resolvers.get("lifecycle-a")?.("lifecycle-a");
+    resolvers.get("lifecycle-b")?.("lifecycle-b");
+    resolvers.get("lifecycle-c")?.("lifecycle-c");
+    await Promise.all([flushA, flushB, flushC]);
+  });
 });

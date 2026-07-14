@@ -73,7 +73,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   let latestRequested: string | null | undefined = undefined;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
-  let lifecycleInFlight: { handle: string | null; promise: Promise<void> } | null = null;
+  const lifecycleWrites = new Map<string | null, Promise<void>>();
   const scheduledWrites = new Set<string | null>();
   let writeGeneration = 0;
 
@@ -162,13 +162,16 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       const toWrite = pending ?? latestRequested;
       pending = undefined;
       if (toWrite === undefined || lastPersisted === toWrite) return;
-      if (lifecycleInFlight?.handle === toWrite) {
-        await lifecycleInFlight.promise;
+      const duplicateWrite = lifecycleWrites.get(toWrite);
+      if (duplicateWrite !== undefined) {
+        await duplicateWrite;
         return;
       }
 
       writeGeneration += 1;
-      const expectedHandles = [...new Set([lastPersisted ?? null, ...scheduledWrites])];
+      const expectedHandles = [
+        ...new Set([lastPersisted ?? null, ...scheduledWrites, ...lifecycleWrites.keys()]),
+      ];
       const write = (options.putKeepalive ?? options.put)(toWrite, { expectedHandles })
         .then((persistedHandle) => {
           lastPersisted = persistedHandle;
@@ -177,9 +180,9 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
           if (latestRequested === toWrite && pending === undefined) pending = toWrite;
         })
         .finally(() => {
-          if (lifecycleInFlight?.promise === write) lifecycleInFlight = null;
+          if (lifecycleWrites.get(toWrite) === write) lifecycleWrites.delete(toWrite);
         });
-      lifecycleInFlight = { handle: toWrite, promise: write };
+      lifecycleWrites.set(toWrite, write);
       await write;
     },
 
