@@ -288,4 +288,27 @@ describe("createResumeHandleSync", () => {
     expect(normalWrites).toEqual(["newer"]);
     expect(lifecycleWrites).toEqual(["older"]);
   });
+
+  it("retries a failed lifecycle write after the debounce period", async () => {
+    vi.useFakeTimers();
+    const normalWrites: Array<string | null> = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 1_000,
+      put: async (handle) => {
+        normalWrites.push(handle);
+        return handle;
+      },
+      putKeepalive: async () => {
+        throw new Error("temporary lifecycle failure");
+      },
+    });
+    sync.noteKnown(null);
+    sync.schedule("retry-after-background");
+    await sync.flushForLifecycle();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(normalWrites).toEqual(["retry-after-background"]);
+    vi.useRealTimers();
+  });
 });

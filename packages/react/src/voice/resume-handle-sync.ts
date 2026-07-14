@@ -130,6 +130,18 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
     return chain;
   };
 
+  const queueLifecycleRetry = (handle: string | null) => {
+    if (latestRequested !== handle) return;
+    lifecycleRetry = handle;
+    clearTimer();
+    timer = setTimeout(() => {
+      timer = null;
+      if (lifecycleRetry !== handle || latestRequested !== handle) return;
+      lifecycleRetry = undefined;
+      void persist(handle);
+    }, options.debounceMs);
+  };
+
   return {
     noteKnown(handle) {
       lastPersisted = handle;
@@ -211,13 +223,13 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
         .then((persistedHandle) => {
           lastPersisted = persistedHandle;
           if (persistedHandle !== toWrite && latestRequested === toWrite) {
-            lifecycleRetry = toWrite;
+            queueLifecycleRetry(toWrite);
           } else if (lifecycleRetry === toWrite) {
             lifecycleRetry = undefined;
           }
         })
         .catch(() => {
-          if (latestRequested === toWrite) lifecycleRetry = toWrite;
+          queueLifecycleRetry(toWrite);
         })
         .finally(() => {
           if (lifecycleWrites.get(toWrite) === write) lifecycleWrites.delete(toWrite);
