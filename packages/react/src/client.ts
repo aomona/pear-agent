@@ -138,6 +138,7 @@ export class PearClient {
   private readonly fetchImpl: typeof fetch;
   private cachedContextHeader: string | undefined;
   private readonly voiceLeaseContextHeaders = new Map<string, string>();
+  private readonly activeVoiceLeaseIds = new Map<string, string>();
 
   constructor(options: PearClientOptions) {
     this.baseUrl = options.baseUrl;
@@ -389,6 +390,7 @@ export class PearClient {
       this.voiceLeaseContextKey(sessionId, lease.id),
       contextHeader,
     );
+    this.activeVoiceLeaseIds.set(sessionId, lease.id);
     return lease;
   }
 
@@ -398,11 +400,18 @@ export class PearClient {
   }
 
   async releaseVoiceLease(sessionId: string): Promise<VoiceLease> {
+    const leaseId = this.activeVoiceLeaseIds.get(sessionId);
+    const contextHeader =
+      leaseId === undefined
+        ? undefined
+        : this.voiceLeaseContextHeaders.get(this.voiceLeaseContextKey(sessionId, leaseId));
     const body = await this.requestJson<{ lease: unknown }>(`/sessions/${sessionId}/voice/lease`, {
       method: "DELETE",
+      ...(contextHeader === undefined ? {} : { contextHeader }),
     });
     const lease = parseVoiceLease(body.lease);
     this.voiceLeaseContextHeaders.delete(this.voiceLeaseContextKey(sessionId, lease.id));
+    this.activeVoiceLeaseIds.delete(sessionId);
     return lease;
   }
 

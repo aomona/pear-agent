@@ -258,5 +258,14 @@ describe("PearClient", () => {
       claims: {},
     });
     await request;
+
+    await client.releaseVoiceLease("s1");
+    const releaseInit = fetchMock.mock.calls[3]?.[1];
+    expect(releaseInit?.method).toBe("DELETE");
+    expect(JSON.parse(new Headers(releaseInit?.headers).get("x-pear-context")!)).toEqual({
+      actorId: "traveler",
+      roles: [],
+      claims: {},
+    });
   });
 });
