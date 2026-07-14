@@ -3,7 +3,8 @@
 ## 2026年8月20日の成功シナリオ
 
 ```text
-CLIで外出準備サンプルを生成 → Cloudflareへデプロイ
+CLIでMinimal Starterを生成 → 4ページとDomainを変更可能
+→ Outing Reference Applicationを明示的に選択 → Cloudflareへデプロイ
 → 計画生成 → セッション開始 → 音声案内 → タイマー開始
 → 音声中断 → Continuation保存 → ページ再読み込み
 → Wake → 新しい音声接続 → Snapshot再同期
@@ -23,6 +24,9 @@ CLIで外出準備サンプルを生成 → Cloudflareへデプロイ
 - Affected Subgraphだけを変更するPlan Patch
 - 再計画前後の差分表示
 - React hooks
+- 編集しやすいMinimal Starter
+- optional Outing Reference Application
+- Skills / Documentsによる導入ガイド
 - CLIと簡易Devtools
 
 ## 受け入れ条件
@@ -33,6 +37,8 @@ CLIで外出準備サンプルを生成 → Cloudflareへデプロイ
 - 音声セッションの停止がExecution Sessionの停止を意味しない
 - 再開後、AIは最新Snapshotを確認する
 - 再計画で完了済み工程を未完了へ戻さない
+- Minimal Starterの主な編集箇所が`app/pages/`、`domain/`、`pear.config.ts`に分離されている
+- Outingの変更がMinimal Starterへ暗黙に流入しない
 
 ## 初期対象外
 

@@ -2,7 +2,7 @@
 
 ## 目標
 
-2026年8月20日までに、CLIから外出準備サンプルを生成し、Cloudflareへデプロイして、音声実行、中断、Wake、再開、部分再計画を実演できる状態にします。
+2026年8月20日までに、CLIから編集しやすいMinimal Starterを生成・デプロイでき、独立した外出準備Reference Applicationで音声実行、中断、Wake、再開、部分再計画を実演できる状態にします。
 
 ## 実装計画の分割
 
@@ -13,7 +13,7 @@
 5. **Gemini Voice** — Voice契約、Gemini Live、Voice Lease、Tool bridge
 6. **Continuation** — Suspend、Wake、Atomic Resume、Snapshot Rehydration
 7. **Partial Replanning** — Assess、Impact Analysis、Plan Patch、Version更新
-8. **CLI and Outing Sample** — CLI、外出準備Domain、サンプルUI、deploy
+8. **CLI and Reference Application** — Minimal Starter、optional Outing、Skills / Documents、deploy
 9. **Devtools and Hardening** — Devtools、E2E、failure recovery、デモ試験
 10. **PEAR Cook Integration** — cook-agentを第二Reference Applicationとして接続
 
