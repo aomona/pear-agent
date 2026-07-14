@@ -47,7 +47,7 @@ UIを固定せず、セッション状態と操作を利用するためのReact 
 
 ### `create-pear-agent`
 
-外出準備サンプルを含む、デプロイ可能なプロジェクトを生成します。
+デプロイ可能で編集しやすいMinimal Starterを生成します。外出準備サンプルは明示的に選択するReference Applicationとして分離します。配布レイヤーとSource of Truthは[distribution.md](./distribution.md)で定義します。
 
 ## 4. 開発者の責任範囲
 
@@ -210,7 +210,7 @@ hooksはリアルタイム同期、再接続、Loading、Error状態を扱いま
 
 ### FR-15 CLI
 
-次の操作でサンプルを生成・実行・デプロイできることを目標とします。
+次の操作でMinimal Starterを生成・実行・デプロイできることを目標とします。
 
 ```bash
 pnpm create pear-agent my-agent
@@ -219,7 +219,22 @@ pnpm dev
 pnpm deploy
 ```
 
-生成物にはCloudflare設定、外出準備Domain、React UI、Gemini Live接続、環境変数例、最小テストを含めます。
+Minimal StarterにはCloudflare設定、React UI、環境変数例、最小テスト、DomainとProviderの差し替え口を含めます。
+
+- React UIは一覧、入力、計画、実行の4ページを持つ
+- 主な編集箇所を`app/pages/`、`domain/`、`pear.config.ts`へ限定する
+- Runtime配線とReference Application固有コードを編集箇所から分離する
+- `@pear-agent/react`はhooks-onlyを維持し、固定UIを強制しない
+
+外出準備Reference Applicationは明示的に選択します。
+
+```bash
+pnpm create pear-agent my-agent --example outing
+```
+
+Outing生成物にはGemini Live接続、並行準備、Voice Suspend、Wake、Snapshot Resume、遅延Event、部分Replanの実演を含めます。`examples/outing-agent`はReference Applicationの正本とし、Minimal Starterのコピー元にはしません。
+
+既存プロジェクトへの導入はSkills / Documentsを主経路とします。v0.1では任意フレームワークを変換する汎用`init` CLIを必須としません。
 
 ### FR-16 Devtools
 
@@ -306,10 +321,12 @@ pnpm deploy
 
 ## 8. 2026年8月20日の完成条件
 
-外出準備サンプルで次を実演できることを完成条件とします。
+Minimal Starterを生成・変更でき、独立した外出準備Reference Applicationで次を実演できることを完成条件とします。
 
 ```text
-CLIでプロジェクト生成
+CLIでMinimal Starterを生成
+→ 4ページとDomainを変更可能
+→ Outing Exampleを明示的に生成または直接起動
 → Cloudflareへデプロイ
 → Plan生成
 → 音声で複数Stepを実行
