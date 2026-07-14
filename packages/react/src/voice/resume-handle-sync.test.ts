@@ -311,4 +311,32 @@ describe("createResumeHandleSync", () => {
     expect(normalWrites).toEqual(["retry-after-background"]);
     vi.useRealTimers();
   });
+
+  it("caps lifecycle predecessor handles at the API limit", async () => {
+    const resolvers: Array<(handle: string | null) => void> = [];
+    const expectedCounts: number[] = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle) => handle,
+      putKeepalive: (handle, options) => {
+        expectedCounts.push(options.expectedHandles.length);
+        return new Promise<string | null>((resolve) => {
+          resolvers.push(resolve);
+        });
+      },
+    });
+    sync.noteKnown(null);
+
+    const flushes: Promise<void>[] = [];
+    for (let index = 0; index < 40; index += 1) {
+      const handle = `lifecycle-${index}`;
+      sync.schedule(handle);
+      flushes.push(sync.flushForLifecycle());
+    }
+    await Promise.resolve();
+
+    expect(Math.max(...expectedCounts)).toBe(32);
+    resolvers.forEach((resolve, index) => resolve(`lifecycle-${index}`));
+    await Promise.all(flushes);
+  });
 });

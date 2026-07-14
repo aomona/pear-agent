@@ -37,6 +37,8 @@ export type ResumeHandleSync = {
 
 type LifecycleEventTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
+const MAX_EXPECTED_HANDLES = 32;
+
 export type ResumeHandleLifecycleFlushOptions = {
   getSync: () => Pick<ResumeHandleSync, "flushForLifecycle"> | null;
   pageTarget: LifecycleEventTarget;
@@ -89,13 +91,13 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
 
   const persist = (handle: string | null) => {
     const generation = writeGeneration;
-    scheduledWrites.add(handle);
     chain = chain
       .catch(() => undefined)
       .then(async () => {
         try {
           // A lifecycle keepalive write supersedes normal writes that had not started.
           if (generation !== writeGeneration || lastPersisted === handle) return;
+          scheduledWrites.add(handle);
           for (let attempt = 0; attempt < 2; attempt += 1) {
             lastPersisted = await options.put(handle, {
               expectedHandles: [lastPersisted ?? null],
@@ -218,7 +220,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       writeGeneration += 1;
       const expectedHandles = [
         ...new Set([lastPersisted ?? null, ...scheduledWrites, ...lifecycleWrites.keys()]),
-      ];
+      ].slice(0, MAX_EXPECTED_HANDLES);
       const write = (options.putKeepalive ?? options.put)(toWrite, { expectedHandles })
         .then((persistedHandle) => {
           lastPersisted = persistedHandle;
