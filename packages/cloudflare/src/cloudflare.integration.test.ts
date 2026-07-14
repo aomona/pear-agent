@@ -315,7 +315,7 @@ describe("cloudflare runtime integration", () => {
       new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
         method: "POST",
         headers: { "content-type": "application/json", ...contextHeaders() },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ leaseId: "lease-old" }),
       }),
     );
     expect(leaseRes.status).toBe(201);
@@ -345,7 +345,7 @@ describe("cloudflare runtime integration", () => {
       new Request(`http://example.com/sessions/${sessionId}/voice/resume-handle`, {
         method: "PUT",
         headers: { "content-type": "application/json", ...contextHeaders() },
-        body: JSON.stringify({ handle: "gemini-handle-1" }),
+        body: JSON.stringify({ handle: "gemini-handle-1", leaseId: "lease-old" }),
       }),
     );
     expect(handleRes.status).toBe(200);
@@ -353,6 +353,36 @@ describe("cloudflare runtime integration", () => {
       lease: { providerResumeHandle: string | null };
     };
     expect(handleBody.lease.providerResumeHandle).toBe("gemini-handle-1");
+
+    const newerHandleRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/resume-handle`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          handle: "gemini-handle-2",
+          leaseId: "lease-old",
+          expectedHandles: [null, "gemini-handle-1"],
+        }),
+      }),
+    );
+    expect(newerHandleRes.status).toBe(200);
+
+    const staleHandleRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/resume-handle`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          handle: "stale-handle",
+          leaseId: "lease-old",
+          expectedHandles: [null],
+        }),
+      }),
+    );
+    expect(staleHandleRes.status).toBe(200);
+    const staleHandleBody = (await staleHandleRes.json()) as {
+      lease: { providerResumeHandle: string | null };
+    };
+    expect(staleHandleBody.lease.providerResumeHandle).toBe("gemini-handle-2");
 
     const tokenRes = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/voice/token`, {
@@ -409,6 +439,41 @@ describe("cloudflare runtime integration", () => {
       }),
     );
     expect(releaseRes.status).toBe(200);
+
+    const nextLeaseRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({ leaseId: "lease-new" }),
+      }),
+    );
+    expect(nextLeaseRes.status).toBe(201);
+
+    const oldLeaseHandleRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/resume-handle`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          handle: "old-lease-handle",
+          leaseId: "lease-old",
+          expectedHandles: ["gemini-handle-2"],
+        }),
+      }),
+    );
+    expect(oldLeaseHandleRes.status).toBe(200);
+    const oldLeaseHandleBody = (await oldLeaseHandleRes.json()) as {
+      lease: { id: string; providerResumeHandle: string | null };
+    };
+    expect(oldLeaseHandleBody.lease.id).toBe("lease-new");
+    expect(oldLeaseHandleBody.lease.providerResumeHandle).toBe("gemini-handle-2");
+
+    const nextReleaseRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
+        method: "DELETE",
+        headers: contextHeaders(),
+      }),
+    );
+    expect(nextReleaseRes.status).toBe(200);
 
     const stateRes = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}`, {

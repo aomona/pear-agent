@@ -230,10 +230,18 @@ export class ExecutionSessionAgent extends Agent<PearEnv, ExecutionSessionSyncSt
   async setVoiceResumeHandle(input: {
     actorId: string;
     handle: string | null;
+    leaseId?: string;
+    expectedHandles?: readonly (string | null)[];
   }): Promise<VoiceLeaseResult> {
     return this.runExclusive(async () => {
       const store = createVoiceLeaseStore(this.env.DB);
-      return store.setResumeHandle(this.sessionId(), input.actorId, input.handle);
+      return store.setResumeHandle(
+        this.sessionId(),
+        input.actorId,
+        input.handle,
+        input.expectedHandles,
+        input.leaseId,
+      );
     });
   }
 
