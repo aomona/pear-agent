@@ -385,7 +385,10 @@ export class PearClient {
       contextHeader,
     });
     const lease = parseVoiceLease(body.lease);
-    this.voiceLeaseContextHeaders.set(lease.id, contextHeader);
+    this.voiceLeaseContextHeaders.set(
+      this.voiceLeaseContextKey(sessionId, lease.id),
+      contextHeader,
+    );
     return lease;
   }
 
@@ -399,7 +402,7 @@ export class PearClient {
       method: "DELETE",
     });
     const lease = parseVoiceLease(body.lease);
-    this.voiceLeaseContextHeaders.delete(lease.id);
+    this.voiceLeaseContextHeaders.delete(this.voiceLeaseContextKey(sessionId, lease.id));
     return lease;
   }
 
@@ -414,7 +417,7 @@ export class PearClient {
   ): Promise<VoiceLease> {
     const leaseContextHeader =
       options?.keepalive === true && options.leaseId !== undefined
-        ? this.voiceLeaseContextHeaders.get(options.leaseId)
+        ? this.voiceLeaseContextHeaders.get(this.voiceLeaseContextKey(sessionId, options.leaseId))
         : undefined;
     const body = await this.requestJson<{ lease: unknown }>(
       `/sessions/${sessionId}/voice/resume-handle`,
@@ -666,6 +669,10 @@ export class PearClient {
     const contextHeader = serializePearClientContext(context);
     this.cachedContextHeader = contextHeader;
     return contextHeader;
+  }
+
+  private voiceLeaseContextKey(sessionId: string, leaseId: string): string {
+    return JSON.stringify([sessionId, leaseId]);
   }
 
   private async toError(response: Response): Promise<PearClientError> {

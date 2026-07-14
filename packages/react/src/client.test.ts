@@ -218,10 +218,16 @@ describe("PearClient", () => {
       providerResumeHandle: null,
     };
     const getContext = vi.fn(async () => ({ actorId: "traveler" }));
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+      const sessionId = String(input).includes("/sessions/s2/") ? "s2" : "s1";
       return jsonResponse({
-        lease: { ...lease, providerResumeHandle: body?.handle ?? null },
+        lease: {
+          ...lease,
+          sessionId,
+          actorId: sessionId === "s2" ? "other-actor" : "traveler",
+          providerResumeHandle: body?.handle ?? null,
+        },
       });
     });
     const client = new PearClient({
@@ -231,7 +237,7 @@ describe("PearClient", () => {
     });
     await client.acquireVoiceLease("s1", { leaseId: "lease-1" });
     client.setGetContext(async () => ({ actorId: "other-actor" }));
-    await client.getVoiceLease("s1");
+    await client.acquireVoiceLease("s2", { leaseId: "lease-1" });
 
     const request = client.setVoiceResumeHandle("s1", "latest", {
       keepalive: true,
