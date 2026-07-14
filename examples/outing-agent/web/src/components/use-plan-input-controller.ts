@@ -170,8 +170,7 @@ export function usePlanInputController(input: {
     setBuildBusy(true);
     try {
       const normalized = buildOutingInputFromForm(form);
-      await client.normalizePlanInput(planId, normalized);
-      const generated = await client.generatePlanArtifact(planId);
+      const generated = await client.buildPlanArtifact(planId, normalized);
       toast.success(generateSuccessMessage(generated.currentPlan));
       onPlanBuilt(generated);
     } catch (error) {

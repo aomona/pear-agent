@@ -65,9 +65,7 @@ export function PlanInputPanel({ planId, artifact, onPlanBuilt, onBack }: PlanIn
           </div>
 
           <InputSummary form={form} />
-
           <DepartureFields form={form} setForm={setForm} />
-
           <PlaceFields
             form={form}
             setForm={setForm}

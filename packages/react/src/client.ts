@@ -240,6 +240,15 @@ export class PearClient {
     return planArtifactDetailSchema.parse(body.artifact);
   }
 
+  /** Normalize and generate a plan artifact in one server-side operation. */
+  async buildPlanArtifact(planId: string, input: unknown): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/build`, {
+      method: "POST",
+      body: { input },
+    });
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
   /**
    * Structure one free-text field (deterministic + optional LLM).
    * Used when the user confirms an add-item modal — not while typing.

@@ -28,9 +28,33 @@ const authorize: AuthorizeFn = async (operation, context) => {
   await allowAllAuthorize(operation, context);
 };
 
+const staticPlanGenerator = createStaticPlanGenerator(outingPlan);
+
 const worker = createPearWorker({
   authorize,
-  planGenerator: createStaticPlanGenerator(outingPlan),
+  planGenerator: {
+    async generatePlan(input) {
+      if (
+        typeof input.normalizedInput === "object" &&
+        input.normalizedInput !== null &&
+        "destinationLabel" in input.normalizedInput &&
+        input.normalizedInput.destinationLabel === "__generator_error__"
+      ) {
+        throw new Error("Forced generator failure");
+      }
+      return staticPlanGenerator.generatePlan(input);
+    },
+  },
+  planLibrary: {
+    normalizeDomainInput: async ({ domainId, input, freeTextResolver, context }) => {
+      if (domainId !== outingDomain.id) throw new Error(`Unknown domain: ${domainId}`);
+      const parsed = outingDomain.schemas.input.parse(input);
+      return outingDomain.normalizeInput(parsed, {
+        ...(freeTextResolver !== undefined ? { freeTextResolver } : {}),
+        context,
+      });
+    },
+  },
   replanRuntime: {
     generator: createStaticReplanGenerator({
       assessment: (input) => {
