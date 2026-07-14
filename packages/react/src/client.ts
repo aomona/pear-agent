@@ -136,6 +136,7 @@ export class PearClient {
   readonly baseUrl: string;
   private getContext: PearClientOptions["getContext"];
   private readonly fetchImpl: typeof fetch;
+  private cachedContextHeader: string | undefined;
 
   constructor(options: PearClientOptions) {
     this.baseUrl = options.baseUrl;
@@ -149,6 +150,7 @@ export class PearClient {
    */
   setGetContext(getContext: PearClientOptions["getContext"]): void {
     this.getContext = getContext;
+    this.cachedContextHeader = undefined;
   }
 
   async health(): Promise<{ ok: true }> {
@@ -606,9 +608,14 @@ export class PearClient {
     path: string,
     init?: { method?: string; body?: unknown; keepalive?: boolean },
   ): Promise<T> {
-    const context = await this.getContext();
+    let contextHeader = init?.keepalive === true ? this.cachedContextHeader : undefined;
+    if (contextHeader === undefined) {
+      const context = await this.getContext();
+      contextHeader = serializePearClientContext(context);
+      this.cachedContextHeader = contextHeader;
+    }
     const headers: Record<string, string> = {
-      [PEAR_CONTEXT_HEADER]: serializePearClientContext(context),
+      [PEAR_CONTEXT_HEADER]: contextHeader,
     };
 
     const method = init?.method ?? "GET";
