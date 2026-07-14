@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pear-minimal-starter",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/health", "/plans", "/plans/*", "/sessions", "/sessions/*", "/agents/*"],
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ExecutionSessionAgent",
+        "class_name": "ExecutionSessionAgent",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ExecutionSessionAgent"],
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pear-minimal-starter",
+      "database_id": "local-pear-minimal-starter",
+      "migrations_dir": "../../packages/cloudflare/migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "RAW_INPUTS",
+      "bucket_name": "pear-minimal-starter-inputs",
+    },
+  ],
+}

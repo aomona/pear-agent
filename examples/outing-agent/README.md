@@ -1,6 +1,6 @@
 # PEAR Outing Agent (Reference Application)
 
-外出準備サンプル。CLI から生成されるテンプレートの正本です。
+外出準備のReference Applicationです。デフォルトのStarterではありません。CLIからコピーする場合は`pnpm create-pear-agent <dir> --example outing`と明示します。
 
 ## できること
 

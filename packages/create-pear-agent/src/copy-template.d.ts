@@ -1,4 +1,10 @@
 export function defaultTemplateDir(): string;
+export function defaultPearAgentRoot(): string;
+export function resolveTemplateDir(options?: {
+  template?: string;
+  example?: string;
+  pearAgentRoot?: string | null;
+}): string;
 export function resolvePearAgentRoot(fromFlag?: string): string | null;
 export function copyTemplate(templateDir: string, targetDir: string): void;
 export function copyCloudflareMigrations(pearAgentRoot: string, targetDir: string): void;
