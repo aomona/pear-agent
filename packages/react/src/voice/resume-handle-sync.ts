@@ -95,7 +95,21 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
         try {
           // A lifecycle keepalive write supersedes normal writes that had not started.
           if (generation !== writeGeneration || lastPersisted === handle) return;
-          lastPersisted = await options.put(handle, { expectedHandles: [lastPersisted ?? null] });
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            lastPersisted = await options.put(handle, {
+              expectedHandles: [lastPersisted ?? null],
+            });
+            if (
+              lastPersisted === handle ||
+              generation !== writeGeneration ||
+              latestRequested !== handle
+            ) {
+              return;
+            }
+          }
+          if (latestRequested === handle && pending === undefined) {
+            pending = handle;
+          }
         } catch {
           // Keep the latest failed handle available for a cleanup flush or retry.
           if (latestRequested === handle && pending === undefined) {

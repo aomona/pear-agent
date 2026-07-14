@@ -191,4 +191,23 @@ describe("createResumeHandleSync", () => {
     resolvers.get("lifecycle-c")?.("lifecycle-c");
     await Promise.all([flushA, flushB, flushC]);
   });
+
+  it("retries the latest normal write after a stale no-op response", async () => {
+    let serverHandle: string | null = "server-current";
+    const expectedWrites: Array<readonly (string | null)[]> = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle, options) => {
+        expectedWrites.push(options.expectedHandles);
+        if (options.expectedHandles.includes(serverHandle)) serverHandle = handle;
+        return serverHandle;
+      },
+    });
+    sync.noteKnown("client-stale");
+    sync.schedule("latest");
+    await sync.flush();
+
+    expect(expectedWrites).toEqual([["client-stale"], ["server-current"]]);
+    expect(serverHandle).toBe("latest");
+  });
 });
