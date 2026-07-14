@@ -206,4 +206,66 @@ describe("PearClient", () => {
     });
     expect(fetchMock).toHaveBeenCalledOnce();
   });
+
+  it("starts keepalive requests synchronously with the lease context", async () => {
+    const lease = {
+      id: "lease-1",
+      sessionId: "s1",
+      actorId: "traveler",
+      status: "active",
+      acquiredAt: "2026-07-11T00:00:00.000Z",
+      expiresAt: "2026-07-11T00:30:00.000Z",
+      providerResumeHandle: null,
+    };
+    const getContext = vi.fn(async () => ({ actorId: "traveler" }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+      const sessionId = String(input).includes("/sessions/s2/") ? "s2" : "s1";
+      return jsonResponse({
+        lease: {
+          ...lease,
+          sessionId,
+          actorId: sessionId === "s2" ? "other-actor" : "traveler",
+          providerResumeHandle: body?.handle ?? null,
+        },
+      });
+    });
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext,
+      fetch: fetchMock as typeof fetch,
+    });
+    await client.acquireVoiceLease("s1", { leaseId: "lease-1" });
+    client.setGetContext(async () => ({ actorId: "other-actor" }));
+    await client.acquireVoiceLease("s2", { leaseId: "lease-1" });
+
+    const request = client.setVoiceResumeHandle("s1", "latest", {
+      keepalive: true,
+      leaseId: "lease-1",
+    });
+
+    expect(getContext).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const keepaliveInit = fetchMock.mock.calls[2]?.[1];
+    expect(keepaliveInit?.keepalive).toBe(true);
+    expect(JSON.parse(String(keepaliveInit?.body))).toEqual({
+      handle: "latest",
+      leaseId: "lease-1",
+    });
+    expect(JSON.parse(new Headers(keepaliveInit?.headers).get("x-pear-context")!)).toEqual({
+      actorId: "traveler",
+      roles: [],
+      claims: {},
+    });
+    await request;
+
+    await client.releaseVoiceLease("s1");
+    const releaseInit = fetchMock.mock.calls[3]?.[1];
+    expect(releaseInit?.method).toBe("DELETE");
+    expect(JSON.parse(new Headers(releaseInit?.headers).get("x-pear-context")!)).toEqual({
+      actorId: "traveler",
+      roles: [],
+      claims: {},
+    });
+  });
 });
