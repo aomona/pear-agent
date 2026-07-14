@@ -240,4 +240,26 @@ describe("createResumeHandleSync", () => {
     await Promise.all([lifecycleFlush, disconnectFlush]);
     expect(disconnectFlushSettled).toBe(true);
   });
+
+  it("retries a lifecycle stale no-op before disconnect completes", async () => {
+    let serverHandle: string | null = "server-current";
+    const normalExpected: Array<readonly (string | null)[]> = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle, options) => {
+        normalExpected.push(options.expectedHandles);
+        if (options.expectedHandles.includes(serverHandle)) serverHandle = handle;
+        return serverHandle;
+      },
+      putKeepalive: async () => serverHandle,
+    });
+    sync.noteKnown("client-stale");
+    sync.schedule("latest");
+    await sync.flushForLifecycle();
+    expect(serverHandle).toBe("server-current");
+
+    await sync.flush();
+    expect(normalExpected).toEqual([["server-current"]]);
+    expect(serverHandle).toBe("latest");
+  });
 });

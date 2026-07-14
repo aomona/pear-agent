@@ -206,7 +206,9 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       const write = (options.putKeepalive ?? options.put)(toWrite, { expectedHandles })
         .then((persistedHandle) => {
           lastPersisted = persistedHandle;
-          if (persistedHandle === toWrite && lifecycleRetry === toWrite) {
+          if (persistedHandle !== toWrite && latestRequested === toWrite) {
+            lifecycleRetry = toWrite;
+          } else if (lifecycleRetry === toWrite) {
             lifecycleRetry = undefined;
           }
         })
