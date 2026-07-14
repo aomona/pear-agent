@@ -50,6 +50,8 @@ export type VoiceLeaseStore = {
     sessionId: string,
     actorId: string,
     handle: string | null,
+    expectedHandles?: readonly (string | null)[],
+    expectedLeaseId?: string,
   ): Promise<VoiceLeaseResult>;
 };
 
@@ -194,10 +196,25 @@ export function createVoiceLeaseStore(d1: D1Database): VoiceLeaseStore {
       return null;
     },
 
-    async setResumeHandle(sessionId, actorId, handle) {
+    async setResumeHandle(sessionId, actorId, handle, expectedHandles, expectedLeaseId) {
       const now = new Date();
       const held = await requireActiveHolder(sessionId, actorId, now);
       if (!held.ok) return held;
+
+      // A delayed write from an earlier Voice Session must not mutate a lease
+      // that the same actor acquired after release or expiry.
+      if (expectedLeaseId !== undefined && held.lease.id !== expectedLeaseId) {
+        return held;
+      }
+
+      // A lifecycle keepalive PUT may overtake an older normal PUT. Treat writes
+      // whose expected predecessor is no longer current as stale no-ops.
+      if (
+        expectedHandles !== undefined &&
+        !expectedHandles.includes(held.lease.providerResumeHandle)
+      ) {
+        return held;
+      }
 
       const next: VoiceLease = { ...held.lease, providerResumeHandle: handle };
       await upsert(next, now);

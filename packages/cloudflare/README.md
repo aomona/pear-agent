@@ -118,6 +118,10 @@ Session-independent plans live in D1 tables `plan_artifacts` / `plan_artifact_ve
 
 - Status flow: `draft` → generate steps → `ready` → `POST /sessions` with `planArtifactId` (skips PlanGenerator).
 - Host may inject `planLibrary.normalizeDomainInput`, `freeTextResolver`, and `planImprover` on `createPearApp` / `createPearWorker`.
+- Static host ports support deterministic or already-configured services. Use the corresponding
+  `create*` factory when a port needs bindings from the current Worker environment; the factory
+  takes precedence over the static fallback. Internally, routes consume these adapters as grouped
+  generator, free-text, improvement, and domain ports, so this is the single injection convention.
 
 ### Partial Replanning (Issue #8)
 

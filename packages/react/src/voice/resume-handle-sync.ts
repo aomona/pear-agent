@@ -6,9 +6,19 @@
 export type ResumeHandleSyncOptions = {
   debounceMs: number;
   /** Persist handle to the host (e.g. PUT /voice/resume-handle). */
-  put: (handle: string | null) => Promise<void>;
+  put: (
+    handle: string | null,
+    options: { expectedHandles: readonly (string | null)[] },
+  ) => Promise<string | null>;
+  /** Persist during page lifecycle teardown using an unload-safe transport. */
+  putKeepalive?: (
+    handle: string | null,
+    options: { expectedHandles: readonly (string | null)[] },
+  ) => Promise<string | null>;
   /** Local UI update before network (optional). */
   onOptimistic?: (handle: string) => void;
+  /** Apply a server-confirmed handle only when its write is still current. */
+  onPersisted?: (handle: string | null) => void;
   /** When false, skip applying put results (stale generation). */
   isCurrent?: () => boolean;
 };
@@ -20,10 +30,46 @@ export type ResumeHandleSync = {
   schedule: (handle: string) => void;
   /** Write pending immediately (disconnect / suspend). */
   flush: () => Promise<void>;
+  /** Dispatch the latest unpersisted handle with an unload-safe transport. */
+  flushForLifecycle: () => Promise<void>;
   /** Immediate put of null and clear pending (stale handle recovery). */
   clearRemote: () => Promise<void>;
   dispose: () => void;
 };
+
+type LifecycleEventTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
+
+const MAX_EXPECTED_HANDLES = 32;
+
+export type ResumeHandleLifecycleFlushOptions = {
+  getSync: () => Pick<ResumeHandleSync, "flushForLifecycle"> | null;
+  pageTarget: LifecycleEventTarget;
+  visibilityTarget: LifecycleEventTarget & { visibilityState: string };
+};
+
+/**
+ * Best-effort persistence when a page is hidden or leaves the back/forward lifecycle.
+ * The lifecycle flush deduplicates persisted handles and uses the caller's unload-safe transport.
+ */
+export function attachResumeHandleLifecycleFlush(
+  options: ResumeHandleLifecycleFlushOptions,
+): () => void {
+  const flush = () => {
+    void options
+      .getSync()
+      ?.flushForLifecycle()
+      .catch(() => undefined);
+  };
+  const onVisibilityChange = () => {
+    if (options.visibilityTarget.visibilityState === "hidden") flush();
+  };
+  options.pageTarget.addEventListener("pagehide", flush);
+  options.visibilityTarget.addEventListener("visibilitychange", onVisibilityChange);
+  return () => {
+    options.pageTarget.removeEventListener("pagehide", flush);
+    options.visibilityTarget.removeEventListener("visibilitychange", onVisibilityChange);
+  };
+}
 
 export function createResumeHandleSync(options: ResumeHandleSyncOptions): ResumeHandleSync {
   let lastPersisted: string | null | undefined = undefined;
@@ -31,6 +77,10 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   let latestRequested: string | null | undefined = undefined;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
+  const lifecycleWrites = new Map<string | null, Promise<void>>();
+  let lifecycleRetry: string | null | undefined = undefined;
+  const scheduledWrites = new Set<string | null>();
+  let writeGeneration = 0;
 
   const isCurrent = () => options.isCurrent?.() ?? true;
 
@@ -42,13 +92,36 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   };
 
   const persist = (handle: string | null) => {
+    const generation = writeGeneration;
     chain = chain
       .catch(() => undefined)
       .then(async () => {
-        if (lastPersisted === handle) return;
         try {
-          await options.put(handle);
-          lastPersisted = handle;
+          // A lifecycle keepalive write supersedes normal writes that had not started.
+          if (generation !== writeGeneration || lastPersisted === handle) return;
+          scheduledWrites.add(handle);
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            lastPersisted = await options.put(handle, {
+              expectedHandles: [lastPersisted ?? null],
+            });
+            if (
+              lastPersisted === handle &&
+              generation === writeGeneration &&
+              latestRequested === handle
+            ) {
+              options.onPersisted?.(handle);
+            }
+            if (
+              lastPersisted === handle ||
+              generation !== writeGeneration ||
+              latestRequested !== handle
+            ) {
+              return;
+            }
+          }
+          if (latestRequested === handle && pending === undefined) {
+            pending = handle;
+          }
         } catch {
           // Keep the latest failed handle available for a cleanup flush or retry.
           if (latestRequested === handle && pending === undefined) {
@@ -61,15 +134,30 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
               void persist(toWrite);
             }, options.debounceMs);
           }
+        } finally {
+          scheduledWrites.delete(handle);
         }
       });
     return chain;
+  };
+
+  const queueLifecycleRetry = (handle: string | null) => {
+    if (latestRequested !== handle) return;
+    lifecycleRetry = handle;
+    clearTimer();
+    timer = setTimeout(() => {
+      timer = null;
+      if (lifecycleRetry !== handle || latestRequested !== handle) return;
+      lifecycleRetry = undefined;
+      void persist(handle);
+    }, options.debounceMs);
   };
 
   return {
     noteKnown(handle) {
       lastPersisted = handle;
       latestRequested = handle;
+      lifecycleRetry = undefined;
       if (pending === handle) {
         pending = undefined;
         clearTimer();
@@ -80,6 +168,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       if (!isCurrent()) return;
       options.onOptimistic?.(handle);
       latestRequested = handle;
+      if (lifecycleRetry !== handle) lifecycleRetry = undefined;
 
       if (lastPersisted === handle) {
         if (pending === handle) {
@@ -106,6 +195,61 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       pending = undefined;
       if (toWrite !== undefined) await persist(toWrite);
       await chain;
+
+      // Disconnect/suspend must not release the lease while a lifecycle write
+      // still depends on it. New lifecycle writes can join while awaiting.
+      while (lifecycleWrites.size > 0) {
+        await Promise.all(lifecycleWrites.values());
+      }
+
+      // A failed lifecycle write is retried normally before release.
+      clearTimer();
+      const retryHandle = lifecycleRetry;
+      lifecycleRetry = undefined;
+      if (retryHandle !== undefined && retryHandle === latestRequested) {
+        await persist(retryHandle);
+      }
+      await chain;
+    },
+
+    async flushForLifecycle() {
+      clearTimer();
+      const retryHandle = lifecycleRetry === latestRequested ? lifecycleRetry : undefined;
+      if (lifecycleRetry !== retryHandle) lifecycleRetry = undefined;
+      const toWrite = pending ?? retryHandle ?? latestRequested;
+      pending = undefined;
+      if (lifecycleRetry === toWrite) lifecycleRetry = undefined;
+      if (toWrite === undefined || lastPersisted === toWrite) return;
+      const duplicateWrite = lifecycleWrites.get(toWrite);
+      if (duplicateWrite !== undefined) {
+        await duplicateWrite;
+        return;
+      }
+
+      writeGeneration += 1;
+      const expectedHandles = [
+        ...new Set([lastPersisted ?? null, ...scheduledWrites, ...lifecycleWrites.keys()]),
+      ].slice(0, MAX_EXPECTED_HANDLES);
+      const write = (options.putKeepalive ?? options.put)(toWrite, { expectedHandles })
+        .then((persistedHandle) => {
+          lastPersisted = persistedHandle;
+          if (persistedHandle === toWrite && latestRequested === toWrite) {
+            options.onPersisted?.(toWrite);
+          }
+          if (persistedHandle !== toWrite && latestRequested === toWrite) {
+            queueLifecycleRetry(toWrite);
+          } else if (lifecycleRetry === toWrite) {
+            lifecycleRetry = undefined;
+          }
+        })
+        .catch(() => {
+          queueLifecycleRetry(toWrite);
+        })
+        .finally(() => {
+          if (lifecycleWrites.get(toWrite) === write) lifecycleWrites.delete(toWrite);
+        });
+      lifecycleWrites.set(toWrite, write);
+      await write;
     },
 
     async clearRemote() {
@@ -119,6 +263,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       clearTimer();
       pending = undefined;
       lastPersisted = undefined;
+      lifecycleRetry = undefined;
     },
   };
 }
