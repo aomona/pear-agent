@@ -210,4 +210,34 @@ describe("createResumeHandleSync", () => {
     expect(expectedWrites).toEqual([["client-stale"], ["server-current"]]);
     expect(serverHandle).toBe("latest");
   });
+
+  it("waits for lifecycle writes before a disconnect flush resolves", async () => {
+    let resolveLifecycle!: () => void;
+    const lifecycleWrite = new Promise<void>((resolve) => {
+      resolveLifecycle = resolve;
+    });
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle) => handle,
+      putKeepalive: async (handle) => {
+        await lifecycleWrite;
+        return handle;
+      },
+    });
+    sync.noteKnown(null);
+    sync.schedule("lifecycle-pending");
+    const lifecycleFlush = sync.flushForLifecycle();
+    await Promise.resolve();
+
+    let disconnectFlushSettled = false;
+    const disconnectFlush = sync.flush().then(() => {
+      disconnectFlushSettled = true;
+    });
+    await Promise.resolve();
+    expect(disconnectFlushSettled).toBe(false);
+
+    resolveLifecycle();
+    await Promise.all([lifecycleFlush, disconnectFlush]);
+    expect(disconnectFlushSettled).toBe(true);
+  });
 });

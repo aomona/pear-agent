@@ -74,6 +74,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
   const lifecycleWrites = new Map<string | null, Promise<void>>();
+  let lifecycleRetry: string | null | undefined = undefined;
   const scheduledWrites = new Set<string | null>();
   let writeGeneration = 0;
 
@@ -169,12 +170,28 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       pending = undefined;
       if (toWrite !== undefined) await persist(toWrite);
       await chain;
+
+      // Disconnect/suspend must not release the lease while a lifecycle write
+      // still depends on it. New lifecycle writes can join while awaiting.
+      while (lifecycleWrites.size > 0) {
+        await Promise.all(lifecycleWrites.values());
+      }
+
+      // A failed lifecycle write is retried normally before release.
+      clearTimer();
+      const retryHandle = lifecycleRetry;
+      lifecycleRetry = undefined;
+      if (retryHandle !== undefined && retryHandle === latestRequested) {
+        await persist(retryHandle);
+      }
+      await chain;
     },
 
     async flushForLifecycle() {
       clearTimer();
-      const toWrite = pending ?? latestRequested;
+      const toWrite = pending ?? lifecycleRetry ?? latestRequested;
       pending = undefined;
+      if (lifecycleRetry === toWrite) lifecycleRetry = undefined;
       if (toWrite === undefined || lastPersisted === toWrite) return;
       const duplicateWrite = lifecycleWrites.get(toWrite);
       if (duplicateWrite !== undefined) {
@@ -189,9 +206,12 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       const write = (options.putKeepalive ?? options.put)(toWrite, { expectedHandles })
         .then((persistedHandle) => {
           lastPersisted = persistedHandle;
+          if (persistedHandle === toWrite && lifecycleRetry === toWrite) {
+            lifecycleRetry = undefined;
+          }
         })
         .catch(() => {
-          if (latestRequested === toWrite && pending === undefined) pending = toWrite;
+          if (latestRequested === toWrite) lifecycleRetry = toWrite;
         })
         .finally(() => {
           if (lifecycleWrites.get(toWrite) === write) lifecycleWrites.delete(toWrite);
@@ -211,6 +231,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       clearTimer();
       pending = undefined;
       lastPersisted = undefined;
+      lifecycleRetry = undefined;
     },
   };
 }
