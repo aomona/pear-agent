@@ -106,12 +106,14 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
     const body = z
       .object({
         handle: z.string().nullable(),
+        leaseId: z.string().min(1).optional(),
         expectedHandles: z.array(z.string().nullable()).max(32).optional(),
       })
       .parse(await c.req.json());
     const result = await agentSetVoiceResumeHandle(c.env, sessionId, {
       actorId: context.actorId,
       handle: body.handle,
+      ...(body.leaseId !== undefined ? { leaseId: body.leaseId } : {}),
       ...(body.expectedHandles !== undefined ? { expectedHandles: body.expectedHandles } : {}),
     });
     const lease = unwrapLease(sessionId, result);

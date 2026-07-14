@@ -231,12 +231,19 @@ describe("PearClient", () => {
     });
     await client.getVoiceLease("s1");
 
-    const request = client.setVoiceResumeHandle("s1", "latest", { keepalive: true });
+    const request = client.setVoiceResumeHandle("s1", "latest", {
+      keepalive: true,
+      leaseId: "lease-1",
+    });
 
     expect(getContext).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const keepaliveInit = fetchMock.mock.calls[1]?.[1];
     expect(keepaliveInit?.keepalive).toBe(true);
+    expect(JSON.parse(String(keepaliveInit?.body))).toEqual({
+      handle: "latest",
+      leaseId: "lease-1",
+    });
     expect(JSON.parse(new Headers(keepaliveInit?.headers).get("x-pear-context")!)).toEqual({
       actorId: "traveler",
       roles: [],

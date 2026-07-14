@@ -58,6 +58,7 @@ export type ExecutionSessionAgentRpc = {
   setVoiceResumeHandle(input: {
     actorId: string;
     handle: string | null;
+    leaseId?: string;
     expectedHandles?: readonly (string | null)[];
   }): Promise<VoiceLeaseResult>;
   suspendContinuation(input: {
@@ -229,6 +230,7 @@ export async function agentSetVoiceResumeHandle(
   input: {
     actorId: string;
     handle: string | null;
+    leaseId?: string;
     expectedHandles?: readonly (string | null)[];
   },
 ): Promise<VoiceLeaseResult> {

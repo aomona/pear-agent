@@ -176,12 +176,15 @@ export function useVoiceSession(
 
   /** One sync controller for the currently bound voice session. */
   const ensureResumeSync = useCallback(
-    (sid: string, epoch: number): ResumeHandleSync => {
+    (sid: string, epoch: number, leaseId: string): ResumeHandleSync => {
       resumeSyncRef.current?.dispose();
       const sync = createResumeHandleSync({
         debounceMs: RESUME_HANDLE_DEBOUNCE_MS,
         put: async (handle, writeOptions) => {
-          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, writeOptions);
+          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, {
+            ...writeOptions,
+            leaseId,
+          });
           if (isCurrent(epoch) && boundSessionIdRef.current === sid) setLease(nextLease);
           return nextLease.providerResumeHandle;
         },
@@ -189,6 +192,7 @@ export function useVoiceSession(
           const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, {
             ...writeOptions,
             keepalive: true,
+            leaseId,
           });
           if (isCurrent(epoch) && boundSessionIdRef.current === sid) setLease(nextLease);
           return nextLease.providerResumeHandle;
@@ -419,7 +423,7 @@ export function useVoiceSession(
         setLease(acquired);
         // Pin lease owner before WS open so cleanup can release on failure paths.
         boundSessionIdRef.current = sid;
-        const resumeSync = ensureResumeSync(sid, epoch);
+        const resumeSync = ensureResumeSync(sid, epoch, acquired.id);
         resumeSync.noteKnown(acquired.providerResumeHandle ?? null);
 
         const resume = input.continuationId
