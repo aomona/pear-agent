@@ -15,7 +15,11 @@ import { usePearContext } from "./provider.js";
 import { attachBrowserVoiceMedia, type BrowserVoiceMediaHandle } from "./voice/browser-media.js";
 import { GeminiLiveVoiceProvider } from "./voice/gemini-live-provider.js";
 import { attachVoiceConnectionListeners } from "./voice/attach-connection-listeners.js";
-import { createResumeHandleSync, type ResumeHandleSync } from "./voice/resume-handle-sync.js";
+import {
+  attachResumeHandleLifecycleFlush,
+  createResumeHandleSync,
+  type ResumeHandleSync,
+} from "./voice/resume-handle-sync.js";
 
 /**
  * Gemini Live emits sessionResumptionUpdate very frequently.
@@ -154,6 +158,15 @@ export function useVoiceSession(
   const connectingRef = useRef(false);
   const resumeSyncRef = useRef<ResumeHandleSync | null>(null);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof document === "undefined") return;
+    return attachResumeHandleLifecycleFlush({
+      getSync: () => resumeSyncRef.current,
+      pageTarget: window,
+      visibilityTarget: document,
+    });
+  }, []);
+
   const stopBrowserMedia = useCallback(() => {
     mediaRef.current?.stop();
     mediaRef.current = null;
@@ -163,19 +176,37 @@ export function useVoiceSession(
 
   /** One sync controller for the currently bound voice session. */
   const ensureResumeSync = useCallback(
-    (sid: string, epoch: number): ResumeHandleSync => {
+    (sid: string, epoch: number, leaseId: string): ResumeHandleSync => {
       resumeSyncRef.current?.dispose();
       const sync = createResumeHandleSync({
         debounceMs: RESUME_HANDLE_DEBOUNCE_MS,
-        put: async (handle) => {
-          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle);
-          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
-          setLease(nextLease);
+        put: async (handle, writeOptions) => {
+          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, {
+            ...writeOptions,
+            leaseId,
+          });
+          return nextLease.providerResumeHandle;
+        },
+        putKeepalive: async (handle, writeOptions) => {
+          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, {
+            ...writeOptions,
+            keepalive: true,
+            leaseId,
+          });
+          return nextLease.providerResumeHandle;
         },
         onOptimistic: (handle) => {
           if (!isCurrent(epoch)) return;
           setView((v) =>
             v.lease && v.lease.providerResumeHandle !== handle
+              ? { ...v, lease: { ...v.lease, providerResumeHandle: handle } }
+              : v,
+          );
+        },
+        onPersisted: (handle) => {
+          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
+          setView((v) =>
+            v.lease?.id === leaseId
               ? { ...v, lease: { ...v.lease, providerResumeHandle: handle } }
               : v,
           );
@@ -398,7 +429,7 @@ export function useVoiceSession(
         setLease(acquired);
         // Pin lease owner before WS open so cleanup can release on failure paths.
         boundSessionIdRef.current = sid;
-        const resumeSync = ensureResumeSync(sid, epoch);
+        const resumeSync = ensureResumeSync(sid, epoch, acquired.id);
         resumeSync.noteKnown(acquired.providerResumeHandle ?? null);
 
         const resume = input.continuationId
