@@ -17,6 +17,8 @@ export type ResumeHandleSyncOptions = {
   ) => Promise<string | null>;
   /** Local UI update before network (optional). */
   onOptimistic?: (handle: string) => void;
+  /** Apply a server-confirmed handle only when its write is still current. */
+  onPersisted?: (handle: string | null) => void;
   /** When false, skip applying put results (stale generation). */
   isCurrent?: () => boolean;
 };
@@ -102,6 +104,13 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
             lastPersisted = await options.put(handle, {
               expectedHandles: [lastPersisted ?? null],
             });
+            if (
+              lastPersisted === handle &&
+              generation === writeGeneration &&
+              latestRequested === handle
+            ) {
+              options.onPersisted?.(handle);
+            }
             if (
               lastPersisted === handle ||
               generation !== writeGeneration ||
@@ -224,6 +233,9 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       const write = (options.putKeepalive ?? options.put)(toWrite, { expectedHandles })
         .then((persistedHandle) => {
           lastPersisted = persistedHandle;
+          if (persistedHandle === toWrite && latestRequested === toWrite) {
+            options.onPersisted?.(toWrite);
+          }
           if (persistedHandle !== toWrite && latestRequested === toWrite) {
             queueLifecycleRetry(toWrite);
           } else if (lifecycleRetry === toWrite) {

@@ -132,6 +132,7 @@ describe("createResumeHandleSync", () => {
       resolveOlder = resolve;
     });
     const keepaliveExpected: Array<readonly (string | null)[]> = [];
+    const persistedUpdates: Array<string | null> = [];
     const sync = createResumeHandleSync({
       debounceMs: 60_000,
       put: async (handle) => (handle === "older" ? olderResult : handle),
@@ -139,6 +140,7 @@ describe("createResumeHandleSync", () => {
         keepaliveExpected.push(options.expectedHandles);
         return handle;
       },
+      onPersisted: (handle) => persistedUpdates.push(handle),
     });
     sync.noteKnown(null);
     sync.schedule("older");
@@ -155,6 +157,7 @@ describe("createResumeHandleSync", () => {
     await olderFlush;
     await sync.flushForLifecycle();
     expect(keepaliveExpected).toHaveLength(1);
+    expect(persistedUpdates).toEqual(["newer"]);
   });
 
   it("includes every in-flight lifecycle handle as an allowed predecessor", async () => {

@@ -185,7 +185,6 @@ export function useVoiceSession(
             ...writeOptions,
             leaseId,
           });
-          if (isCurrent(epoch) && boundSessionIdRef.current === sid) setLease(nextLease);
           return nextLease.providerResumeHandle;
         },
         putKeepalive: async (handle, writeOptions) => {
@@ -194,13 +193,20 @@ export function useVoiceSession(
             keepalive: true,
             leaseId,
           });
-          if (isCurrent(epoch) && boundSessionIdRef.current === sid) setLease(nextLease);
           return nextLease.providerResumeHandle;
         },
         onOptimistic: (handle) => {
           if (!isCurrent(epoch)) return;
           setView((v) =>
             v.lease && v.lease.providerResumeHandle !== handle
+              ? { ...v, lease: { ...v.lease, providerResumeHandle: handle } }
+              : v,
+          );
+        },
+        onPersisted: (handle) => {
+          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
+          setView((v) =>
+            v.lease?.id === leaseId
               ? { ...v, lease: { ...v.lease, providerResumeHandle: handle } }
               : v,
           );
