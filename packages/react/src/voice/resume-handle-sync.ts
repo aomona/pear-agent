@@ -7,6 +7,8 @@ export type ResumeHandleSyncOptions = {
   debounceMs: number;
   /** Persist handle to the host (e.g. PUT /voice/resume-handle). */
   put: (handle: string | null) => Promise<void>;
+  /** Persist during page lifecycle teardown using an unload-safe transport. */
+  putKeepalive?: (handle: string | null) => Promise<void>;
   /** Local UI update before network (optional). */
   onOptimistic?: (handle: string) => void;
   /** When false, skip applying put results (stale generation). */
@@ -20,6 +22,8 @@ export type ResumeHandleSync = {
   schedule: (handle: string) => void;
   /** Write pending immediately (disconnect / suspend). */
   flush: () => Promise<void>;
+  /** Dispatch the latest unpersisted handle with an unload-safe transport. */
+  flushForLifecycle: () => Promise<void>;
   /** Immediate put of null and clear pending (stale handle recovery). */
   clearRemote: () => Promise<void>;
   dispose: () => void;
@@ -28,14 +32,14 @@ export type ResumeHandleSync = {
 type LifecycleEventTarget = Pick<EventTarget, "addEventListener" | "removeEventListener">;
 
 export type ResumeHandleLifecycleFlushOptions = {
-  getSync: () => Pick<ResumeHandleSync, "flush"> | null;
+  getSync: () => Pick<ResumeHandleSync, "flushForLifecycle"> | null;
   pageTarget: LifecycleEventTarget;
   visibilityTarget: LifecycleEventTarget & { visibilityState: string };
 };
 
 /**
  * Best-effort persistence when a page is hidden or leaves the back/forward lifecycle.
- * `flush()` itself deduplicates persisted handles, so ordinary visibility changes do not PUT.
+ * The lifecycle flush deduplicates persisted handles and uses the caller's unload-safe transport.
  */
 export function attachResumeHandleLifecycleFlush(
   options: ResumeHandleLifecycleFlushOptions,
@@ -43,7 +47,7 @@ export function attachResumeHandleLifecycleFlush(
   const flush = () => {
     void options
       .getSync()
-      ?.flush()
+      ?.flushForLifecycle()
       .catch(() => undefined);
   };
   const onVisibilityChange = () => {
@@ -63,6 +67,7 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   let latestRequested: string | null | undefined = undefined;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
+  let lifecycleInFlight: { handle: string | null; promise: Promise<void> } | null = null;
 
   const isCurrent = () => options.isCurrent?.() ?? true;
 
@@ -138,6 +143,30 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
       pending = undefined;
       if (toWrite !== undefined) await persist(toWrite);
       await chain;
+    },
+
+    async flushForLifecycle() {
+      clearTimer();
+      const toWrite = pending ?? latestRequested;
+      pending = undefined;
+      if (toWrite === undefined || lastPersisted === toWrite) return;
+      if (lifecycleInFlight?.handle === toWrite) {
+        await lifecycleInFlight.promise;
+        return;
+      }
+
+      const write = (options.putKeepalive ?? options.put)(toWrite)
+        .then(() => {
+          lastPersisted = toWrite;
+        })
+        .catch(() => {
+          if (latestRequested === toWrite && pending === undefined) pending = toWrite;
+        })
+        .finally(() => {
+          if (lifecycleInFlight?.promise === write) lifecycleInFlight = null;
+        });
+      lifecycleInFlight = { handle: toWrite, promise: write };
+      await write;
     },
 
     async clearRemote() {

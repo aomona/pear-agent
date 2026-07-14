@@ -104,7 +104,8 @@ Live defaults (gemini-live-api-dev skill): model `gemini-3.1-flash-live-preview`
 
 Resume handles are debounced during a Live session and flushed before disconnect/suspend. The hook
 also performs a best-effort flush on `pagehide` and when `visibilitychange` enters `hidden`, reducing
-the chance of leaving a newer handle only in memory when a tab is closed or discarded.
+the chance of leaving a newer handle only in memory when a tab is closed or discarded. Lifecycle
+flushes use fetch `keepalive`; ordinary debounce, disconnect, and suspend writes use normal fetches.
 
 ### Partial Replanning
 

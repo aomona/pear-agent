@@ -185,6 +185,13 @@ export function useVoiceSession(
           if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
           setLease(nextLease);
         },
+        putKeepalive: async (handle) => {
+          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, {
+            keepalive: true,
+          });
+          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
+          setLease(nextLease);
+        },
         onOptimistic: (handle) => {
           if (!isCurrent(epoch)) return;
           setView((v) =>

@@ -394,12 +394,17 @@ export class PearClient {
     return parseVoiceLease(body.lease);
   }
 
-  async setVoiceResumeHandle(sessionId: string, handle: string | null): Promise<VoiceLease> {
+  async setVoiceResumeHandle(
+    sessionId: string,
+    handle: string | null,
+    options?: { keepalive?: boolean },
+  ): Promise<VoiceLease> {
     const body = await this.requestJson<{ lease: unknown }>(
       `/sessions/${sessionId}/voice/resume-handle`,
       {
         method: "PUT",
         body: { handle },
+        ...(options?.keepalive === true ? { keepalive: true } : {}),
       },
     );
     return parseVoiceLease(body.lease);
@@ -594,7 +599,7 @@ export class PearClient {
 
   private async requestJson<T>(
     path: string,
-    init?: { method?: string; body?: unknown },
+    init?: { method?: string; body?: unknown; keepalive?: boolean },
   ): Promise<T> {
     const context = await this.getContext();
     const headers: Record<string, string> = {
@@ -602,7 +607,11 @@ export class PearClient {
     };
 
     const method = init?.method ?? "GET";
-    const requestInit: RequestInit = { method, headers };
+    const requestInit: RequestInit = {
+      method,
+      headers,
+      ...(init?.keepalive === true ? { keepalive: true } : {}),
+    };
     if (init?.body !== undefined) {
       headers["content-type"] = "application/json";
       requestInit.body = JSON.stringify(init.body, (_key, value) => {

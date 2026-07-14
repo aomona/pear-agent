@@ -77,10 +77,14 @@ describe("createResumeHandleSync", () => {
   it("flushes pending handles on hidden/pagehide without PUT spam", async () => {
     vi.useFakeTimers();
     const writes: Array<string | null> = [];
+    const keepaliveWrites: Array<string | null> = [];
     const sync = createResumeHandleSync({
       debounceMs: 60_000,
       put: async (handle) => {
         writes.push(handle);
+      },
+      putKeepalive: async (handle) => {
+        keepaliveWrites.push(handle);
       },
     });
     const pageTarget = new EventTarget();
@@ -100,17 +104,18 @@ describe("createResumeHandleSync", () => {
     visibilityTarget.dispatchEvent(new Event("visibilitychange"));
     await vi.runAllTicks();
     await sync.flush();
-    expect(writes).toEqual(["hidden-handle"]);
+    expect(writes).toEqual([]);
+    expect(keepaliveWrites).toEqual(["hidden-handle"]);
 
     visibilityTarget.dispatchEvent(new Event("visibilitychange"));
-    await sync.flush();
-    expect(writes).toEqual(["hidden-handle"]);
+    await sync.flushForLifecycle();
+    expect(keepaliveWrites).toEqual(["hidden-handle"]);
 
     sync.schedule("pagehide-handle");
     pageTarget.dispatchEvent(new Event("pagehide"));
     await vi.runAllTicks();
-    await sync.flush();
-    expect(writes).toEqual(["hidden-handle", "pagehide-handle"]);
+    await sync.flushForLifecycle();
+    expect(keepaliveWrites).toEqual(["hidden-handle", "pagehide-handle"]);
 
     detach();
     vi.useRealTimers();
