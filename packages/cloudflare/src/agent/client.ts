@@ -58,6 +58,7 @@ export type ExecutionSessionAgentRpc = {
   setVoiceResumeHandle(input: {
     actorId: string;
     handle: string | null;
+    expectedHandles?: readonly (string | null)[];
   }): Promise<VoiceLeaseResult>;
   suspendContinuation(input: {
     id?: string;
@@ -225,7 +226,11 @@ export async function agentGetVoiceLease(
 export async function agentSetVoiceResumeHandle(
   env: PearEnv,
   sessionId: string,
-  input: { actorId: string; handle: string | null },
+  input: {
+    actorId: string;
+    handle: string | null;
+    expectedHandles?: readonly (string | null)[];
+  },
 ): Promise<VoiceLeaseResult> {
   const agent = await getExecutionSessionAgent(env, sessionId);
   return agent.setVoiceResumeHandle(input);

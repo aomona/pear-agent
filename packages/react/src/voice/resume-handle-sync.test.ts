@@ -14,6 +14,7 @@ describe("createResumeHandleSync", () => {
       put: async (handle) => {
         writes.push(handle);
         await put;
+        return handle;
       },
     });
 
@@ -44,6 +45,7 @@ describe("createResumeHandleSync", () => {
       isCurrent: () => current,
       put: async (handle) => {
         writes.push(handle);
+        return handle;
       },
     });
 
@@ -63,6 +65,7 @@ describe("createResumeHandleSync", () => {
         writes.push(handle);
         attempts += 1;
         if (attempts === 1) throw new Error("temporary failure");
+        return handle;
       },
     });
 
@@ -82,9 +85,11 @@ describe("createResumeHandleSync", () => {
       debounceMs: 60_000,
       put: async (handle) => {
         writes.push(handle);
+        return handle;
       },
       putKeepalive: async (handle) => {
         keepaliveWrites.push(handle);
+        return handle;
       },
     });
     const pageTarget = new EventTarget();
@@ -119,5 +124,36 @@ describe("createResumeHandleSync", () => {
 
     detach();
     vi.useRealTimers();
+  });
+
+  it("protects a lifecycle write from an older in-flight write", async () => {
+    let resolveOlder!: (persisted: string | null) => void;
+    const olderResult = new Promise<string | null>((resolve) => {
+      resolveOlder = resolve;
+    });
+    const keepaliveExpected: Array<readonly (string | null)[]> = [];
+    const sync = createResumeHandleSync({
+      debounceMs: 60_000,
+      put: async (handle) => (handle === "older" ? olderResult : handle),
+      putKeepalive: async (handle, options) => {
+        keepaliveExpected.push(options.expectedHandles);
+        return handle;
+      },
+    });
+    sync.noteKnown(null);
+    sync.schedule("older");
+    const olderFlush = sync.flush();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    sync.schedule("newer");
+    await sync.flushForLifecycle();
+    expect(keepaliveExpected).toEqual([[null, "older"]]);
+
+    // The server returns its current newer handle for the stale older write.
+    resolveOlder("newer");
+    await olderFlush;
+    await sync.flushForLifecycle();
+    expect(keepaliveExpected).toHaveLength(1);
   });
 });

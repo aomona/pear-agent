@@ -180,17 +180,18 @@ export function useVoiceSession(
       resumeSyncRef.current?.dispose();
       const sync = createResumeHandleSync({
         debounceMs: RESUME_HANDLE_DEBOUNCE_MS,
-        put: async (handle) => {
-          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle);
-          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
-          setLease(nextLease);
+        put: async (handle, writeOptions) => {
+          const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, writeOptions);
+          if (isCurrent(epoch) && boundSessionIdRef.current === sid) setLease(nextLease);
+          return nextLease.providerResumeHandle;
         },
-        putKeepalive: async (handle) => {
+        putKeepalive: async (handle, writeOptions) => {
           const nextLease = await clientRef.current.setVoiceResumeHandle(sid, handle, {
+            ...writeOptions,
             keepalive: true,
           });
-          if (!isCurrent(epoch) || boundSessionIdRef.current !== sid) return;
-          setLease(nextLease);
+          if (isCurrent(epoch) && boundSessionIdRef.current === sid) setLease(nextLease);
+          return nextLease.providerResumeHandle;
         },
         onOptimistic: (handle) => {
           if (!isCurrent(epoch)) return;

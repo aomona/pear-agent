@@ -354,6 +354,31 @@ describe("cloudflare runtime integration", () => {
     };
     expect(handleBody.lease.providerResumeHandle).toBe("gemini-handle-1");
 
+    const newerHandleRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/resume-handle`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          handle: "gemini-handle-2",
+          expectedHandles: [null, "gemini-handle-1"],
+        }),
+      }),
+    );
+    expect(newerHandleRes.status).toBe(200);
+
+    const staleHandleRes = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/resume-handle`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({ handle: "stale-handle", expectedHandles: [null] }),
+      }),
+    );
+    expect(staleHandleRes.status).toBe(200);
+    const staleHandleBody = (await staleHandleRes.json()) as {
+      lease: { providerResumeHandle: string | null };
+    };
+    expect(staleHandleBody.lease.providerResumeHandle).toBe("gemini-handle-2");
+
     const tokenRes = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/voice/token`, {
         method: "POST",

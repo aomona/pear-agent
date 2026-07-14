@@ -6,9 +6,15 @@
 export type ResumeHandleSyncOptions = {
   debounceMs: number;
   /** Persist handle to the host (e.g. PUT /voice/resume-handle). */
-  put: (handle: string | null) => Promise<void>;
+  put: (
+    handle: string | null,
+    options: { expectedHandles: readonly (string | null)[] },
+  ) => Promise<string | null>;
   /** Persist during page lifecycle teardown using an unload-safe transport. */
-  putKeepalive?: (handle: string | null) => Promise<void>;
+  putKeepalive?: (
+    handle: string | null,
+    options: { expectedHandles: readonly (string | null)[] },
+  ) => Promise<string | null>;
   /** Local UI update before network (optional). */
   onOptimistic?: (handle: string) => void;
   /** When false, skip applying put results (stale generation). */
@@ -68,6 +74,8 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   let timer: ReturnType<typeof setTimeout> | null = null;
   let chain: Promise<void> = Promise.resolve();
   let lifecycleInFlight: { handle: string | null; promise: Promise<void> } | null = null;
+  const scheduledWrites = new Set<string | null>();
+  let writeGeneration = 0;
 
   const isCurrent = () => options.isCurrent?.() ?? true;
 
@@ -79,13 +87,15 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
   };
 
   const persist = (handle: string | null) => {
+    const generation = writeGeneration;
+    scheduledWrites.add(handle);
     chain = chain
       .catch(() => undefined)
       .then(async () => {
-        if (lastPersisted === handle) return;
         try {
-          await options.put(handle);
-          lastPersisted = handle;
+          // A lifecycle keepalive write supersedes normal writes that had not started.
+          if (generation !== writeGeneration || lastPersisted === handle) return;
+          lastPersisted = await options.put(handle, { expectedHandles: [lastPersisted ?? null] });
         } catch {
           // Keep the latest failed handle available for a cleanup flush or retry.
           if (latestRequested === handle && pending === undefined) {
@@ -98,6 +108,8 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
               void persist(toWrite);
             }, options.debounceMs);
           }
+        } finally {
+          scheduledWrites.delete(handle);
         }
       });
     return chain;
@@ -155,9 +167,11 @@ export function createResumeHandleSync(options: ResumeHandleSyncOptions): Resume
         return;
       }
 
-      const write = (options.putKeepalive ?? options.put)(toWrite)
-        .then(() => {
-          lastPersisted = toWrite;
+      writeGeneration += 1;
+      const expectedHandles = [...new Set([lastPersisted ?? null, ...scheduledWrites])];
+      const write = (options.putKeepalive ?? options.put)(toWrite, { expectedHandles })
+        .then((persistedHandle) => {
+          lastPersisted = persistedHandle;
         })
         .catch(() => {
           if (latestRequested === toWrite && pending === undefined) pending = toWrite;

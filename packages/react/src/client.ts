@@ -397,13 +397,18 @@ export class PearClient {
   async setVoiceResumeHandle(
     sessionId: string,
     handle: string | null,
-    options?: { keepalive?: boolean },
+    options?: { keepalive?: boolean; expectedHandles?: readonly (string | null)[] },
   ): Promise<VoiceLease> {
     const body = await this.requestJson<{ lease: unknown }>(
       `/sessions/${sessionId}/voice/resume-handle`,
       {
         method: "PUT",
-        body: { handle },
+        body: {
+          handle,
+          ...(options?.expectedHandles !== undefined
+            ? { expectedHandles: options.expectedHandles }
+            : {}),
+        },
         ...(options?.keepalive === true ? { keepalive: true } : {}),
       },
     );

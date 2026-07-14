@@ -103,10 +103,16 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
     const sessionId = c.req.param("sessionId");
     const context = c.get("pearContext");
     await authorize({ type: "voice.resumeHandle.write", sessionId }, context);
-    const body = z.object({ handle: z.string().nullable() }).parse(await c.req.json());
+    const body = z
+      .object({
+        handle: z.string().nullable(),
+        expectedHandles: z.array(z.string().nullable()).max(32).optional(),
+      })
+      .parse(await c.req.json());
     const result = await agentSetVoiceResumeHandle(c.env, sessionId, {
       actorId: context.actorId,
       handle: body.handle,
+      ...(body.expectedHandles !== undefined ? { expectedHandles: body.expectedHandles } : {}),
     });
     const lease = unwrapLease(sessionId, result);
     return c.json({ lease: toJsonValue(lease) });
