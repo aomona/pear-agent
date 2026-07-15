@@ -5,9 +5,10 @@ import path from "node:path";
 import {
   copyCloudflareMigrations,
   copyTemplate,
-  defaultTemplateDir,
+  defaultPearAgentRoot,
   isInsideWorkspace,
   resolvePearAgentRoot,
+  resolveTemplateDir,
   rewritePackageJson,
   rewriteWranglerMigrationsDir,
 } from "./copy-template.mjs";
@@ -15,18 +16,20 @@ import {
 function printHelp() {
   console.log(`Usage: create-pear-agent <project-directory> [options]
 
-Scaffold a deployable PEAR outing sample (Worker + React + shadcn/ui).
+Scaffold a minimal PEAR execution app (Cloudflare Worker + React).
 
 Options:
-  --from <path>   Path to pear-agent monorepo root (for file: deps)
-  --template <path>  Override template directory (default: examples/outing-agent)
-  --help          Show this help
+  --example <name>   Generate a reference example (available: outing)
+  --from <path>      Path to pear-agent monorepo root (for file: deps)
+  --template <path>  Override the template directory
+  --help             Show this help
 
 Environment:
   PEAR_AGENT_ROOT  Same as --from
 
 Examples:
   create-pear-agent my-agent
+  create-pear-agent my-outing --example outing
   create-pear-agent examples/my-agent --from ../pear-agent
 `);
 }
@@ -35,6 +38,7 @@ function parseArgs(argv) {
   const positionals = [];
   let from;
   let template;
+  let example;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -43,10 +47,17 @@ function parseArgs(argv) {
     }
     if (arg === "--from") {
       from = argv[++i];
+      if (!from) throw new Error("--from requires a path");
       continue;
     }
     if (arg === "--template") {
       template = argv[++i];
+      if (!template) throw new Error("--template requires a path");
+      continue;
+    }
+    if (arg === "--example") {
+      example = argv[++i];
+      if (!example) throw new Error("--example requires a name");
       continue;
     }
     if (arg?.startsWith("-")) {
@@ -55,7 +66,10 @@ function parseArgs(argv) {
     if (arg) positionals.push(arg);
   }
 
-  return { help: false, positionals, from, template };
+  if (positionals.length > 1) {
+    throw new Error(`Unexpected argument: ${positionals[1]}`);
+  }
+  return { help: false, positionals, from, template, example };
 }
 
 function main() {
@@ -73,8 +87,12 @@ function main() {
 
   const targetDir = path.resolve(dirArg);
   const projectName = path.basename(targetDir);
-  const templateDir = parsed.template ? path.resolve(parsed.template) : defaultTemplateDir();
   const pearAgentRoot = resolvePearAgentRoot(parsed.from);
+  const templateDir = resolveTemplateDir({
+    template: parsed.template,
+    example: parsed.example,
+    pearAgentRoot,
+  });
 
   if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
     throw new Error(`Target directory is not empty: ${targetDir}`);
@@ -83,8 +101,7 @@ function main() {
   copyTemplate(templateDir, targetDir);
 
   const mode = isInsideWorkspace(targetDir, pearAgentRoot) ? "workspace" : "file";
-  const resolvedRoot =
-    pearAgentRoot ?? (mode === "workspace" ? path.resolve(templateDir, "../..") : null);
+  const resolvedRoot = pearAgentRoot ?? (mode === "workspace" ? defaultPearAgentRoot() : null);
 
   // Always materialize migrations next to the app so generated projects are self-contained.
   // Monorepo sample uses packages/cloudflare/migrations via wrangler relative path;
@@ -107,8 +124,8 @@ Created PEAR agent project at ${targetDir}
 Next steps:
   cd ${path.relative(process.cwd(), targetDir) || "."}
   pnpm install
-  cp .dev.vars.example .dev.vars   # optional GEMINI_API_KEY
   cp .env.example .env
+  cp .dev.vars.example .dev.vars  # local allow-all only; never deploy this flag
   pnpm dev
 
 Deploy:

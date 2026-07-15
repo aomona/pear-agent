@@ -22,8 +22,31 @@ const IGNORE_NAMES = new Set([
 
 export function defaultTemplateDir() {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  // packages/create-pear-agent/src → examples/outing-agent
-  return path.resolve(here, "../../../examples/outing-agent");
+  return path.resolve(here, "../templates/minimal");
+}
+
+export function defaultPearAgentRoot() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, "../../..");
+}
+
+export function resolveTemplateDir(options = {}) {
+  if (options.template && options.example) {
+    throw new Error("Use either --template or --example, not both");
+  }
+  if (options.template) return path.resolve(options.template);
+  if (!options.example) return defaultTemplateDir();
+  if (options.example !== "outing") {
+    throw new Error(`Unknown example: ${options.example}. Available examples: outing`);
+  }
+  const root = options.pearAgentRoot ?? defaultPearAgentRoot();
+  const outing = path.join(root, "examples/outing-agent");
+  if (!existsSync(outing)) {
+    throw new Error(
+      "The outing reference app is not available here. Set --from <pear-agent-root>.",
+    );
+  }
+  return outing;
 }
 
 export function resolvePearAgentRoot(fromFlag) {
@@ -120,6 +143,24 @@ export function rewritePackageJson(options) {
 
   rewrite(pkg.dependencies);
   rewrite(pkg.devDependencies);
+  if (options.mode === "file" && options.pearAgentRoot) {
+    const referencedPearPackages = pearPackages.filter(
+      (name) => name in (pkg.dependencies ?? {}) || name in (pkg.devDependencies ?? {}),
+    );
+    pkg.pnpm ??= {};
+    pkg.pnpm.overrides = {
+      ...pkg.pnpm.overrides,
+      ...Object.fromEntries(
+        referencedPearPackages.map((name) => {
+          const folder =
+            name === "@pear-agent/outing-domain-example"
+              ? "examples/outing-domain"
+              : `packages/${name.replace("@pear-agent/", "")}`;
+          return [name, `file:${path.join(options.pearAgentRoot, folder)}`];
+        }),
+      ),
+    };
+  }
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 

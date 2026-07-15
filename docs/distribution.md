@@ -93,12 +93,9 @@ Minimal StarterとOutingはコピー元を共有しません。Reference Applica
 
 既存プロジェクトへの自動`init` CLIは将来拡張とし、v0.1ではSkills / Documentsによる明示的な導入手順を優先します。
 
-## 移行順序
+## 実装状況
 
-1. 要件とIssue #9をMinimal Starter / optional Outing契約へ更新する
-2. `create-pear-agent` package内にMinimal Starterの正本を作る
-3. CLIのデフォルトをMinimal Starterへ切り替える
-4. `--example outing`を追加する
-5. Skills / Documentsとgreenfield生成のsmoke testを整備する
-
-移行完了までは現行CLIが`examples/outing-agent`をコピーします。契約変更と実装変更を別PRにし、各PRで現在の挙動を壊さないように進めます。
+- `create-pear-agent` package内のMinimal Starterをデフォルトとして生成する
+- `--example outing`を指定した場合だけ`examples/outing-agent`を生成する
+- greenfield生成テストで4ページ、Domain、設定、migrationの同梱を検証する
+- 既存アプリへの導入はSkills / Documentsを主経路として継続整備する

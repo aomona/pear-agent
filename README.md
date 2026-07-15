@@ -117,21 +117,25 @@ AI SDKはモデル呼び出し、構造化出力、Tool Callingを担当しま�
 5. 料理固有の概念はDomain側へ閉じ込める
 6. まず中断・再開・再計画の一連のデモを完成させる
 
-## Quick start（外出準備サンプル）
+## Quick start
 
 ```bash
 pnpm install
 
-# 正本サンプルを直接起動
-cd examples/outing-agent
-cp .dev.vars.example .dev.vars   # 任意: GEMINI_API_KEY
+# 編集しやすいMinimal Starterを生成
+pnpm create-pear-agent examples/my-agent
+cd examples/my-agent
 cp .env.example .env
+cp .dev.vars.example .dev.vars   # ローカル開発専用のallow-all
 pnpm dev
 # Worker http://127.0.0.1:8787 · Web http://127.0.0.1:5173
 
-# または CLI でコピー生成（monorepo 内）
-pnpm create-pear-agent examples/my-agent
+# PEAR Loop全体を見る場合だけOutingを明示選択
+cd ../..
+pnpm create-pear-agent examples/my-outing --example outing
 ```
+
+Minimal Starterの主な編集箇所は`src/app/pages/`、`src/domain/`、`src/pear.config.ts`です。Outingの正本は`examples/outing-agent`にあり、Minimal Starterとはコピー元を共有しません。
 
 詳細は [`examples/outing-agent/README.md`](./examples/outing-agent/README.md) と [`packages/create-pear-agent/README.md`](./packages/create-pear-agent/README.md) を参照してください。
 
