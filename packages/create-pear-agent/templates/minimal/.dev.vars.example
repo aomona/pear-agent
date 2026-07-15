@@ -1,3 +1,6 @@
+# Explicitly enables allow-all authorization for local development only.
+# Never set this flag in a deployed Worker.
+PEAR_INSECURE_ALLOW_ALL=true
+
 # Add Worker-only secrets here when your planner needs them.
 # AI_API_KEY=
-

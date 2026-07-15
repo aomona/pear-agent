@@ -125,6 +125,7 @@ Next steps:
   cd ${path.relative(process.cwd(), targetDir) || "."}
   pnpm install
   cp .env.example .env
+  cp .dev.vars.example .dev.vars  # local allow-all only; never deploy this flag
   pnpm dev
 
 Deploy:

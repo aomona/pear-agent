@@ -126,6 +126,7 @@ pnpm install
 pnpm create-pear-agent examples/my-agent
 cd examples/my-agent
 cp .env.example .env
+cp .dev.vars.example .dev.vars   # ローカル開発専用のallow-all
 pnpm dev
 # Worker http://127.0.0.1:8787 · Web http://127.0.0.1:5173
 

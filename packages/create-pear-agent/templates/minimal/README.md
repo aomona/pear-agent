@@ -12,6 +12,7 @@ A small, deployable PEAR Runtime app. It demonstrates the durable flow without t
 ```bash
 pnpm install
 cp .env.example .env
+cp .dev.vars.example .dev.vars
 pnpm dev
 ```
 
@@ -25,6 +26,8 @@ Open `http://127.0.0.1:5173`. The Worker runs on `http://127.0.0.1:8787`.
 - `src/worker/index.ts` — replace development authorization when connecting real users
 
 Runtime state, D1 persistence, R2 input storage, and Agent WebSocket wiring stay behind `@pear-agent/cloudflare` and `@pear-agent/react`.
+
+The generated Worker fails closed unless `PEAR_INSECURE_ALLOW_ALL=true` is set. The example `.dev.vars` enables it for local development only. Do not configure that flag in Cloudflare; replace `denyAllAuthorize` with authorization backed by your host application's authenticated identity before deployment.
 
 ## Verify and deploy
 

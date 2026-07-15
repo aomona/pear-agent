@@ -48,17 +48,23 @@ export function PlansPage() {
 
       <div className="panel create-row">
         <label htmlFor="plan-title">New plan title</label>
-        <div className="inline-form">
+        <form
+          className="inline-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createDraft();
+          }}
+        >
           <input
             id="plan-title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Launch my project"
           />
-          <button disabled={creating || !title.trim()} onClick={() => void createDraft()}>
+          <button type="submit" disabled={creating || !title.trim()}>
             {creating ? "Creating…" : "Create plan"}
           </button>
-        </div>
+        </form>
         {error && <p className="error-message">{error}</p>}
       </div>
 

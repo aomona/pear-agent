@@ -62,6 +62,10 @@ describe("create-pear-agent scaffold", () => {
     expect(pkg.name).toBe("my-agent");
     expect(pkg.dependencies["@pear-agent/core"]).toBe("workspace:*");
     expect(pkg.dependencies["@pear-agent/outing-domain-example"]).toBeUndefined();
+
+    const worker = readFileSync(path.join(projectDir, "src/worker/index.ts"), "utf8");
+    expect(worker).toContain('env.PEAR_INSECURE_ALLOW_ALL === "true"');
+    expect(worker).toContain("denyAllAuthorize");
   });
 
   it("keeps outing behind an explicit example selection", () => {
