@@ -24,6 +24,7 @@ export {
   type UseRuntimeSnapshotResult,
 } from "./use-runtime-snapshot.js";
 export { useContinuation, type UseContinuationResult } from "./use-continuation.js";
+export { usePlanCompiler, type UsePlanCompilerResult } from "./use-plan-compiler.js";
 export {
   useVoiceSession,
   FakeVoiceProvider,
@@ -59,6 +60,9 @@ export type {
   PearClientContext,
   PlanArtifactDetail,
   PlanListItem,
+  PlanCompileResult,
+  PlanArtifactInspector,
+  PlanEditProposal,
   StepActionInput,
   TimerActionInput,
   TimerStartInput,

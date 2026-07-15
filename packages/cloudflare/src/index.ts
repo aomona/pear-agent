@@ -69,7 +69,21 @@ export {
   planPatches,
   planArtifacts,
   planArtifactVersions,
+  planSources,
+  compileJobs,
+  interpretationArtifacts,
+  clarificationRequests,
+  generationRecords,
+  planEditProposals,
 } from "./d1/schema.js";
+export { D1PlanEditRepository, type PlanEditProposal } from "./d1/plan-edit-repository.js";
+export {
+  D1CompileRepository,
+  CompileJobConflictError,
+  CompileJobNotFoundError,
+  type PlanArtifactInspector,
+  type StoredInterpretation,
+} from "./d1/compile-repository.js";
 export {
   D1PlanRepository,
   PlanArtifactConflictError,
@@ -138,6 +152,11 @@ export {
   type PlanGeneratorInput,
   type PlanGeneratorOptions,
 } from "./planner.js";
+export type {
+  PlanCompileRuntime,
+  PlanCompileRuntimeResult,
+  PlanLibraryOptions,
+} from "./plans/host-ports.js";
 export {
   DEFAULT_MAX_RAW_INPUT_BYTES,
   R2RawInputStore,

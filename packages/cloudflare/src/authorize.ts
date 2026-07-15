@@ -26,7 +26,17 @@ export type PearOperation =
   | { type: "plan.list" }
   | { type: "plan.create"; domainId: string }
   | { type: "plan.read"; planId: string }
-  | { type: "plan.update"; planId: string };
+  | { type: "plan.update"; planId: string }
+  | { type: "plan.source.create"; planId: string }
+  | { type: "plan.source.read"; planId: string }
+  | { type: "plan.source.delete"; planId: string; sourceId: string }
+  | { type: "plan.compile.start"; planId: string }
+  | { type: "plan.compile.read"; planId: string; jobId?: string }
+  | { type: "plan.compile.cancel"; planId: string; jobId: string }
+  | { type: "plan.compile.retry"; planId: string; jobId: string }
+  | { type: "plan.clarification.answer"; planId: string; clarificationId: string }
+  | { type: "plan.edit.propose"; planId: string }
+  | { type: "plan.edit.confirm"; planId: string; proposalId: string };
 
 /**
  * Host-supplied authorization hook. Throw {@link AuthorizationError} (or any

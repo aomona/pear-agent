@@ -1,8 +1,46 @@
-import type { FreeTextFieldResolver, PlanImprover } from "@pear-agent/core";
+import type {
+  ClarificationQuestion,
+  ExecutionPlan,
+  FreeTextFieldResolver,
+  GenerationMetadata,
+  InterpretationAssumption,
+  PlanImprover,
+  InterpretableSource,
+} from "@pear-agent/core";
 
 import type { AuthorizeFn } from "../authorize.js";
 import type { PearEnv } from "../env.js";
 import type { PlanGenerator } from "../planner.js";
+import type { PearRequestContext } from "../context.js";
+import type { StoredPlanArtifact } from "../d1/plan-repository.js";
+
+export type PlanCompileRuntimeResult =
+  | {
+      kind: "clarification_required";
+      questions: ClarificationQuestion[];
+      assumptions: InterpretationAssumption[];
+      interpretationGeneration: GenerationMetadata;
+    }
+  | {
+      kind: "ready";
+      normalizedInput: unknown;
+      assumptions: InterpretationAssumption[];
+      plan: ExecutionPlan;
+      interpretationGeneration: GenerationMetadata;
+      planGeneration: GenerationMetadata;
+    };
+
+/** Host-composed AI runtime. Cloudflare persists and orchestrates; the host selects models/domains. */
+export type PlanCompileRuntime = {
+  compile(input: {
+    artifact: StoredPlanArtifact;
+    sources: readonly InterpretableSource[];
+    compileInput: unknown;
+    clarificationAnswers?: Readonly<Record<string, string>>;
+    context: PearRequestContext;
+    signal?: AbortSignal;
+  }): Promise<PlanCompileRuntimeResult>;
+};
 
 type NormalizeDomainInput = (input: {
   domainId: string;
@@ -33,6 +71,8 @@ export type PlanLibraryOptions = {
   createPlanImprover?: (env: PearEnv) => PlanImprover | undefined;
   normalizeDomainInput?: NormalizeDomainInput;
   resolveDomainFreeTextField?: ResolveDomainFreeTextField;
+  compileRuntime?: PlanCompileRuntime;
+  createCompileRuntime?: (env: PearEnv) => PlanCompileRuntime | undefined;
 };
 
 export type PlanLibraryHostPorts = {
@@ -43,6 +83,7 @@ export type PlanLibraryHostPorts = {
     normalizeInput?: NormalizeDomainInput;
     resolveFreeTextField?: ResolveDomainFreeTextField;
   };
+  compile: { resolve(env: PearEnv): PlanCompileRuntime | undefined };
 };
 
 function resolveOptionalEnvPort<T>(
@@ -70,6 +111,10 @@ export function createPlanLibraryHostPorts(options: PlanLibraryOptions): PlanLib
       ...(options.resolveDomainFreeTextField
         ? { resolveFreeTextField: options.resolveDomainFreeTextField }
         : {}),
+    },
+    compile: {
+      resolve: (env) =>
+        resolveOptionalEnvPort(options.createCompileRuntime, options.compileRuntime, env),
     },
   };
 }

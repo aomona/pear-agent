@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { useExecutionSession, usePearContext } from "@pear-agent/react";
+import { useExecutionSession, usePearContext, type PlanEditProposal } from "@pear-agent/react";
 
 import { pearConfig } from "../../pear.config";
 import { links } from "../navigation";
@@ -10,6 +10,8 @@ export function PlanPage({ planId }: { planId: string }) {
   const session = useExecutionSession();
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editRequest, setEditRequest] = useState("");
+  const [proposal, setProposal] = useState<PlanEditProposal | null>(null);
   const artifact = useQuery({
     queryKey: ["plan", planId],
     queryFn: () => client.getPlan(planId),
@@ -63,6 +65,52 @@ export function PlanPage({ planId }: { planId: string }) {
           </li>
         ))}
       </ol>
+      <div className="panel form-stack">
+        <p className="eyebrow">Natural-language edit</p>
+        <label htmlFor="edit-request">Describe the change</label>
+        <input
+          id="edit-request"
+          value={editRequest}
+          onChange={(event) => setEditRequest(event.target.value)}
+          placeholder="Move the important work earlier…"
+        />
+        <button
+          className="secondary"
+          disabled={!editRequest.trim()}
+          onClick={() =>
+            void client
+              .proposePlanEdit(planId, editRequest)
+              .then(setProposal)
+              .catch((caught) =>
+                setError(caught instanceof Error ? caught.message : String(caught)),
+              )
+          }
+        >
+          Preview diff
+        </button>
+        {proposal && (
+          <div className="diff-summary">
+            <p>
+              {proposal.diff.addedStepIds.length} added · {proposal.diff.updatedStepIds.length}{" "}
+              changed · {proposal.diff.removedStepIds.length} removed ·{" "}
+              {proposal.diff.durationDeltaSeconds >= 0 ? "+" : ""}
+              {proposal.diff.durationDeltaSeconds}s
+            </p>
+            <button
+              onClick={() =>
+                void client
+                  .confirmPlanEdit(planId, proposal.id)
+                  .then(() => window.location.reload())
+                  .catch((caught) =>
+                    setError(caught instanceof Error ? caught.message : String(caught)),
+                  )
+              }
+            >
+              Apply reviewed edit
+            </button>
+          </div>
+        )}
+      </div>
       <div className="button-row end">
         <a className="button secondary" href={links.input(planId)}>
           Edit input

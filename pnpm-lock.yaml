@@ -136,6 +136,28 @@ importers:
         specifier: ^4.3.5
         version: 4.4.3
 
+  packages/ai:
+    dependencies:
+      '@pear-agent/core':
+        specifier: workspace:*
+        version: link:../core
+      ai:
+        specifier: ^6.0.224
+        version: 6.0.224(zod@4.4.3)
+      zod:
+        specifier: ^4.3.5
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.30
+        version: 22.20.1
+      '@typescript/native-preview':
+        specifier: 7.0.0-dev.20260702.3
+        version: 7.0.0-dev.20260702.3
+      vitest:
+        specifier: ^4.1.6
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@22.20.1)(jsdom@26.1.0)(vite@8.1.4(@types/node@22.20.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
   packages/cloudflare:
     dependencies:
       '@pear-agent/core':
@@ -173,6 +195,19 @@ importers:
         specifier: ^4.110.0
         version: 4.110.0(@cloudflare/workers-types@5.20260711.1)
 
+  packages/cook-domain:
+    dependencies:
+      '@pear-agent/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.3.5
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.6
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(jsdom@26.1.0)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
   packages/core:
     dependencies:
       zod:
@@ -184,6 +219,19 @@ importers:
       '@types/node':
         specifier: ^22.15.30
         version: 22.20.1
+
+  packages/presentation-domain:
+    dependencies:
+      '@pear-agent/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4.3.5
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^4.1.6
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@26.1.1)(jsdom@26.1.0)(vite@8.1.4(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
   packages/react:
     dependencies:

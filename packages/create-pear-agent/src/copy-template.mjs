@@ -116,6 +116,7 @@ export function rewritePackageJson(options) {
   pkg.name = options.projectName;
 
   const pearPackages = [
+    "@pear-agent/ai",
     "@pear-agent/cloudflare",
     "@pear-agent/core",
     "@pear-agent/react",

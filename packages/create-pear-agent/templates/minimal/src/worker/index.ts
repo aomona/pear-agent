@@ -1,3 +1,10 @@
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import {
+  DEFAULT_GEMINI_TEXT_MODEL,
+  createAiPlanCompiler,
+  createAiPlanGenerator,
+  createAiSourceInterpreter,
+} from "@pear-agent/ai";
 import {
   AuthorizationError,
   ExecutionSessionAgent,
@@ -6,16 +13,14 @@ import {
   type AuthorizeFn,
   type PearEnv,
 } from "@pear-agent/cloudflare";
-import { executionGoalSchema } from "@pear-agent/core";
+import { executionGoalSchema, executionPlanSchema } from "@pear-agent/core";
 
 import { starterDomain, starterNormalizedInputSchema } from "../domain/domain.js";
 import { buildStarterPlan } from "../domain/plan.js";
 
 export { ExecutionSessionAgent };
 
-type StarterEnv = PearEnv & {
-  PEAR_INSECURE_ALLOW_ALL?: string;
-};
+type StarterEnv = PearEnv & { PEAR_INSECURE_ALLOW_ALL?: string };
 
 const denyAllAuthorize: AuthorizeFn = () => {
   throw new AuthorizationError(
@@ -26,6 +31,7 @@ const denyAllAuthorize: AuthorizeFn = () => {
 function createStarterWorker(authorize: AuthorizeFn) {
   return createPearWorker({
     authorize,
+    // Explicit deterministic adapter for tests and direct legacy session creation.
     planGenerator: {
       async generatePlan(input) {
         return buildStarterPlan(
@@ -35,11 +41,29 @@ function createStarterWorker(authorize: AuthorizeFn) {
       },
     },
     planLibrary: {
-      async normalizeDomainInput({ domainId, input }) {
-        if (domainId !== starterDomain.id) {
-          throw new Error(`Unknown domain: ${domainId}`);
-        }
-        return starterDomain.normalizeInput(starterDomain.schemas.input.parse(input));
+      createCompileRuntime(env) {
+        if (!env.GEMINI_API_KEY) return undefined;
+        const google = createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY });
+        const model = google(DEFAULT_GEMINI_TEXT_MODEL);
+        return createAiPlanCompiler({
+          domainVersion: starterDomain.version,
+          interpretationInstructions: starterDomain.interpretation.instructions,
+          planningInstructions: starterDomain.planning.instructions,
+          planningObjectives: starterDomain.planning.objectives,
+          interpreter: createAiSourceInterpreter({
+            model,
+            normalizedInputSchema: starterDomain.schemas.normalizedInput,
+          }),
+          planner: createAiPlanGenerator({ model, stepDataSchema: starterDomain.schemas.stepData }),
+          validateNormalizedInput: (input) => starterDomain.schemas.normalizedInput.parse(input),
+          async validatePlan({ plan, normalizedInput }) {
+            const validation = await starterDomain.planning.validatePlan(
+              executionPlanSchema(starterDomain.schemas.stepData).parse(plan),
+              starterDomain.schemas.normalizedInput.parse(normalizedInput),
+            );
+            if (!validation.valid) throw new Error(validation.issues.join("; "));
+          },
+        });
       },
     },
   });

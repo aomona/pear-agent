@@ -11,6 +11,7 @@ import { executionGoalSchema } from "./goal.js";
 import { executionPlanSchema, executionStepSchema, type ExecutionPlan } from "./plan.js";
 import { stepStatesSchema, type StepStates } from "./step-state.js";
 import { worldStateSchema, type WorldState } from "./world-state.js";
+import { planChangeCauseRefSchema, type PlanChangeCauseRef } from "./compiler.js";
 
 export const replanModeSchema = executionModeSchema;
 export type ReplanMode = z.infer<typeof replanModeSchema>;
@@ -82,12 +83,20 @@ export const planPatchSchema = z
     basePlanVersion: z.number().int().positive(),
     baseLastEventId: z.string().min(1).nullable(),
     causeEventIds: z.array(z.string().min(1)).min(1).max(100),
+    causeRefs: z.array(planChangeCauseRefSchema).min(1).max(100).optional(),
     affectedStepIds: z.array(z.string().min(1)).min(1).max(1_000),
     operations: z.array(planPatchOperationSchema).min(1).max(1_000),
     summary: z.string().min(1).max(2_000),
   })
   .strict();
 export type PlanPatch = z.infer<typeof planPatchSchema>;
+
+export function resolvePlanPatchCauseRefs(patch: PlanPatch): PlanChangeCauseRef[] {
+  return (
+    patch.causeRefs ??
+    patch.causeEventIds.map((eventId) => ({ type: "runtime_event" as const, eventId }))
+  );
+}
 
 export const planPatchStatusSchema = z.enum([
   "suggested",

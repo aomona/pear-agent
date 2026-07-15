@@ -296,3 +296,34 @@ main {
     width: 100%;
   }
 }
+/* AI compile workspace: primary source editor plus optional artifact inspector. */
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 0.34fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.artifact-inspector {
+  position: sticky;
+  top: 1rem;
+}
+
+.file-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+  border: 1px dashed var(--border);
+  border-radius: 0.75rem;
+}
+
+@media (max-width: 760px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+  .artifact-inspector {
+    position: static;
+  }
+}

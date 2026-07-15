@@ -2,338 +2,144 @@
 
 ## 1. プロダクト概要
 
-PEAR Runtimeは、開発者が自身のCloudflare環境へデプロイし、現実作業をハンズフリーで支援するリアルタイム音声エージェントをTypeScriptで構築するためのOSSランタイムです。
-
-PEAR Loopを実行モデルとします。
-
-```text
-Plan → Execute → Assess → Replan
-  ↑                         │
-  └─────────────────────────┘
-```
-
-## 2. 対象ユーザーと提供形態
-
-対象ユーザーは、PEAR Runtimeを使って独自の実行支援アプリケーションを作る開発者です。
-
-- MITライセンスで公開する
-- npmから利用できるTypeScriptライブラリとして提供する
-- 開発者自身のCloudflareアカウントへデプロイする
-- PEAR側は利用者のデータやAPIキーを預からない
-- WebブラウザとReactをv0.1の公式クライアントとする
-
-## 3. v0.1の提供物
+PEAR Runtimeは、複数の非構造SourceをLLMで検証可能なExecution Planへcompileし、
+自然言語で編集し、Realtime AIとdurableに実行・再計画するTypeScript OSS Runtimeです。
 
 ```text
-@pear-agent/core
-@pear-agent/cloudflare
-@pear-agent/react
-create-pear-agent
+Sources -> Interpret -> Clarify -> Plan -> Review -> Execute -> Assess -> Replan
 ```
 
-### `@pear-agent/core`
+## 2. 対象と提供形態
 
-CloudflareやReactへ依存しない実行モデル、状態遷移、検証ロジックを提供します。
+- 対象はPEARで実行支援アプリを作るTypeScript開発者
+- npm packageと`create-pear-agent`で提供
+- 公式durable adapterはCloudflare-first
+- データ、認証、API keyはhost applicationが所有
+- React/browserを公式client、Geminiを公式AI providerとする
 
-Issue #3ではExecution Session、WorldState、Runtime Event、Timer、materialized state、Snapshot、冪等かつatomicな更新を表すRepository Portとin-memory参照実装までをCoreに実装しました。Cloudflare/D1の永続Repository実装は含まず、Issue #4でAdapterとして実装します。
+## 3. Packages
 
-### `@pear-agent/cloudflare`
+- `@pear-agent/core`: schemas、ports、pure reducers、validation、diff
+- `@pear-agent/ai`: Vercel AI SDKのprovider-neutral implementations
+- `@pear-agent/cloudflare`: Workers、Workflows、Agents/DO、D1、R2、HTTP
+- `@pear-agent/react`: typed clientとhooks
+- `create-pear-agent`: AI-first starterとexplicit examples
 
-Workers、Agents、Durable Objects、D1、R2、WorkflowsへのAdapterを提供します。
+## 4. 機能要件
 
-### `@pear-agent/react`
+### FR-01 Source ingestion
 
-UIを固定せず、セッション状態と操作を利用するためのReact hooksを提供します。
+- text、公開HTTP(S) URL、PDF/plain text/Markdown/JSON fileを受け付ける
+- Raw bytesと抽出本文をR2、metadata/checksumをD1へ保存する
+- URL取得はSSRF、redirect、size、content-typeを検証する
+- Source変更は下流artifactをstaleにする
 
-### `create-pear-agent`
+### FR-02 Durable compile
 
-デプロイ可能で編集しやすいMinimal Starterを生成します。外出準備サンプルは明示的に選択するReference Applicationとして分離します。配布レイヤーとSource of Truthは[distribution.md](./distribution.md)で定義します。
+- ingest、interpret、clarify、synthesize、validate/reconcileをdurable jobとして実行する
+- phase/statusを購読でき、HTTP pollingへfallbackできる
+- cancel、bounded retry、失敗phaseからのretryを提供する
+- clarification待ちは標準7日
+- 失敗・cancelされた中間artifactをinspect/retryできる
 
-## 4. 開発者の責任範囲
+### FR-03 AI interpretation
 
-開発者は次を実装します。
+- DomainのinstructionsとSchemaからNormalized Domain Modelを生成する
+- 重大な不足・矛盾はclarification、軽微な推測はassumptionとして返す
+- Source、抽出結果、Normalized Model、generation metadataを追跡する
 
-- Domain定義
-- 入力Schemaと正規化処理
-- Domain固有データSchema
-- Planner / Replannerへの指示
-- Domain固有イベント
-- Capability
-- 認証処理
-- フロントエンド
+### FR-04 Plan synthesis
 
-PEAR Runtimeは次を提供します。
+- PlanはStep DAG、時間、resource、timer、Domain Dataを表現する
+- AIが候補を生成し、RuntimeがID、Schema、DAG、Domain invariantを確定する
+- Domain validatorを必須、safe reconcilerを任意とする
+- 各StepからSourceへprovenanceを追跡できる
 
-- Goalと成功条件
-- DAG形式のExecution Plan
-- Execution Sessionと複数Actor
-- WorldStateとRuntime Event
-- Step状態遷移と並行実行
-- Capability Policy
-- Timer、Continuation、Wake
-- Realtime Voice Session
-- Assessと部分再計画
-- Plan Patch、Version、Rollback
-- 永続化とリアルタイム状態同期
+### FR-05 Review and editing
 
-## 5. 機能要件
+- 初回Planはdraftで、明示Review後にreadyとなる
+- 自然言語編集はfull draftまたはPlanPatchを提案し、diff確認後に適用する
+- 全体再生成は実行前だけ許可する
+- stale baseへの編集は拒否し、最新versionで再提案する
 
-### FR-01 Goal
+### FR-06 Execution
 
-- Execution SessionはGoalを必須で持つ
-- Goalは説明と1件以上の成功条件を持つ
-- 期限と優先度は任意とする
-- 成功条件は人間確認、Tool結果、状態ルール、AI評価で判定できる
-- Completion Policyは`automatic`または`human_confirmation`とする
+- Ready Plan versionからExecution Sessionをforkする
+- SessionはPlan、WorldState、Step States、Events、Timers、Continuationをdurableに保持する
+- Session変更を元Artifactへ自動反映しない
+- 最終Planを明示的に`Save as Plan`できる
 
-### FR-02 Execution Plan
+### FR-07 Replan
 
-- PlanはStepのDAGとして表現する
-- Stepは依存関係、所要時間、必要リソース、Timer、Domain Dataを持つ
-- 複数Stepを同時に`active`にできる
-- 循環依存と存在しないStep参照を拒否する
-- PlanはVersion管理し、以前のVersionへ戻せる
+- Goal、Plan、WorldState、Events、Normalized InputをAssessへ渡す
+- affected subgraphだけをPatchする
+- 標準modeは`confirm`
+- completed/skipped Step変更を禁止する
+- active Step変更はpauseと人間確認を必須にする
+- PatchのSchema、DAG、Policy、Domain invariantを検証し、atomicにactivateする
 
-### FR-03 Step Executor
+### FR-08 AI SDK
 
-Stepの実行主体は次のいずれかとします。
+- Vercel AI SDKのstructured outputをInterpret/Plan/Edit/Replanへ使用する
+- Geminiを公式E2E provider、他providerは`LanguageModel`注入可能とする
+- stage別model override、call/token/time budget、bounded retryを提供する
+- AI失敗時に暗黙のdeterministic fallbackを行わない
 
-- `human`
-- `agent`：Capabilityを指定する
-- `wait`：Wake Conditionを指定する
+### FR-09 Realtime
 
-### FR-04 Actor
+- Gemini Liveとephemeral tokenを公式実装とする
+- Voice SessionはExecution Sessionから独立した一時接続とする
+- 低riskかつ高confidenceなEventだけ自動記録できる
+- Patch適用と外部Capabilityはconfirmationを必要とする
+- 生音声と全文transcriptを標準保存せず、構造化された判定根拠だけ保存する
 
-- Execution Sessionは複数Actorを持てる
-- Actorは`human`、`agent`、`system`のいずれかとする
-- Stepへ1人以上のActorを割り当てられる
-- Eventは`actorId`と発生元を記録する
-- 共同編集UIはv0.1の対象外とする
+### FR-10 Provenance and observability
 
-### FR-05 CapabilityとPolicy
+- RuntimeがArtifact、Job、Patch、Stepの永続IDを割り当てる
+- Changeはsource、user instruction、clarification、runtime eventのtyped cause refsを持つ
+- provider/model、prompt/schema version、usage、validation/warningsを保存する
+- 生prompt/raw responseは標準保存しない
+- Artifact Inspectorからphase、provenance、validation、diff、versionを確認できる
 
-Capabilityごとに次を設定できます。
+### FR-11 React and CLI
 
-- 入力Schema
-- Risk Level
-- 実行Mode：`automatic`、`confirm`、`suggest`
+- ReactはUIを固定せずtyped client/hooksを提供する
+- Starterは`Sources -> Compile -> Review -> Execute`を実演する
+- `--example cook|presentation|outing`を提供する
+- API key未設定時は明示setup errorを返す
 
-LLMのTool Callは直接状態を変更せず、Runtimeが認可とPolicyを評価してから実行します。
+### FR-12 Authorization
 
-### FR-06 WorldStateとEvent
-
-- Planとは独立したWorldStateを持つ
-- WorldStateはfacts、resources、observations、active constraintsを表現する
-- Runtime Eventを監査履歴として追記する
-- 最新WorldStateとStep Stateはmaterialized stateとして保持する
-- 状態更新とEvent追加は同一トランザクションで行う
-- v0.1ではEvent Logだけから全状態を再構築できることを要件としない
-
-### FR-07 InputとProvenance
-
-- Raw Inputは形式やサイズに関係なくR2へ保存する
-- Raw Inputのmetadata、checksum、object keyをD1へ保存する
-- Domainの`normalizeInput()`が型付きNormalized Inputを生成する
-- Normalized InputをD1へ保存する
-- PlannerとReplannerは通常、Normalized Inputのみを使用する
-- 情報不足や根拠確認時のみRaw Inputを読み出す
-- Plan StepとPlan Patchから入力と原因Eventを追跡できる
-
-### FR-08 Realtime Voice
-
-- Realtime Voiceはv0.1の必須機能とする
-- Gemini Liveをv0.1の必須Providerとする
-- AI SDKはPlan、Assess、Replanへ使用する
-- Realtime Voiceは`@google/genai`で実装する
-- PEAR独自の薄いVoice Provider契約を定義する
-- v0.1では他Providerとの互換性を保証しない
-- Execution Sessionごとに同時接続可能なVoice Sessionは1つとする
-- Voice Leaseにより接続権を管理する
-- Voice Sessionの切断はExecution Sessionの停止を意味しない
-
-### FR-09 音声データ
-
-- 生音声と音声レスポンスはデフォルトで保存しない
-- 文字起こし、Tool Call、状態変更はEventとして保存する
-- 文字起こしの保存はDomain設定で無効化できる
-- 保持期間をDomainまたはアプリ設定で指定できる
-
-### FR-10 Continuation
-
-- 中断時に最新Runtime Snapshot、理由、Wake Condition、Resume Directiveを保存する
-- Wake Conditionは`manual`、`time`、`event`を表現できる
-- 時刻指定WakeはCloudflare AgentsのSchedulerを基本とする
-- 複数段階の長時間処理はWorkflowsを使用する
-- Wake後は`wake_pending`をクライアントへ同期する
-- v0.1ではユーザー操作後にVoice Sessionを再接続する
-- Provider resume handleがなくてもSnapshotから再開できる
-- 二重再開をatomicな状態遷移で防止する
-
-### FR-11 Assessと部分再計画
-
-- Goal、Plan、WorldState、Recent EventsをAssessの入力にする
-- Eventから影響を受けるSubgraphを特定する
-- 影響範囲だけをPlan Patchとして生成する
-- Replan Modeは`automatic`、`confirm`、`suggest`から設定できる
-- v0.1の標準Modeは`automatic`とする
-- 完了済みStepの変更と削除を禁止する
-- 実行中Stepは原則変更しない
-- 実行中Stepの変更には中断と人間確認を必要とする
-- Patch適用前にSchema、DAG、Policy、WorldStateとの整合性を検証する
-- Patch適用後にStep Stateとリソース利用状況を再計算する
-- 変更理由、原因Event、変更差分を保存して音声とUIで説明する
-
-### FR-12 Planner
-
-- 開発者はSchema、instructions、objectivesを宣言する
-- PEAR RuntimeがAI SDKを使ってPlannerとReplannerを構築する
-- AI出力はすべてSchema検証する
-- 特殊用途向けの低レベルPlanner差し替えは将来の拡張点とし、v0.1の公開互換性を保証しない
-
-### FR-13 認証と認可
-
-- 認証はホストアプリの責任とする
-- Runtimeは`actorId`、roles、claimsを受け取る
-- 開発者定義の認可Hookを各操作前に呼び出す
-- 特定のOAuthや認証ライブラリへ依存しない
-
-### FR-14 React hooks
-
-最低限、次のhooksを提供します。
-
-- `useExecutionSession`
-- `useRuntimeSnapshot`
-- `useContinuation`
-- `useVoiceSession`
-
-hooksはリアルタイム同期、再接続、Loading、Error状態を扱います。UIコンポーネントは強制しません。
-
-### FR-15 CLI
-
-次の操作でMinimal Starterを生成・実行・デプロイできることを目標とします。
-
-```bash
-pnpm create pear-agent my-agent
-cd my-agent
-pnpm dev
-pnpm deploy
-```
-
-Minimal StarterにはCloudflare設定、React UI、環境変数例、最小テスト、DomainとProviderの差し替え口を含めます。
-
-- React UIは一覧、入力、計画、実行の4ページを持つ
-- 主な編集箇所を`app/pages/`、`domain/`、`pear.config.ts`へ限定する
-- Runtime配線とReference Application固有コードを編集箇所から分離する
-- `@pear-agent/react`はhooks-onlyを維持し、固定UIを強制しない
-
-外出準備Reference Applicationは明示的に選択します。
-
-```bash
-pnpm create pear-agent my-agent --example outing
-```
-
-Outing生成物にはGemini Live接続、並行準備、Voice Suspend、Wake、Snapshot Resume、遅延Event、部分Replanの実演を含めます。`examples/outing-agent`はReference Applicationの正本とし、Minimal Starterのコピー元にはしません。
-
-既存プロジェクトへの導入はSkills / Documentsを主経路とします。v0.1では任意フレームワークを変換する汎用`init` CLIを必須としません。
-
-### FR-16 Devtools
-
-読み取り専用の簡易Devtoolsを提供します。
-
-- Goalと成功条件
-- Plan DAGとVersion
-- Step状態
-- WorldState
-- Event Timeline
-- TimerとContinuation
-- Plan Patchの差分
-- Voice Tool Call
-- エラーと再試行
-
-## 6. 非機能要件
-
-### NFR-01 性能目標
-
-| 操作                | 開発時の目標 |
-| ------------------- | -----------: |
-| Runtime Tool Call   |      1秒以内 |
-| Reactへの状態同期   |      1秒以内 |
-| Voice Session再接続 |      3秒以内 |
-| 再開後の最初の案内  |      5秒以内 |
-| 部分再計画          |     10秒以内 |
-
-外部モデルやネットワークへ依存するため、サービス保証値ではなく開発時の目標とします。
-
-### NFR-02 信頼性
-
-- 再計画に失敗した場合は旧Planを維持する
-- `replan_failed`イベントと失敗理由を保存する
-- 再試行または人間判断へ切り替えられる
-- Voice切断時はSnapshotから再接続できる
-- Provider handle失効時は新規Voice SessionへFallbackする
-- 状態変更は冪等性キーとatomic updateで二重実行を防ぐ
-
-### NFR-03 セキュリティ
-
-- APIキーをクライアントへ直接配布しない
-- Gemini Liveのクライアント接続には短命な認証情報を使う
-- Raw Inputは任意のPlanner Toolから直接列挙できない
-- すべての操作で認可Hookを適用する
-- 機密値をEvent、Transcript、Devtoolsへ出力しない
-
-### NFR-04 ポータビリティ
-
-- CoreはWeb標準APIとTypeScriptで表現する
-- Cloudflare固有APIはAdapterへ閉じ込める
-- v0.1はCloudflare-firstとし、他環境へのデプロイは公式対応しない
-
-### NFR-05 テスト
-
-- Coreの状態遷移、DAG、Policy、Patchを単体テストする
-- Cloudflare AdapterをWorkers統合テストで検証する
-- React hooksの接続と再接続を検証する
-- Gemini LiveはFake Voice Providerで自動テストする
-- 実Providerを使う手動スモークテストを用意する
-- 外出準備サンプルをPlaywright E2Eで検証する
-- デモシナリオ10回中9回以上の完走を目標にする
-
-### NFR-06 開発ツール
-
-- LintはOxlintを唯一の基準とする
-- FormatはOxfmtを唯一の基準とする
-- Typecheckはtsgoを使用する
-- tsgoは`@typescript/native-preview`として導入し、lockfileでVersionを固定する
-- tsgoがPreviewであることを既知の制約として明記する
-- tsgo固有の不具合で開発が停止する場合に限り、診断比較用としてTypeScript stableを一時実行できるが、CIの正式なTypecheckはtsgoとする
-
-## 7. v0.1の非目標
-
-- Gemini Live以外のVoice Provider対応
-- モバイルネイティブSDK
-- ブラウザを閉じた状態からの自動音声再生
-- 複数の同時Voice Session
-- 共同編集UI
-- Domain Marketplace
-- ノーコードDomain生成
-- 任意コードの動的実行
-- 純粋なEvent Sourcing
-- 完全なProvider互換性
+- 認証はhost責務
+- Runtimeはactor/roles/claimsと操作単位authorize hookを受け取る
+- 未認可操作はR2/D1/AIへwrite/callしない
+
+## 5. 非機能要件
+
+- CoreはCloudflare、React、AI SDK、Geminiへ依存しない
+- Event appendとmaterialized state更新はatomicかつidempotent
+- 通常CIはAI fixture、実Geminiはmanual/scheduled smokeで検証する
+- WCAG 2.2 AA、responsive、keyboard、reduced motionを公式UI要件とする
+- pre-push gateはtypecheck、lint、format check、testの4つ
+
+## 6. Defaults
+
+- text/HTML 2 MiB、text document 5 MiB、PDF 50 MiB/1000 pages、20 Sources/job
+- AIは各phase最大3 attempts、12 calls/job、100万tokens/job、5分/call
+- Replanは`confirm`、Realtime自動Event閾値はconfidence 0.8
+- Artifactはhostが削除するまで保持し、削除は参照安全なcascade
+
+## 7. v0.1非目標
+
+- PPTX/Google Slides connector
+- 画像、音声、動画のcompile source
+- Gemini Live以外のRealtime provider保証
+- Node durable adapter
+- Hosted control plane、組み込みauth/tenant/key管理
+- 自動provider/deterministic fallback
+- Cookのスマート家電Capability
 
 ## 8. 2026年8月20日の完成条件
 
-Minimal Starterを生成・変更でき、独立した外出準備Reference Applicationで次を実演できることを完成条件とします。
-
-```text
-CLIでMinimal Starterを生成
-→ 4ページとDomainを変更可能
-→ Outing Exampleを明示的に生成または直接起動
-→ Cloudflareへデプロイ
-→ Plan生成
-→ 音声で複数Stepを実行
-→ 待機中にVoice Sessionを中断
-→ Wake後にボタンで再開
-→ 最新Snapshotから案内
-→ 遅延Eventを報告
-→ Affected Subgraphだけを部分再計画
-→ Goal達成を判定して完了
-```
+CookとPresentationの両方でSource入力、AI構造化、Plan生成、自然言語編集、
+Realtime実行、途中Replanを完走し、Artifact Inspectorから全provenanceを追跡できること。

@@ -1,11 +1,6 @@
-# PEAR Minimal Starter
+# PEAR AI-native Starter
 
-A small, deployable PEAR Runtime app. It demonstrates the durable flow without tying your project to the Outing reference domain:
-
-1. list plans
-2. enter domain input
-3. review the generated plan
-4. execute durable steps
+The default path is **Sources → Compile with LLM → Review → Execute → Assess → Replan**. Text, public URLs, PDF, Markdown, and JSON become a durable PlanArtifact with provenance and generation metadata. A deterministic PlanGenerator remains as an explicit adapter for tests and direct legacy session creation.
 
 ## Start
 
@@ -13,21 +8,20 @@ A small, deployable PEAR Runtime app. It demonstrates the durable flow without t
 pnpm install
 cp .env.example .env
 cp .dev.vars.example .dev.vars
+# Set GEMINI_API_KEY in .dev.vars
 pnpm dev
 ```
 
-Open `http://127.0.0.1:5173`. The Worker runs on `http://127.0.0.1:8787`.
+Open the Vite URL printed by `pnpm dev`; if port 5173 is occupied it will choose another. The Worker runs at `http://127.0.0.1:8787`.
 
-## Edit
+## Customize
 
-- `src/app/pages/` — replace the four product pages
-- `src/domain/` — change schemas, normalization, goals, and plan generation
-- `src/pear.config.ts` — change app identity, API origin, and host context
-- `src/worker/index.ts` — replace development authorization when connecting real users
+- `src/domain/domain.ts` — Zod schemas, interpretation/planning/replanning prompts, and deterministic validation
+- `src/worker/index.ts` — Vercel AI SDK model/provider selection and host authorization
+- `src/app/pages/` — hooks-only product UI
+- `src/pear.config.ts` — app identity, locale, API origin, and host context
 
-Runtime state, D1 persistence, R2 input storage, and Agent WebSocket wiring stay behind `@pear-agent/cloudflare` and `@pear-agent/react`.
-
-The generated Worker fails closed unless `PEAR_INSECURE_ALLOW_ALL=true` is set. The example `.dev.vars` enables it for local development only. Do not configure that flag in Cloudflare; replace `denyAllAuthorize` with authorization backed by your host application's authenticated identity before deployment.
+The generated Worker fails closed unless `PEAR_INSECURE_ALLOW_ALL=true` is set. The example enables it only for local development. Replace the deny-all authorization hook before deployment.
 
 ## Verify and deploy
 
@@ -39,4 +33,4 @@ pnpm db:migrate:remote
 pnpm deploy
 ```
 
-Before remote commands, replace the placeholder D1 `database_id` and R2 bucket name in `wrangler.jsonc` with your Cloudflare resources.
+Replace placeholder D1 and R2 identifiers in `wrangler.jsonc` before remote migration or deployment.

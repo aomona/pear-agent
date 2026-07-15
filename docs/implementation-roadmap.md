@@ -1,32 +1,37 @@
-# PEAR Runtime Implementation Roadmap
+# PEAR AI-native v0.1 Implementation Roadmap
 
-## 目標
+## 完成条件
 
-2026年8月20日までに、CLIから編集しやすいMinimal Starterを生成・デプロイでき、独立した外出準備Reference Applicationで音声実行、中断、Wake、再開、部分再計画を実演できる状態にします。
+2026年8月20日までにCookとPresentationで次を完走します。
 
-## 実装計画の分割
+```text
+Sources -> AI Compile -> Review -> Natural-language Edit -> Realtime Execute -> Replan
+```
 
-1. **Foundation** — workspace、Oxlint・Oxfmt・tsgo、Core、Goal、Plan DAG、Step State、Domain Contract
-2. **Execution State** — Session、WorldState、Event、Timer、Snapshot
-3. **Cloudflare Runtime** — Agents、D1、R2、認可Hook
-4. **React Client** — 型安全なClient、Provider、hooks、リアルタイム同期
-5. **Gemini Voice** — Voice契約、Gemini Live、Voice Lease、Tool bridge
-6. **Continuation** — Suspend、Wake、Atomic Resume、Snapshot Rehydration
-7. **Partial Replanning** — Assess、Impact Analysis、Plan Patch、Version更新
-8. **CLI and Reference Application** — Minimal Starter、optional Outing、Skills / Documents、deploy
-9. **Devtools and Hardening** — Devtools、E2E、failure recovery、デモ試験
-10. **PEAR Cook Integration** — cook-agentを第二Reference Applicationとして接続
+## 統合branch
 
-## マイルストーン
+すべての子PRは`feat/ai-native-runtime`をbaseにし、全E2Eとlocal gate通過後に`dev`へmergeします。
 
-| 日付    | 完成状態                            |
-| ------- | ----------------------------------- |
-| 7月17日 | FoundationとDomain Contract         |
-| 7月24日 | Execution StateとCloudflare Runtime |
-| 7月31日 | React ClientとGemini Voice          |
-| 8月7日  | Continuationの中断・Wake・再開      |
-| 8月13日 | 部分再計画と外出準備サンプル        |
-| 8月17日 | CLI、Devtools、E2E                  |
-| 8月20日 | デモ安定化、文書、動画撮影可能状態  |
+## Slices
 
-最初に実行する詳細計画は[PEAR Runtime Foundation Implementation Plan](./superpowers/plans/2026-07-11-pear-runtime-foundation.md)です。
+1. AI-native RFCと正本Docs
+2. Core source/compiler/provenance/Domain contracts
+3. `@pear-agent/ai` Vercel AI SDK adapters
+4. Cloudflare source storage、D1 baseline、Compile Workflow、PlanArtifactAgent、HTTP API
+5. React typed client/hooksとCore diff view model
+6. AI-first Minimal Starter
+7. Cook Reference Application（主E2E、mobile execution）
+8. Presentation Reference Application（PDF/time vertical slice）
+9. Gemini Live domain executionとstructured observations
+10. Artifact Inspector、Playwright、live provider smoke、hardening
+
+## Milestones
+
+| 日付    | 完成状態                                |
+| ------- | --------------------------------------- |
+| 7月18日 | RFCと正本Docs                           |
+| 7月24日 | CoreとAI SDK adapter                    |
+| 7月31日 | Cloudflare compile runtimeとReact hooks |
+| 8月7日  | AI-first StarterとCook                  |
+| 8月13日 | PresentationとRealtime Replan           |
+| 8月20日 | E2E、Devtools、verification、公開Docs   |

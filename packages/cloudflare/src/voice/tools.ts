@@ -78,7 +78,7 @@ const domainEventArgsSchema = z.object({
   payload: z.record(z.string(), z.unknown()).default({}),
 });
 const requestReplanArgsSchema = z.object({
-  mode: z.enum(["automatic", "confirm", "suggest"]).default("automatic"),
+  mode: z.enum(["automatic", "confirm", "suggest"]).default("confirm"),
 });
 
 type ToolDef = {
@@ -282,7 +282,8 @@ const BUILTIN_TOOLS = {
         mode: {
           type: "string",
           enum: ["automatic", "confirm", "suggest"],
-          description: "Use automatic unless the user requests review before applying changes.",
+          description:
+            "Use confirm by default. Automatic is only for host-approved low-risk policy.",
         },
       },
     },

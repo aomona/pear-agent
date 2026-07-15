@@ -432,6 +432,23 @@ describe("cloudflare runtime integration", () => {
     expect(toolBody.ok).toBe(true);
     expect(toolBody.result.eventType).toBe("step_completed");
 
+    const lowConfidence = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          toolName: "complete_step",
+          args: { stepId: "charge" },
+          callId: "call-low-confidence",
+          confidence: 0.5,
+        }),
+      }),
+    );
+    expect(lowConfidence.status).toBe(409);
+    expect(
+      ((await lowConfidence.json()) as { requiresConfirmation: boolean }).requiresConfirmation,
+    ).toBe(true);
+
     const releaseRes = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {
         method: "DELETE",

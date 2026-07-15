@@ -61,6 +61,7 @@ describe("create-pear-agent scaffold", () => {
     };
     expect(pkg.name).toBe("my-agent");
     expect(pkg.dependencies["@pear-agent/core"]).toBe("workspace:*");
+    expect(pkg.dependencies["@pear-agent/ai"]).toBe("workspace:*");
     expect(pkg.dependencies["@pear-agent/outing-domain-example"]).toBeUndefined();
 
     const worker = readFileSync(path.join(projectDir, "src/worker/index.ts"), "utf8");
@@ -97,6 +98,7 @@ describe("create-pear-agent scaffold", () => {
     expect(pkg.pnpm.overrides["@pear-agent/core"]).toBe(
       `file:${path.join(pearRoot, "packages/core")}`,
     );
+    expect(pkg.pnpm.overrides["@pear-agent/ai"]).toBe(`file:${path.join(pearRoot, "packages/ai")}`);
   });
 
   it("rejects unknown examples and ambiguous template selection", () => {

@@ -207,6 +207,144 @@ export const planArtifactVersions = sqliteTable(
   ],
 );
 
+/** Durable, provenance-carrying inputs attached to a plan artifact. */
+export const planSources = sqliteTable(
+  "plan_sources",
+  {
+    id: text("id").primaryKey(),
+    planArtifactId: text("plan_artifact_id")
+      .notNull()
+      .references(() => planArtifacts.id),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    label: text("label").notNull(),
+    mediaType: text("media_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    checksumSha256: text("checksum_sha256").notNull(),
+    sourceUrl: text("source_url"),
+    rawObjectKey: text("raw_object_key"),
+    extractedObjectKey: text("extracted_object_key"),
+    createdByActorId: text("created_by_actor_id").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("plan_sources_artifact_created").on(table.planArtifactId, table.createdAt),
+    index("plan_sources_artifact_status").on(table.planArtifactId, table.status),
+  ],
+);
+
+export const compileJobs = sqliteTable(
+  "compile_jobs",
+  {
+    id: text("id").primaryKey(),
+    planArtifactId: text("plan_artifact_id")
+      .notNull()
+      .references(() => planArtifacts.id),
+    workflowInstanceId: text("workflow_instance_id"),
+    phase: text("phase").notNull(),
+    status: text("status").notNull(),
+    attempt: integer("attempt").notNull(),
+    modelCalls: integer("model_calls").notNull(),
+    totalTokens: integer("total_tokens").notNull(),
+    error: text("error"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("compile_jobs_artifact_created").on(table.planArtifactId, table.createdAt),
+    index("compile_jobs_status").on(table.status, table.updatedAt),
+    uniqueIndex("compile_jobs_one_active")
+      .on(table.planArtifactId)
+      .where(sql`${table.status} IN ('queued', 'running', 'waiting')`),
+  ],
+);
+
+export const interpretationArtifacts = sqliteTable(
+  "interpretation_artifacts",
+  {
+    id: text("id").primaryKey(),
+    planArtifactId: text("plan_artifact_id")
+      .notNull()
+      .references(() => planArtifacts.id),
+    compileJobId: text("compile_job_id")
+      .notNull()
+      .references(() => compileJobs.id),
+    revision: integer("revision").notNull(),
+    normalizedInputJson: text("normalized_input_json").notNull(),
+    assumptionsJson: text("assumptions_json").notNull(),
+    generationJson: text("generation_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("interpretations_artifact_revision").on(table.planArtifactId, table.revision),
+    index("interpretations_job").on(table.compileJobId),
+  ],
+);
+
+export const clarificationRequests = sqliteTable(
+  "clarification_requests",
+  {
+    id: text("id").primaryKey(),
+    planArtifactId: text("plan_artifact_id")
+      .notNull()
+      .references(() => planArtifacts.id),
+    compileJobId: text("compile_job_id")
+      .notNull()
+      .references(() => compileJobs.id),
+    status: text("status").notNull(),
+    questionsJson: text("questions_json").notNull(),
+    answersJson: text("answers_json").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
+    answeredAt: text("answered_at"),
+  },
+  (table) => [
+    index("clarifications_artifact_status").on(table.planArtifactId, table.status),
+    index("clarifications_job").on(table.compileJobId),
+  ],
+);
+
+export const generationRecords = sqliteTable(
+  "generation_records",
+  {
+    id: text("id").primaryKey(),
+    planArtifactId: text("plan_artifact_id")
+      .notNull()
+      .references(() => planArtifacts.id),
+    compileJobId: text("compile_job_id")
+      .notNull()
+      .references(() => compileJobs.id),
+    stage: text("stage").notNull(),
+    metadataJson: text("metadata_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("generation_records_artifact_created").on(table.planArtifactId, table.createdAt),
+  ],
+);
+
+export const planEditProposals = sqliteTable(
+  "plan_edit_proposals",
+  {
+    id: text("id").primaryKey(),
+    planArtifactId: text("plan_artifact_id")
+      .notNull()
+      .references(() => planArtifacts.id),
+    baseVersion: integer("base_version").notNull(),
+    request: text("request").notNull(),
+    candidatePlanJson: text("candidate_plan_json").notNull(),
+    diffJson: text("diff_json").notNull(),
+    status: text("status").notNull(),
+    createdByActorId: text("created_by_actor_id").notNull(),
+    createdAt: text("created_at").notNull(),
+    appliedAt: text("applied_at"),
+  },
+  (table) => [
+    index("plan_edit_proposals_artifact_created").on(table.planArtifactId, table.createdAt),
+  ],
+);
+
 export const pearSchema = {
   executionSessions,
   materializedStates,
@@ -219,4 +357,10 @@ export const pearSchema = {
   planPatches,
   planArtifacts,
   planArtifactVersions,
+  planSources,
+  compileJobs,
+  interpretationArtifacts,
+  clarificationRequests,
+  generationRecords,
+  planEditProposals,
 };

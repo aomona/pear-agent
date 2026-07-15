@@ -1,51 +1,71 @@
-import { defineDomain } from "@pear-agent/core";
+import { defineAiDomain } from "@pear-agent/core";
 import { z } from "zod";
 
-const taskSchema = z.object({
-  id: z.string().min(1),
-  title: z.string().trim().min(1),
-  estimatedDurationSeconds: z.number().int().positive().default(300),
-});
-
-export const starterInputSchema = z.object({
-  title: z.string().trim().min(1),
-  tasks: z.array(z.string().trim().min(1)).min(1),
+export const starterCompileInputSchema = z.object({
+  request: z.string().trim().min(1).max(20_000),
 });
 
 export const starterNormalizedInputSchema = z.object({
   title: z.string().trim().min(1),
-  tasks: z.array(taskSchema).min(1),
+  tasks: z
+    .array(
+      z.object({
+        title: z.string().trim().min(1),
+        description: z.string().trim().min(1),
+        estimatedDurationSeconds: z.number().int().positive(),
+      }),
+    )
+    .min(1),
+  constraints: z.array(z.string()).default([]),
 });
 
 export type StarterNormalizedInput = z.output<typeof starterNormalizedInputSchema>;
 
-export const starterDomain = defineDomain({
+export const starterDomain = defineAiDomain({
   id: "starter",
   version: 1,
   schemas: {
-    input: starterInputSchema,
+    compileInput: starterCompileInputSchema,
     normalizedInput: starterNormalizedInputSchema,
-    stepData: z.object({ taskId: z.string().min(1) }),
+    stepData: z.object({ task: z.string().min(1) }),
     worldState: z.object({ notes: z.array(z.string()) }),
     events: z.discriminatedUnion("type", [
       z.object({ type: z.literal("constraint_changed"), note: z.string().min(1) }),
     ]),
   },
-  normalizeInput: async ({ title, tasks }) => ({
-    title: title.trim(),
-    tasks: tasks.map((task, index) => ({
-      id: `task-${index + 1}`,
-      title: task.trim(),
-      estimatedDurationSeconds: 300,
-    })),
-  }),
+  interpretation: {
+    instructions:
+      "Turn all source material and the user's request into a concise task model. Ask only when an ambiguity materially changes execution.",
+  },
   planning: {
-    instructions: "Turn the normalized task list into a clear sequential execution plan.",
-    objectives: ["Make the next action obvious", "Keep the plan easy to edit"],
+    instructions:
+      "Create a practical executable DAG. Parallelize independent tasks and cite source provenance on every step.",
+    objectives: [
+      "Make the next action obvious",
+      "Respect constraints",
+      "Keep the plan easy to revise",
+    ],
+    validatePlan(plan) {
+      const issues = plan.steps.flatMap((step) =>
+        step.sourceRefs?.length ? [] : [`Step ${step.id} has no source provenance`],
+      );
+      return {
+        valid: plan.steps.length > 0 && issues.length === 0,
+        issues: plan.steps.length > 0 ? issues : ["Plan must contain steps", ...issues],
+      };
+    },
   },
   replanning: {
-    instructions: "Update only the work affected by a changed constraint.",
-    defaultMode: "suggest",
+    instructions:
+      "Preserve completed work and update only the steps affected by new facts or constraints.",
+    defaultMode: "confirm",
+    reconcileWorldState(_plan, worldState) {
+      return worldState;
+    },
+  },
+  realtime: {
+    instructions: "Guide the current step concisely and confirm low-confidence state changes.",
+    defaultLocale: "ja-JP",
   },
   capabilities: [],
   completionPolicy: "automatic",

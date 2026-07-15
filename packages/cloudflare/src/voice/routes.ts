@@ -12,7 +12,7 @@ import {
 import type { AuthorizeFn } from "../authorize.js";
 import type { PearRequestContext } from "../context.js";
 import type { PearEnv } from "../env.js";
-import type { ReplanMode } from "@pear-agent/core";
+import { DEFAULT_REALTIME_OBSERVATION_CONFIDENCE, type ReplanMode } from "@pear-agent/core";
 import {
   SessionNotFoundError,
   VoiceLeaseConflictError,
@@ -156,6 +156,8 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         toolName: z.string().min(1),
         args: z.record(z.string(), z.unknown()).default({}),
         callId: z.string().min(1).optional(),
+        confidence: z.number().min(0).max(1).optional(),
+        confirmed: z.boolean().default(false),
       })
       .parse(await c.req.json());
 
@@ -181,6 +183,24 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
       );
     }
     if (eventType !== null) {
+      if (
+        body.confidence !== undefined &&
+        body.confidence < DEFAULT_REALTIME_OBSERVATION_CONFIDENCE &&
+        !body.confirmed
+      ) {
+        return c.json(
+          {
+            callId: body.callId ?? null,
+            toolName: body.toolName,
+            ok: false,
+            error: true,
+            requiresConfirmation: true,
+            threshold: DEFAULT_REALTIME_OBSERVATION_CONFIDENCE,
+            message: "Low-confidence realtime observation requires confirmation",
+          },
+          409,
+        );
+      }
       await authorize({ type: "session.appendEvent", sessionId, eventType }, context);
     }
 

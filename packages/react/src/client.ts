@@ -3,6 +3,9 @@ import {
   executionPlanSchema,
   executionSessionSchema,
   affectedSubgraphSchema,
+  clarificationRequestSchema,
+  compileJobSchema,
+  sourceArtifactSchema,
   planArtifactStatusSchema,
   replanAssessmentSchema,
   runtimeEventSchema,
@@ -45,6 +48,9 @@ import type {
   StepActionInput,
   TimerActionInput,
   TimerStartInput,
+  PlanCompileResult,
+  PlanArtifactInspector,
+  PlanEditProposal,
 } from "./types.js";
 
 export type PearClientOptions = {
@@ -113,6 +119,27 @@ const planArtifactDetailSchema = z.object({
   updatedAt: dateSchema,
   normalizedInput: z.unknown().optional(),
   ownerActorId: z.string().nullable().optional(),
+});
+
+const planEditProposalSchema = z.object({
+  id: z.string().min(1),
+  planArtifactId: z.string().min(1),
+  baseVersion: z.number().int().positive(),
+  request: z.string().min(1),
+  candidatePlan: executionPlanSchema(z.unknown()),
+  diff: z.object({
+    addedStepIds: z.array(z.string()),
+    removedStepIds: z.array(z.string()),
+    updatedStepIds: z.array(z.string()),
+    fieldChanges: z.array(
+      z.object({ stepId: z.string(), field: z.string(), before: z.unknown(), after: z.unknown() }),
+    ),
+    durationDeltaSeconds: z.number(),
+  }),
+  status: z.enum(["pending", "applied", "rejected", "stale"]),
+  createdByActorId: z.string().min(1),
+  createdAt: dateSchema,
+  appliedAt: dateSchema.nullable(),
 });
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -202,6 +229,108 @@ export class PearClient {
   async getPlan(planId: string): Promise<PlanArtifactDetail> {
     const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}`);
     return planArtifactDetailSchema.parse(body.artifact);
+  }
+
+  async addPlanTextSource(
+    planId: string,
+    input: {
+      label: string;
+      content: string;
+      mediaType?: "text/plain" | "text/markdown" | "application/json";
+    },
+  ): Promise<import("@pear-agent/core").SourceArtifact> {
+    const body = await this.requestJson<{ source: unknown }>(`/plans/${planId}/sources`, {
+      method: "POST",
+      body: { kind: "text", ...input },
+    });
+    return sourceArtifactSchema.parse(body.source);
+  }
+
+  async addPlanUrlSource(
+    planId: string,
+    input: { url: string; label?: string },
+  ): Promise<import("@pear-agent/core").SourceArtifact> {
+    const body = await this.requestJson<{ source: unknown }>(`/plans/${planId}/sources`, {
+      method: "POST",
+      body: { kind: "url", ...input },
+    });
+    return sourceArtifactSchema.parse(body.source);
+  }
+
+  async addPlanFileSource(
+    planId: string,
+    file: File,
+    label?: string,
+  ): Promise<import("@pear-agent/core").SourceArtifact> {
+    const form = new FormData();
+    form.set("file", file);
+    if (label) form.set("label", label);
+    const body = await this.requestForm<{ source: unknown }>(`/plans/${planId}/sources`, form);
+    return sourceArtifactSchema.parse(body.source);
+  }
+
+  async compilePlan(
+    planId: string,
+    input: { compileInput?: unknown; clarificationAnswers?: Readonly<Record<string, string>> } = {},
+  ): Promise<PlanCompileResult> {
+    const body = await this.requestJson<{
+      job: unknown;
+      artifact?: unknown;
+      clarification?: unknown;
+    }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: input });
+    return {
+      job: compileJobSchema.parse(body.job),
+      ...(body.artifact ? { artifact: planArtifactDetailSchema.parse(body.artifact) } : {}),
+      ...(body.clarification
+        ? { clarification: clarificationRequestSchema.parse(body.clarification) }
+        : {}),
+    };
+  }
+
+  async getCompileJob(planId: string, jobId: string) {
+    const body = await this.requestJson<{ job: unknown }>(`/plans/${planId}/compile-jobs/${jobId}`);
+    return compileJobSchema.parse(body.job);
+  }
+
+  async answerPlanClarification(
+    planId: string,
+    clarificationId: string,
+    answers: Readonly<Record<string, string>>,
+  ) {
+    const body = await this.requestJson<{ clarification: unknown }>(
+      `/plans/${planId}/clarifications/${clarificationId}/answer`,
+      { method: "POST", body: { answers } },
+    );
+    return clarificationRequestSchema.parse(body.clarification);
+  }
+
+  async getPlanInspector(planId: string): Promise<PlanArtifactInspector> {
+    const body = await this.requestJson<{ inspector: PlanArtifactInspector }>(
+      `/plans/${planId}/inspector`,
+    );
+    return body.inspector;
+  }
+
+  async proposePlanEdit(planId: string, request: string): Promise<PlanEditProposal> {
+    const body = await this.requestJson<{ proposal: unknown }>(`/plans/${planId}/edit-proposals`, {
+      method: "POST",
+      body: { request },
+    });
+    return planEditProposalSchema.parse(body.proposal);
+  }
+
+  async confirmPlanEdit(
+    planId: string,
+    proposalId: string,
+  ): Promise<{ artifact: PlanArtifactDetail; proposal: PlanEditProposal }> {
+    const body = await this.requestJson<{ artifact: unknown; proposal: unknown }>(
+      `/plans/${planId}/edit-proposals/${proposalId}/confirm`,
+      { method: "POST", body: {} },
+    );
+    return {
+      artifact: planArtifactDetailSchema.parse(body.artifact),
+      proposal: planEditProposalSchema.parse(body.proposal),
+    };
   }
 
   async updatePlan(
@@ -679,6 +808,17 @@ export class PearClient {
       return undefined as T;
     }
 
+    return (await response.json()) as T;
+  }
+
+  private async requestForm<T>(path: string, body: FormData): Promise<T> {
+    const contextHeader = await this.resolveContextHeader();
+    const response = await this.fetchImpl(joinUrl(this.baseUrl, path), {
+      method: "POST",
+      headers: { [PEAR_CONTEXT_HEADER]: contextHeader },
+      body,
+    });
+    if (!response.ok) throw await this.toError(response);
     return (await response.json()) as T;
   }
 
