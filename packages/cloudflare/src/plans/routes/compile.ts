@@ -1,9 +1,4 @@
-import {
-  DEFAULT_CLARIFICATION_TIMEOUT_MS,
-  assertPlanMatchesGoal,
-  validatePlanGraph,
-  type SourceKind,
-} from "@pear-agent/core";
+import { type SourceKind } from "@pear-agent/core";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 
@@ -11,6 +6,7 @@ import { D1CompileRepository, CompileJobNotFoundError } from "../../d1/compile-r
 import { PlanArtifactNotFoundError } from "../../d1/plan-repository.js";
 import type { PearApp } from "../../http/app.js";
 import { toJsonValue } from "../../serialize.js";
+import { runPlanCompileJob, type PlanCompileWorkflowParams } from "../compile-runner.js";
 import { artifactJson, planRepository, type PlanRouteContext } from "./shared.js";
 
 const MAX_TEXT_SOURCE_BYTES = 2 * 1024 * 1024;
@@ -97,6 +93,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
         label = body.label;
         mediaType = body.mediaType;
         bytes = new TextEncoder().encode(body.content).buffer as ArrayBuffer;
+        assertSize(bytes.byteLength, mediaType);
       } else {
         const url = validatePublicUrl(body.url);
         const response = await fetchPublicSource(url);
@@ -109,8 +106,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
         assertSupportedMediaType(mediaType);
         const declaredLength = Number(response.headers.get("content-length") ?? "0");
         if (declaredLength) assertSize(declaredLength, mediaType);
-        bytes = await response.arrayBuffer();
-        assertSize(bytes.byteLength, mediaType);
+        bytes = await readBodyWithLimit(response, maximumSize(mediaType));
       }
     }
 
@@ -123,18 +119,21 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     await c.env.RAW_INPUTS.put(objectKey, bytes, { httpMetadata: { contentType: mediaType } });
     let source;
     try {
-      source = await repository.createSource({
-        id,
-        planArtifactId: planId,
-        kind,
-        label,
-        mediaType,
-        byteSize: bytes.byteLength,
-        checksumSha256,
-        sourceUrl,
-        rawObjectKey: objectKey,
-        createdByActorId: context.actorId,
-      });
+      source = await repository.createSourceIfIdle(
+        {
+          id,
+          planArtifactId: planId,
+          kind,
+          label,
+          mediaType,
+          byteSize: bytes.byteLength,
+          checksumSha256,
+          sourceUrl,
+          rawObjectKey: objectKey,
+          createdByActorId: context.actorId,
+        },
+        MAX_SOURCES_PER_PLAN,
+      );
     } catch (error) {
       await c.env.RAW_INPUTS.delete(objectKey);
       throw error;
@@ -172,7 +171,8 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     if (await repository.getActiveJob(planId)) {
       throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
     }
-    await repository.markSourceDeleted(planId, sourceId);
+    const deleted = await repository.markSourceDeletedIfIdle(planId, sourceId);
+    if (!deleted) throw new HTTPException(404, { message: "Plan source not found" });
     await Promise.all([
       source.rawObjectKey ? c.env.RAW_INPUTS.delete(source.rawObjectKey) : Promise.resolve(),
       source.extractedObjectKey
@@ -187,7 +187,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const planId = c.req.param("planId");
     const context = c.get("pearContext");
     await routes.authorize({ type: "plan.compile.start", planId }, context);
-    const artifact = await requireArtifact(c.env, planId);
+    await requireArtifact(c.env, planId);
     const runtime = routes.ports.compile.resolve(c.env);
     if (!runtime) {
       throw new HTTPException(503, { message: "Plan compile runtime is not configured" });
@@ -205,109 +205,40 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
       });
       throw new HTTPException(400, { message: "At least one source is required" });
     }
-    await repository.updateJob(job.id, { phase: "interpret", status: "running" });
-
+    const params: PlanCompileWorkflowParams = {
+      jobId: job.id,
+      planId,
+      compileInput: body.compileInput,
+      ...(body.clarificationAnswers ? { clarificationAnswers: body.clarificationAnswers } : {}),
+      context,
+    };
+    if (c.env.PLAN_COMPILE_WORKFLOW) {
+      try {
+        const instance = await c.env.PLAN_COMPILE_WORKFLOW.create({ id: job.id, params });
+        const queued = await repository.updateJob(job.id, { workflowInstanceId: instance.id });
+        return c.json({ job: toJsonValue(queued) }, 202);
+      } catch (error) {
+        await repository.updateJob(job.id, {
+          status: "failed",
+          error:
+            error instanceof Error ? error.message.slice(0, 4_000) : "Workflow dispatch failed",
+        });
+        throw new HTTPException(502, { message: "Failed to dispatch plan compile Workflow" });
+      }
+    }
     try {
-      const interpretableSources = await Promise.all(
-        sources.map(async (source) => {
-          if (!source.rawObjectKey) return { artifact: source };
-          const object = await c.env.RAW_INPUTS.get(source.rawObjectKey);
-          if (!object) throw new Error(`Source object missing: ${source.id}`);
-          const data = new Uint8Array(await object.arrayBuffer());
-          return source.mediaType === "application/pdf"
-            ? { artifact: source, data }
-            : { artifact: source, data, extractedText: new TextDecoder().decode(data) };
-        }),
-      );
-      const result = await runtime.compile({
-        artifact,
-        sources: interpretableSources,
-        compileInput: body.compileInput,
-        ...(body.clarificationAnswers ? { clarificationAnswers: body.clarificationAnswers } : {}),
-        context,
-      });
-      await assertCompileJobActive(repository, job.id);
-      if (result.kind === "clarification_required") {
-        await repository.recordGeneration({
-          planArtifactId: planId,
-          compileJobId: job.id,
-          generation: result.interpretationGeneration,
-        });
-        const updatedJob = await repository.transitionJob(job.id, ["running"], {
-          phase: "awaiting_clarification",
-          status: "waiting",
-          modelCalls: result.interpretationGeneration.attempt,
-          totalTokens: result.interpretationGeneration.totalTokens ?? 0,
-        });
-        const clarification = await repository.createClarification({
-          planArtifactId: planId,
-          compileJobId: job.id,
-          questions: result.questions,
-          expiresAt: new Date(Date.now() + DEFAULT_CLARIFICATION_TIMEOUT_MS),
-        });
+      const result = await runPlanCompileJob({ env: c.env, params, runtime });
+      if (result.artifact) {
+        return c.json({ job: toJsonValue(result.job), ...artifactJson(result.artifact) }, 201);
+      }
+      if (result.clarification) {
         return c.json(
-          { job: toJsonValue(updatedJob), clarification: toJsonValue(clarification) },
+          { job: toJsonValue(result.job), clarification: toJsonValue(result.clarification) },
           202,
         );
       }
-
-      const match = assertPlanMatchesGoal(result.plan, artifact.goal);
-      if (!match.ok) throw new Error(`Generated plan goal mismatch: ${match.reason}`);
-      const graph = validatePlanGraph(result.plan.steps);
-      if (!graph.valid) throw new Error(`Generated plan graph is invalid: ${graph.reason}`);
-      const sourceIds = new Set(sources.map(({ id }) => id));
-      for (const step of result.plan.steps) {
-        if (!step.sourceRefs?.length) {
-          throw new Error(`Generated step ${step.id} has no source provenance`);
-        }
-        for (const reference of step.sourceRefs) {
-          if (!sourceIds.has(reference.sourceId)) {
-            throw new Error(
-              `Generated step ${step.id} references unknown source ${reference.sourceId}`,
-            );
-          }
-        }
-      }
-      await repository.saveInterpretation({
-        planArtifactId: planId,
-        compileJobId: job.id,
-        normalizedInput: result.normalizedInput,
-        assumptions: result.assumptions,
-        generation: result.interpretationGeneration,
-      });
-      await repository.recordGeneration({
-        planArtifactId: planId,
-        compileJobId: job.id,
-        generation: result.planGeneration,
-      });
-      await assertCompileJobActive(repository, job.id);
-      const stored = await planRepository(c.env).saveVersionStored({
-        artifactId: planId,
-        plan: { ...result.plan, version: artifact.version + 1 },
-        changeReason: "ai_generation",
-        summary: "AI compile draft",
-        status: "draft",
-        normalizedInput: result.normalizedInput,
-      });
-      const totalTokens =
-        (result.interpretationGeneration.totalTokens ?? 0) +
-        (result.planGeneration.totalTokens ?? 0);
-      const updatedJob = await repository.transitionJob(job.id, ["running"], {
-        phase: "review",
-        status: "completed",
-        modelCalls: result.interpretationGeneration.attempt + result.planGeneration.attempt,
-        totalTokens,
-      });
-      return c.json({ job: toJsonValue(updatedJob), ...artifactJson(stored) }, 201);
+      return c.json({ job: toJsonValue(result.job) }, 409);
     } catch (error) {
-      const currentJob = await repository.getJob(job.id);
-      if (currentJob?.status === "cancelled") {
-        return c.json({ job: toJsonValue(currentJob) }, 409);
-      }
-      await repository.updateJob(job.id, {
-        status: "failed",
-        error: error instanceof Error ? error.message.slice(0, 4_000) : "Compile failed",
-      });
       throw new HTTPException(502, {
         message: error instanceof Error ? error.message : "Plan compile failed",
       });
@@ -335,13 +266,15 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     if (!["queued", "running", "waiting"].includes(job.status)) {
       throw new HTTPException(409, { message: `Cannot cancel a ${job.status} compile job` });
     }
-    return c.json({
-      job: toJsonValue(
-        await repository.transitionJob(jobId, ["queued", "running", "waiting"], {
-          status: "cancelled",
-        }),
-      ),
+    const cancelled = await repository.transitionJob(jobId, ["queued", "running", "waiting"], {
+      status: "cancelled",
     });
+    if (job.workflowInstanceId && c.env.PLAN_COMPILE_WORKFLOW) {
+      await c.env.PLAN_COMPILE_WORKFLOW.get(job.workflowInstanceId)
+        .then((instance) => instance.terminate())
+        .catch(() => undefined);
+    }
+    return c.json({ job: toJsonValue(cancelled) });
   });
 
   app.post("/plans/:planId/compile-jobs/:jobId/retry", async (c) => {
@@ -375,10 +308,6 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
       .parse(await c.req.json()).answers;
     const repository = new D1CompileRepository(c.env.DB);
     const clarification = await repository.answerClarification(planId, clarificationId, answers);
-    await repository.updateJob(clarification.compileJobId, {
-      status: "cancelled",
-      error: "Superseded by a resumed compile with clarification answers",
-    });
     return c.json({ clarification: toJsonValue(clarification) });
   });
 
@@ -397,16 +326,6 @@ async function requireArtifact(env: { DB: D1Database }, planId: string) {
   return artifact;
 }
 
-async function assertCompileJobActive(
-  repository: D1CompileRepository,
-  jobId: string,
-): Promise<void> {
-  const current = await repository.getJob(jobId);
-  if (!current || current.status !== "running") {
-    throw new Error(`Compile job is no longer active (${current?.status ?? "missing"})`);
-  }
-}
-
 function normalizeMediaType(value: string): string {
   return value.split(";", 1)[0]!.trim().toLowerCase();
 }
@@ -418,15 +337,42 @@ function assertSupportedMediaType(mediaType: string): void {
 }
 
 function assertSize(size: number, mediaType: string): void {
-  const maximum =
-    mediaType === "application/pdf"
-      ? MAX_PDF_BYTES
-      : mediaType === "text/html"
-        ? MAX_TEXT_SOURCE_BYTES
-        : MAX_TEXT_FILE_BYTES;
+  const maximum = maximumSize(mediaType);
   if (size > maximum) {
     throw new HTTPException(413, { message: `Source exceeds ${maximum} bytes` });
   }
+}
+
+function maximumSize(mediaType: string): number {
+  return mediaType === "application/pdf"
+    ? MAX_PDF_BYTES
+    : mediaType === "text/html"
+      ? MAX_TEXT_SOURCE_BYTES
+      : MAX_TEXT_FILE_BYTES;
+}
+
+export async function readBodyWithLimit(response: Response, maximum: number): Promise<ArrayBuffer> {
+  if (!response.body) return new ArrayBuffer(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maximum) {
+      await reader.cancel("PEAR source size limit exceeded");
+      throw new HTTPException(413, { message: `Source exceeds ${maximum} bytes` });
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
 }
 
 export function validatePublicUrl(raw: string): URL {

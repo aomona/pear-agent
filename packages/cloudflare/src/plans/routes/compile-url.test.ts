@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validatePublicUrl } from "./compile.js";
+import { readBodyWithLimit, validatePublicUrl } from "./compile.js";
 
 describe("validatePublicUrl", () => {
   it.each([
@@ -16,5 +16,21 @@ describe("validatePublicUrl", () => {
 
   it("does not reject a public hostname merely because it starts with fd", () => {
     expect(validatePublicUrl("https://fda.gov/").hostname).toBe("fda.gov");
+  });
+
+  it("stops reading a chunked response as soon as the byte limit is exceeded", async () => {
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new Uint8Array(8));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+    await expect(readBodyWithLimit(response, 10)).rejects.toThrow("Source exceeds 10 bytes");
+    expect(cancelled).toBe(true);
   });
 });

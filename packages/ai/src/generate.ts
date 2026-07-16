@@ -25,6 +25,7 @@ export type StructuredGenerationRequest<TSchema extends z.ZodType> = {
   maxAttempts?: number;
   timeoutMs?: number;
   signal?: AbortSignal;
+  maxOutputTokens?: number;
 };
 
 export type StructuredGenerationResult<T> = {
@@ -86,6 +87,9 @@ export const generateStructured: StructuredGenerator = async <TSchema extends z.
         prompt: request.prompt,
         maxRetries: 0,
         temperature: 0,
+        ...(request.maxOutputTokens === undefined
+          ? {}
+          : { maxOutputTokens: request.maxOutputTokens }),
         abortSignal: request.signal
           ? AbortSignal.any([
               request.signal,
@@ -103,6 +107,7 @@ export const generateStructured: StructuredGenerator = async <TSchema extends z.
         }),
       };
     } catch (error) {
+      if (request.signal?.aborted) throw error;
       lastError = error;
     }
   }

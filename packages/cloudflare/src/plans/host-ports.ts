@@ -57,6 +57,12 @@ type ResolveDomainFreeTextField = (input: {
   context: unknown;
 }) => Promise<unknown>;
 
+export type ValidatePlanEdit = (input: {
+  domainId: string;
+  plan: ExecutionPlan;
+  normalizedInput?: unknown;
+}) => void | Promise<void>;
+
 /**
  * Public host-injection surface. Static ports support tests and simple Workers;
  * `create*` factories take precedence when a port needs per-request env bindings.
@@ -69,6 +75,7 @@ export type PlanLibraryOptions = {
   createFreeTextResolver?: (env: PearEnv) => FreeTextFieldResolver | undefined;
   planImprover?: PlanImprover;
   createPlanImprover?: (env: PearEnv) => PlanImprover | undefined;
+  validatePlanEdit?: ValidatePlanEdit;
   normalizeDomainInput?: NormalizeDomainInput;
   resolveDomainFreeTextField?: ResolveDomainFreeTextField;
   compileRuntime?: PlanCompileRuntime;
@@ -78,7 +85,10 @@ export type PlanLibraryOptions = {
 export type PlanLibraryHostPorts = {
   generator: { resolve(env: PearEnv): PlanGenerator };
   freeText: { resolve(env: PearEnv): FreeTextFieldResolver | undefined };
-  improvement: { resolve(env: PearEnv): PlanImprover | undefined };
+  improvement: {
+    resolve(env: PearEnv): PlanImprover | undefined;
+    validate?: ValidatePlanEdit;
+  };
   domain: {
     normalizeInput?: NormalizeDomainInput;
     resolveFreeTextField?: ResolveDomainFreeTextField;
@@ -105,6 +115,7 @@ export function createPlanLibraryHostPorts(options: PlanLibraryOptions): PlanLib
     improvement: {
       resolve: (env) =>
         resolveOptionalEnvPort(options.createPlanImprover, options.planImprover, env),
+      ...(options.validatePlanEdit ? { validate: options.validatePlanEdit } : {}),
     },
     domain: {
       ...(options.normalizeDomainInput ? { normalizeInput: options.normalizeDomainInput } : {}),

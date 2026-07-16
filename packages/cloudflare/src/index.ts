@@ -152,10 +152,16 @@ export {
   type PlanGeneratorInput,
   type PlanGeneratorOptions,
 } from "./planner.js";
+export {
+  runPlanCompileJob,
+  type PlanCompileRunResult,
+  type PlanCompileWorkflowParams,
+} from "./plans/compile-runner.js";
 export type {
   PlanCompileRuntime,
   PlanCompileRuntimeResult,
   PlanLibraryOptions,
+  ValidatePlanEdit,
 } from "./plans/host-ports.js";
 export {
   DEFAULT_MAX_RAW_INPUT_BYTES,

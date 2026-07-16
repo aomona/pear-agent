@@ -410,7 +410,7 @@ describe("cloudflare runtime integration", () => {
           toolName: "start_step",
           args: { stepId: "pack" },
           callId: "call-0",
-          confirmed: true,
+          confidence: 1,
         }),
       }),
     );
@@ -425,7 +425,7 @@ describe("cloudflare runtime integration", () => {
           toolName: "complete_step",
           args: { stepId: "pack" },
           callId: "call-1",
-          confirmed: true,
+          confidence: 1,
         }),
       }),
     );
@@ -450,6 +450,15 @@ describe("cloudflare runtime integration", () => {
     expect(
       ((await lowConfidence.json()) as { requiresConfirmation: boolean }).requiresConfirmation,
     ).toBe(true);
+
+    const missingConfidence = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({ toolName: "pause_session", args: {} }),
+      }),
+    );
+    expect(missingConfidence.status).toBe(409);
 
     const releaseRes = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {

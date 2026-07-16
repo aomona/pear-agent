@@ -78,7 +78,7 @@ const domainEventArgsSchema = z.object({
   payload: z.record(z.string(), z.unknown()).default({}),
 });
 const requestReplanArgsSchema = z.object({
-  mode: z.enum(["automatic", "confirm", "suggest"]).default("confirm"),
+  mode: z.enum(["confirm", "suggest"]).default("confirm"),
 });
 
 type ToolDef = {
@@ -281,9 +281,8 @@ const BUILTIN_TOOLS = {
       properties: {
         mode: {
           type: "string",
-          enum: ["automatic", "confirm", "suggest"],
-          description:
-            "Use confirm by default. Automatic is only for host-approved low-risk policy.",
+          enum: ["confirm", "suggest"],
+          description: "Voice replanning never auto-applies; use confirm unless only suggesting.",
         },
       },
     },
@@ -314,11 +313,6 @@ export function listVoiceToolDeclarations(): VoiceToolDeclaration[] {
                 type: "number",
                 description:
                   "0..1 confidence that the user explicitly requested or completed this state change",
-              },
-              confirmed: {
-                type: "boolean",
-                description:
-                  "true only after the user explicitly confirms an ambiguous state change",
               },
             },
           },

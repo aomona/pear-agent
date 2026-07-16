@@ -246,7 +246,6 @@ export function useVoiceSession(
             ...(typeof call.args.confidence === "number"
               ? { confidence: call.args.confidence }
               : {}),
-            ...(typeof call.args.confirmed === "boolean" ? { confirmed: call.args.confirmed } : {}),
           });
           if (result.ok) {
             responses.push({

@@ -50,12 +50,29 @@ const worker = createPearWorker({
       ...input.basePlan,
       steps: input.basePlan.steps.map((step, index) =>
         index === 0
-          ? { ...step, estimatedDurationSeconds: step.estimatedDurationSeconds + 30 }
+          ? {
+              ...step,
+              estimatedDurationSeconds: step.estimatedDurationSeconds + 30,
+              ...(input.request === "remove provenance" ? { sourceRefs: [] } : {}),
+            }
           : step,
       ),
     })),
+    validatePlanEdit({ plan }) {
+      if (plan.steps.some((step) => !step.sourceRefs?.length)) {
+        throw new Error("Every edited step must preserve source provenance");
+      }
+    },
     createCompileRuntime: () => ({
       async compile(input) {
+        if (
+          typeof input.compileInput === "object" &&
+          input.compileInput !== null &&
+          "delayMs" in input.compileInput &&
+          typeof input.compileInput.delayMs === "number"
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, input.compileInput.delayMs));
+        }
         const now = new Date();
         const metadata = (stage: "interpret" | "plan") =>
           ({

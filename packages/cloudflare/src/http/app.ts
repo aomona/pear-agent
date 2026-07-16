@@ -92,6 +92,7 @@ export type CreatePearAppOptions = {
     | "createFreeTextResolver"
     | "planImprover"
     | "createPlanImprover"
+    | "validatePlanEdit"
     | "normalizeDomainInput"
     | "resolveDomainFreeTextField"
     | "compileRuntime"

@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import {
   createAiPlanGenerator,
+  createAiPlanCompiler,
   createAiSourceInterpreter,
   type StructuredGenerator,
 } from "./index.js";
@@ -44,6 +45,46 @@ const source = sourceArtifactSchema.parse({
 });
 
 describe("@pear-agent/ai", () => {
+  it("rejects an impossible call budget before invoking a model phase", async () => {
+    let interpreterCalled = false;
+    const compiler = createAiPlanCompiler({
+      domainVersion: 1,
+      interpretationInstructions: "Interpret",
+      planningInstructions: "Plan",
+      planningObjectives: [],
+      maxModelCalls: 1,
+      interpreter: {
+        async interpret() {
+          interpreterCalled = true;
+          throw new Error("must not run");
+        },
+      },
+      planner: {
+        async generatePlan() {
+          throw new Error("must not run");
+        },
+      },
+    });
+    await expect(
+      compiler.compile({
+        artifact: {
+          domainId: "cook",
+          goal: {
+            id: "goal-1",
+            description: "Dinner",
+            successCriteria: [
+              { id: "done", description: "Done", evaluator: { type: "human_confirmation" } },
+            ],
+            completionPolicy: "automatic",
+          },
+        },
+        sources: [{ artifact: source }],
+        compileInput: {},
+      }),
+    ).rejects.toThrow("at least two model calls");
+    expect(interpreterCalled).toBe(false);
+  });
+
   it("returns a typed interpretation with Runtime-owned assumption ids", async () => {
     const interpreter = createAiSourceInterpreter({
       model: {} as never,

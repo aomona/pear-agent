@@ -65,9 +65,11 @@ export class CompileJobConflictError extends Error {
 }
 
 export class D1CompileRepository {
+  private readonly d1: D1Database;
   private readonly db: PearDatabase;
 
   constructor(d1: D1Database) {
+    this.d1 = d1;
     this.db = createPearDatabase(d1);
   }
 
@@ -99,6 +101,67 @@ export class D1CompileRepository {
     return source;
   }
 
+  async createSourceIfIdle(
+    input: Parameters<D1CompileRepository["createSource"]>[0],
+    maximumSources: number,
+  ): Promise<SourceArtifact> {
+    const now = new Date();
+    const source = sourceArtifactSchema.parse({
+      id: input.id ?? crypto.randomUUID(),
+      ...input,
+      status: "ready",
+      sourceUrl: input.sourceUrl ?? null,
+      rawObjectKey: input.rawObjectKey ?? null,
+      extractedObjectKey: input.extractedObjectKey ?? null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const row = sourceToRow(source);
+    const result = await this.d1
+      .prepare(
+        `INSERT INTO plan_sources (
+          id, plan_artifact_id, kind, status, label, media_type, byte_size,
+          checksum_sha256, source_url, raw_object_key, extracted_object_key,
+          created_by_actor_id, created_at, updated_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM compile_jobs
+          WHERE plan_artifact_id = ? AND status IN ('queued', 'running', 'waiting')
+        ) AND (
+          SELECT COUNT(*) FROM plan_sources
+          WHERE plan_artifact_id = ? AND status != 'deleted'
+        ) < ?`,
+      )
+      .bind(
+        row.id,
+        row.planArtifactId,
+        row.kind,
+        row.status,
+        row.label,
+        row.mediaType,
+        row.byteSize,
+        row.checksumSha256,
+        row.sourceUrl,
+        row.rawObjectKey,
+        row.extractedObjectKey,
+        row.createdByActorId,
+        row.createdAt,
+        row.updatedAt,
+        row.planArtifactId,
+        row.planArtifactId,
+        maximumSources,
+      )
+      .run();
+    if (result.meta.changes === 0) {
+      if (await this.getActiveJob(input.planArtifactId)) {
+        throw new CompileJobConflictError("Sources cannot change during an active compile");
+      }
+      throw new CompileJobConflictError(`A plan may have at most ${maximumSources} sources`);
+    }
+    return source;
+  }
+
   async listSources(planArtifactId: string): Promise<SourceArtifact[]> {
     const rows = await this.db
       .select()
@@ -123,6 +186,38 @@ export class D1CompileRepository {
       .update(planSources)
       .set({ status: "deleted", updatedAt: updatedAt.toISOString() })
       .where(eq(planSources.id, sourceId));
+    return sourceArtifactSchema.parse({ ...rows[0], status: "deleted", updatedAt });
+  }
+
+  async markSourceDeletedIfIdle(
+    planArtifactId: string,
+    sourceId: string,
+  ): Promise<SourceArtifact | null> {
+    const rows = await this.db
+      .select()
+      .from(planSources)
+      .where(and(eq(planSources.planArtifactId, planArtifactId), eq(planSources.id, sourceId)))
+      .limit(1);
+    if (!rows[0] || rows[0].status === "deleted") return null;
+    const updatedAt = new Date();
+    const result = await this.d1
+      .prepare(
+        `UPDATE plan_sources
+         SET status = 'deleted', updated_at = ?
+         WHERE id = ? AND plan_artifact_id = ? AND status != 'deleted'
+           AND NOT EXISTS (
+             SELECT 1 FROM compile_jobs
+             WHERE plan_artifact_id = ? AND status IN ('queued', 'running', 'waiting')
+           )`,
+      )
+      .bind(updatedAt.toISOString(), sourceId, planArtifactId, planArtifactId)
+      .run();
+    if (result.meta.changes === 0) {
+      if (await this.getActiveJob(planArtifactId)) {
+        throw new CompileJobConflictError("Sources cannot change during an active compile");
+      }
+      return null;
+    }
     return sourceArtifactSchema.parse({ ...rows[0], status: "deleted", updatedAt });
   }
 
@@ -395,21 +490,31 @@ export class D1CompileRepository {
       );
     }
     const answeredAt = new Date();
-    const updated = await this.db
-      .update(clarificationRequests)
-      .set({
-        status: "answered",
-        answersJson: serializeJson(answers),
-        answeredAt: answeredAt.toISOString(),
-      })
-      .where(
-        and(
-          eq(clarificationRequests.planArtifactId, planArtifactId),
-          eq(clarificationRequests.id, id),
-          eq(clarificationRequests.status, "pending"),
-        ),
-      )
-      .returning();
+    const [updated] = await this.db.batch([
+      this.db
+        .update(clarificationRequests)
+        .set({
+          status: "answered",
+          answersJson: serializeJson(answers),
+          answeredAt: answeredAt.toISOString(),
+        })
+        .where(
+          and(
+            eq(clarificationRequests.planArtifactId, planArtifactId),
+            eq(clarificationRequests.id, id),
+            eq(clarificationRequests.status, "pending"),
+          ),
+        )
+        .returning(),
+      this.db
+        .update(compileJobs)
+        .set({
+          status: "cancelled",
+          error: "Superseded by a resumed compile with clarification answers",
+          updatedAt: answeredAt.toISOString(),
+        })
+        .where(and(eq(compileJobs.id, current.compileJobId), eq(compileJobs.status, "waiting"))),
+    ]);
     if (!updated[0]) {
       throw new CompileJobConflictError("Clarification request is no longer pending");
     }

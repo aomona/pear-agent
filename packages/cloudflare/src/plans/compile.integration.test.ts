@@ -2,7 +2,7 @@ import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 
 import { outingGoal } from "../../../../examples/outing-domain/src/domain.js";
-import { contextHeaders } from "../test/integration-helpers.js";
+import { contextHeaders, pearEnv } from "../test/integration-helpers.js";
 
 async function api(path: string, init?: RequestInit): Promise<Response> {
   return exports.default.fetch(
@@ -151,5 +151,66 @@ describe("AI-native plan compile", () => {
     expect(confirmed.status).toBe(200);
     const confirmedBody = (await confirmed.json()) as { artifact: { version: number } };
     expect(confirmedBody.artifact.version).toBe(3);
+  });
+
+  it("does not save a plan version when a running compile is cancelled", async () => {
+    const created = await api("/plans", {
+      method: "POST",
+      body: JSON.stringify({ domainId: "outing", goal: outingGoal }),
+    });
+    const planId = ((await created.json()) as { artifact: { id: string } }).artifact.id;
+    await api(`/plans/${planId}/sources`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "text", label: "Brief", content: "Leave on time" }),
+    });
+    const compiling = api(`/plans/${planId}/compile-jobs`, {
+      method: "POST",
+      body: JSON.stringify({ compileInput: { delayMs: 100 } }),
+    });
+    let jobId: string | undefined;
+    for (let attempt = 0; attempt < 20 && !jobId; attempt += 1) {
+      const row = await pearEnv.DB.prepare(
+        "SELECT id FROM compile_jobs WHERE plan_artifact_id = ? AND status = 'running'",
+      )
+        .bind(planId)
+        .first<{ id: string }>();
+      jobId = row?.id;
+      if (!jobId) await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(jobId).toBeTruthy();
+    const cancelled = await api(`/plans/${planId}/compile-jobs/${jobId!}/cancel`, {
+      method: "POST",
+      body: "{}",
+    });
+    const cancelledText = await cancelled.text();
+    expect(cancelled.status).toBe(200);
+    expect(JSON.parse(cancelledText)).toMatchObject({ job: { status: "cancelled" } });
+    expect((await compiling).status).toBe(409);
+    const artifact = (await (await api(`/plans/${planId}`)).json()) as {
+      artifact: { version: number };
+    };
+    expect(artifact.artifact.version).toBe(1);
+  });
+
+  it("rejects an AI edit that violates domain provenance rules", async () => {
+    const created = await api("/plans", {
+      method: "POST",
+      body: JSON.stringify({ domainId: "outing", goal: outingGoal }),
+    });
+    const planId = ((await created.json()) as { artifact: { id: string } }).artifact.id;
+    await api(`/plans/${planId}/sources`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "text", label: "Brief", content: "Leave on time" }),
+    });
+    await api(`/plans/${planId}/compile-jobs`, {
+      method: "POST",
+      body: JSON.stringify({ compileInput: {} }),
+    });
+    const response = await api(`/plans/${planId}/edit-proposals`, {
+      method: "POST",
+      body: JSON.stringify({ request: "remove provenance" }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Every edited step must preserve source provenance");
   });
 });

@@ -163,14 +163,11 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         args: z.record(z.string(), z.unknown()).default({}),
         callId: z.string().min(1).optional(),
         confidence: z.number().min(0).max(1).optional(),
-        confirmed: z.boolean().default(false),
       })
       .parse(await c.req.json());
+    const argsConfidence = z.number().min(0).max(1).safeParse(body.args.confidence);
     const confidence =
-      body.confidence ??
-      (typeof body.args.confidence === "number" ? body.args.confidence : undefined);
-    const confirmed =
-      body.confirmed || (typeof body.args.confirmed === "boolean" && body.args.confirmed);
+      body.confidence ?? (argsConfidence.success ? argsConfidence.data : undefined);
 
     await authorize({ type: "voice.tool", sessionId, toolName: body.toolName }, context);
 
@@ -194,11 +191,7 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
       );
     }
     if (eventType !== null) {
-      if (
-        body.callId !== undefined &&
-        !confirmed &&
-        (confidence === undefined || confidence < DEFAULT_REALTIME_OBSERVATION_CONFIDENCE)
-      ) {
+      if (confidence === undefined || confidence < DEFAULT_REALTIME_OBSERVATION_CONFIDENCE) {
         return c.json(
           {
             callId: body.callId ?? null,
@@ -207,7 +200,7 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
             error: true,
             requiresConfirmation: true,
             threshold: DEFAULT_REALTIME_OBSERVATION_CONFIDENCE,
-            message: "Low-confidence realtime observation requires confirmation",
+            message: "Realtime state changes require confidence at or above the threshold",
           },
           409,
         );

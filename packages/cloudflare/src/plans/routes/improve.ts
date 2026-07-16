@@ -59,6 +59,19 @@ export function registerPlanImproveRoutes(app: PearApp, routes: PlanRouteContext
       if (!graph.valid) {
         throw new HTTPException(400, { message: `Edited plan graph is invalid: ${graph.reason}` });
       }
+      try {
+        await routes.ports.improvement.validate?.({
+          domainId: existing.domainId,
+          plan: candidatePlan,
+          ...(existing.normalizedInput !== undefined
+            ? { normalizedInput: existing.normalizedInput }
+            : {}),
+        });
+      } catch (error) {
+        throw new HTTPException(400, {
+          message: error instanceof Error ? error.message : "Edited plan violates domain rules",
+        });
+      }
       const proposal = await new D1PlanEditRepository(c.env.DB).create({
         planArtifactId: planId,
         basePlan: existing.currentPlan,

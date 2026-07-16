@@ -20,6 +20,8 @@ export type AiPlanGeneratorInput = {
   objectives: readonly string[];
   context?: unknown;
   signal?: AbortSignal;
+  maxAttempts?: number;
+  maxOutputTokens?: number;
 };
 
 export type AiPlanGenerationResult = {
@@ -86,6 +88,8 @@ export function createAiPlanGenerator(options: CreateAiPlanGeneratorOptions): Ai
         promptVersion: options.promptVersion ?? "pear-plan-v1",
         schemaVersion: `${input.domainId}@${input.domainVersion}`,
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.maxAttempts === undefined ? {} : { maxAttempts: input.maxAttempts }),
+        ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
         system: [
           "Create a coherent executable DAG plan from normalized domain input.",
           "Use temporary unique ids and valid after dependencies; Runtime replaces persistent ids.",

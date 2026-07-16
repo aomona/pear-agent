@@ -278,13 +278,32 @@ export class PearClient {
       artifact?: unknown;
       clarification?: unknown;
     }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: input });
-    return {
+    let result: PlanCompileResult = {
       job: compileJobSchema.parse(body.job),
       ...(body.artifact ? { artifact: planArtifactDetailSchema.parse(body.artifact) } : {}),
       ...(body.clarification
         ? { clarification: clarificationRequestSchema.parse(body.clarification) }
         : {}),
     };
+    for (let polls = 0; ["queued", "running"].includes(result.job.status); polls += 1) {
+      if (polls >= 3_600) throw new Error("Plan compile did not finish within 30 minutes");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = { job: await this.getCompileJob(planId, result.job.id) };
+    }
+    if (result.job.status === "completed") {
+      return { ...result, artifact: await this.getPlan(planId) };
+    }
+    if (result.job.status === "waiting") {
+      const inspector = await this.getPlanInspector(planId);
+      const clarification = inspector.clarifications.find(
+        ({ compileJobId, status }) => compileJobId === result.job.id && status === "pending",
+      );
+      return clarification ? { ...result, clarification } : result;
+    }
+    if (result.job.status === "failed") {
+      throw new Error(result.job.error ?? "Plan compile failed");
+    }
+    return result;
   }
 
   async getCompileJob(planId: string, jobId: string) {
@@ -587,7 +606,6 @@ export class PearClient {
       args?: Record<string, unknown>;
       callId?: string;
       confidence?: number;
-      confirmed?: boolean;
     },
   ): Promise<
     | { callId: string | null; toolName: string; ok: true; result: unknown }
@@ -606,7 +624,6 @@ export class PearClient {
         args: input.args ?? {},
         ...(input.callId === undefined ? {} : { callId: input.callId }),
         ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
-        ...(input.confirmed === undefined ? {} : { confirmed: input.confirmed }),
       },
     });
   }

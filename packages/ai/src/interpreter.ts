@@ -69,6 +69,8 @@ export function createAiSourceInterpreter<TSchema extends z.ZodType>(
         promptVersion: options.promptVersion ?? "pear-interpret-v1",
         schemaVersion: options.schemaVersion ?? `${input.domainId}@${input.domainVersion}`,
         ...(input.signal ? { signal: input.signal } : {}),
+        ...(input.maxAttempts === undefined ? {} : { maxAttempts: input.maxAttempts }),
+        ...(input.maxOutputTokens === undefined ? {} : { maxOutputTokens: input.maxOutputTokens }),
         system: [
           "Interpret multiple source artifacts into one domain model.",
           "Use only supplied source ids in sourceRefs.",

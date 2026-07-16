@@ -2,6 +2,9 @@
 
 The default path is **Sources → Compile with LLM → Review → Execute → Assess → Replan**. Text, public URLs, PDF, Markdown, and JSON become a durable PlanArtifact with provenance and generation metadata. A deterministic PlanGenerator remains as an explicit adapter for tests and direct legacy session creation.
 
+Compile requests are queued into the `PlanCompileWorkflow` binding. The browser polls the D1 job,
+while Worker restarts and HTTP disconnects do not interrupt the compile lifecycle.
+
 ## Start
 
 ```bash
