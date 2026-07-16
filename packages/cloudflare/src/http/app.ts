@@ -70,6 +70,10 @@ export type CreatePearAppOptions = {
   maxRawInputBytes?: number;
   /** Override Gemini Live model id for token minting. */
   geminiLiveModel?: string;
+  /** Domain guidance locked into Gemini Live's server-side system instruction. */
+  realtimeInstructions?: string;
+  /** Preferred locale for Live responses, for example `ja-JP`. */
+  realtimeLocale?: string;
   /**
    * Inject token minter (tests). Default: Google GenAI when key present.
    */
@@ -398,6 +402,10 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
     authorize: options.authorize,
     voiceTokenMinter,
     ...(options.geminiLiveModel === undefined ? {} : { geminiLiveModel: options.geminiLiveModel }),
+    ...(options.realtimeInstructions === undefined
+      ? {}
+      : { realtimeInstructions: options.realtimeInstructions }),
+    ...(options.realtimeLocale === undefined ? {} : { realtimeLocale: options.realtimeLocale }),
     requestReplan: async ({ request, env, sessionId, mode }) => {
       const url = new URL(request.url);
       url.pathname = `/sessions/${encodeURIComponent(sessionId)}/replans`;

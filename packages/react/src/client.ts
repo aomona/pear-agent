@@ -392,17 +392,6 @@ export class PearClient {
     });
   }
 
-  async improvePlan(
-    planId: string,
-    input: { request: string; constraints?: unknown },
-  ): Promise<PlanArtifactDetail> {
-    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/improve`, {
-      method: "POST",
-      body: input,
-    });
-    return planArtifactDetailSchema.parse(body.artifact);
-  }
-
   async getSession(sessionId: string): Promise<MaterializedExecutionState> {
     const body = await this.requestJson<{ state: unknown }>(`/sessions/${sessionId}`);
     return parseMaterializedState(body.state);
@@ -593,7 +582,13 @@ export class PearClient {
 
   async executeVoiceTool(
     sessionId: string,
-    input: { toolName: string; args?: Record<string, unknown>; callId?: string },
+    input: {
+      toolName: string;
+      args?: Record<string, unknown>;
+      callId?: string;
+      confidence?: number;
+      confirmed?: boolean;
+    },
   ): Promise<
     | { callId: string | null; toolName: string; ok: true; result: unknown }
     | {
@@ -610,6 +605,8 @@ export class PearClient {
         toolName: input.toolName,
         args: input.args ?? {},
         ...(input.callId === undefined ? {} : { callId: input.callId }),
+        ...(input.confidence === undefined ? {} : { confidence: input.confidence }),
+        ...(input.confirmed === undefined ? {} : { confirmed: input.confirmed }),
       },
     });
   }

@@ -14,7 +14,7 @@ import {
   type SourceArtifact,
   type SourceKind,
 } from "@pear-agent/core";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 
 import { parseJson, serializeJson } from "../serialize.js";
 import { createPearDatabase, type PearDatabase } from "./client.js";
@@ -126,7 +126,41 @@ export class D1CompileRepository {
     return sourceArtifactSchema.parse({ ...rows[0], status: "deleted", updatedAt });
   }
 
+  async isSourceReferenced(planArtifactId: string, sourceId: string): Promise<boolean> {
+    const [interpretationRows, clarificationRows] = await Promise.all([
+      this.db
+        .select({ assumptionsJson: interpretationArtifacts.assumptionsJson })
+        .from(interpretationArtifacts)
+        .where(eq(interpretationArtifacts.planArtifactId, planArtifactId)),
+      this.db
+        .select({ questionsJson: clarificationRequests.questionsJson })
+        .from(clarificationRequests)
+        .where(eq(clarificationRequests.planArtifactId, planArtifactId)),
+    ]);
+    const referenced = (value: unknown): boolean =>
+      Array.isArray(value) &&
+      value.some(
+        (item) =>
+          typeof item === "object" &&
+          item !== null &&
+          "sourceRefs" in item &&
+          Array.isArray(item.sourceRefs) &&
+          item.sourceRefs.some(
+            (reference: unknown) =>
+              typeof reference === "object" &&
+              reference !== null &&
+              "sourceId" in reference &&
+              reference.sourceId === sourceId,
+          ),
+      );
+    return (
+      interpretationRows.some(({ assumptionsJson }) => referenced(parseJson(assumptionsJson))) ||
+      clarificationRows.some(({ questionsJson }) => referenced(parseJson(questionsJson)))
+    );
+  }
+
   async createJob(planArtifactId: string, attempt = 1): Promise<CompileJob> {
+    await this.expireClarifications(planArtifactId);
     const active = await this.db
       .select({ id: compileJobs.id })
       .from(compileJobs)
@@ -170,6 +204,48 @@ export class D1CompileRepository {
     return rows[0] ? jobFromRow(rows[0]) : null;
   }
 
+  async expireClarifications(planArtifactId: string): Promise<void> {
+    const expired = await this.db
+      .select({ id: clarificationRequests.id, compileJobId: clarificationRequests.compileJobId })
+      .from(clarificationRequests)
+      .where(
+        and(
+          eq(clarificationRequests.planArtifactId, planArtifactId),
+          eq(clarificationRequests.status, "pending"),
+          lt(clarificationRequests.expiresAt, new Date().toISOString()),
+        ),
+      );
+    if (expired.length === 0) return;
+    for (const { id, compileJobId } of expired) {
+      await this.db.batch([
+        this.db
+          .update(clarificationRequests)
+          .set({ status: "expired" })
+          .where(
+            and(eq(clarificationRequests.id, id), eq(clarificationRequests.status, "pending")),
+          ),
+        this.db
+          .update(compileJobs)
+          .set({ status: "expired", updatedAt: new Date().toISOString() })
+          .where(and(eq(compileJobs.id, compileJobId), eq(compileJobs.status, "waiting"))),
+      ]);
+    }
+  }
+
+  async getActiveJob(planArtifactId: string): Promise<CompileJob | null> {
+    const rows = await this.db
+      .select()
+      .from(compileJobs)
+      .where(
+        and(
+          eq(compileJobs.planArtifactId, planArtifactId),
+          sql`${compileJobs.status} IN ('queued', 'running', 'waiting')`,
+        ),
+      )
+      .limit(1);
+    return rows[0] ? jobFromRow(rows[0]) : null;
+  }
+
   async updateJob(
     id: string,
     update: {
@@ -190,6 +266,30 @@ export class D1CompileRepository {
     const updated = await this.getJob(id);
     if (!updated) throw new CompileJobNotFoundError(id);
     return updated;
+  }
+
+  async transitionJob(
+    id: string,
+    fromStatuses: readonly CompileJobStatus[],
+    update: {
+      phase?: CompilePhase;
+      status?: CompileJobStatus;
+      modelCalls?: number;
+      totalTokens?: number;
+      error?: string | null;
+    },
+  ): Promise<CompileJob> {
+    const rows = await this.db
+      .update(compileJobs)
+      .set({ ...update, updatedAt: new Date().toISOString() })
+      .where(and(eq(compileJobs.id, id), inArray(compileJobs.status, [...fromStatuses])))
+      .returning();
+    if (!rows[0]) {
+      const current = await this.getJob(id);
+      if (!current) throw new CompileJobNotFoundError(id);
+      throw new CompileJobConflictError(`Compile job is ${current.status}`);
+    }
+    return jobFromRow(rows[0]);
   }
 
   async saveInterpretation(input: {
@@ -258,13 +358,19 @@ export class D1CompileRepository {
   }
 
   async answerClarification(
+    planArtifactId: string,
     id: string,
     answers: Readonly<Record<string, string>>,
   ): Promise<ClarificationRequest> {
     const rows = await this.db
       .select()
       .from(clarificationRequests)
-      .where(eq(clarificationRequests.id, id))
+      .where(
+        and(
+          eq(clarificationRequests.planArtifactId, planArtifactId),
+          eq(clarificationRequests.id, id),
+        ),
+      )
       .limit(1);
     const current = rows[0] ? clarificationFromRow(rows[0]) : null;
     if (!current) throw new CompileJobNotFoundError(id);
@@ -278,21 +384,36 @@ export class D1CompileRepository {
         .where(eq(clarificationRequests.id, id));
       throw new CompileJobConflictError("Clarification request has expired");
     }
+    const expectedQuestionIds = current.questions.map(({ id: questionId }) => questionId).sort();
+    const answerIds = Object.keys(answers).sort();
+    if (
+      expectedQuestionIds.length !== answerIds.length ||
+      expectedQuestionIds.some((questionId, index) => questionId !== answerIds[index])
+    ) {
+      throw new CompileJobConflictError(
+        "Answers must contain exactly one non-empty value for every clarification question",
+      );
+    }
     const answeredAt = new Date();
-    await this.db
+    const updated = await this.db
       .update(clarificationRequests)
       .set({
         status: "answered",
         answersJson: serializeJson(answers),
         answeredAt: answeredAt.toISOString(),
       })
-      .where(eq(clarificationRequests.id, id));
-    return clarificationRequestSchema.parse({
-      ...current,
-      status: "answered",
-      answers,
-      answeredAt,
-    });
+      .where(
+        and(
+          eq(clarificationRequests.planArtifactId, planArtifactId),
+          eq(clarificationRequests.id, id),
+          eq(clarificationRequests.status, "pending"),
+        ),
+      )
+      .returning();
+    if (!updated[0]) {
+      throw new CompileJobConflictError("Clarification request is no longer pending");
+    }
+    return clarificationFromRow(updated[0]);
   }
 
   async inspect(planArtifactId: string): Promise<PlanArtifactInspector> {

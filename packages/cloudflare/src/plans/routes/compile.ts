@@ -16,6 +16,7 @@ import { artifactJson, planRepository, type PlanRouteContext } from "./shared.js
 const MAX_TEXT_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
+const MAX_SOURCES_PER_PLAN = 20;
 const SUPPORTED_FILE_TYPES = new Set([
   "application/json",
   "application/pdf",
@@ -57,6 +58,18 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const context = c.get("pearContext");
     await routes.authorize({ type: "plan.source.create", planId }, context);
     await requireArtifact(c.env, planId);
+    const repository = new D1CompileRepository(c.env.DB);
+    if (await repository.getActiveJob(planId)) {
+      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
+    }
+    const existingSources = (await repository.listSources(planId)).filter(
+      ({ status }) => status !== "deleted",
+    );
+    if (existingSources.length >= MAX_SOURCES_PER_PLAN) {
+      throw new HTTPException(409, {
+        message: `A plan may have at most ${MAX_SOURCES_PER_PLAN} sources`,
+      });
+    }
 
     const contentType = c.req.header("content-type") ?? "";
     let kind: SourceKind;
@@ -104,10 +117,13 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const id = crypto.randomUUID();
     const objectKey = `plan-artifacts/${planId}/sources/${id}`;
     const checksumSha256 = await sha256(bytes);
+    if (await repository.getActiveJob(planId)) {
+      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
+    }
     await c.env.RAW_INPUTS.put(objectKey, bytes, { httpMetadata: { contentType: mediaType } });
     let source;
     try {
-      source = await new D1CompileRepository(c.env.DB).createSource({
+      source = await repository.createSource({
         id,
         planArtifactId: planId,
         kind,
@@ -132,6 +148,10 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const sourceId = c.req.param("sourceId");
     await routes.authorize({ type: "plan.source.delete", planId, sourceId }, c.get("pearContext"));
     await requireArtifact(c.env, planId);
+    const repository = new D1CompileRepository(c.env.DB);
+    if (await repository.getActiveJob(planId)) {
+      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
+    }
     const versions = await planRepository(c.env).getVersionHistory(planId);
     if (
       versions.some(({ plan }) =>
@@ -142,9 +162,16 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
         message: "Source is referenced by plan history and cannot be deleted",
       });
     }
-    const repository = new D1CompileRepository(c.env.DB);
+    if (await repository.isSourceReferenced(planId, sourceId)) {
+      throw new HTTPException(409, {
+        message: "Source is referenced by compile history and cannot be deleted",
+      });
+    }
     const source = (await repository.listSources(planId)).find(({ id }) => id === sourceId);
     if (!source) throw new HTTPException(404, { message: "Plan source not found" });
+    if (await repository.getActiveJob(planId)) {
+      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
+    }
     await repository.markSourceDeleted(planId, sourceId);
     await Promise.all([
       source.rawObjectKey ? c.env.RAW_INPUTS.delete(source.rawObjectKey) : Promise.resolve(),
@@ -167,13 +194,17 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     }
     const body = compileBodySchema.parse(await c.req.json());
     const repository = new D1CompileRepository(c.env.DB);
+    const job = await repository.createJob(planId);
     const sources = (await repository.listSources(planId)).filter(
       ({ status }) => status === "ready",
     );
     if (sources.length === 0) {
+      await repository.updateJob(job.id, {
+        status: "failed",
+        error: "At least one source is required",
+      });
       throw new HTTPException(400, { message: "At least one source is required" });
     }
-    const job = await repository.createJob(planId);
     await repository.updateJob(job.id, { phase: "interpret", status: "running" });
 
     try {
@@ -195,23 +226,24 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
         ...(body.clarificationAnswers ? { clarificationAnswers: body.clarificationAnswers } : {}),
         context,
       });
+      await assertCompileJobActive(repository, job.id);
       if (result.kind === "clarification_required") {
         await repository.recordGeneration({
           planArtifactId: planId,
           compileJobId: job.id,
           generation: result.interpretationGeneration,
         });
+        const updatedJob = await repository.transitionJob(job.id, ["running"], {
+          phase: "awaiting_clarification",
+          status: "waiting",
+          modelCalls: result.interpretationGeneration.attempt,
+          totalTokens: result.interpretationGeneration.totalTokens ?? 0,
+        });
         const clarification = await repository.createClarification({
           planArtifactId: planId,
           compileJobId: job.id,
           questions: result.questions,
           expiresAt: new Date(Date.now() + DEFAULT_CLARIFICATION_TIMEOUT_MS),
-        });
-        const updatedJob = await repository.updateJob(job.id, {
-          phase: "awaiting_clarification",
-          status: "waiting",
-          modelCalls: 1,
-          totalTokens: result.interpretationGeneration.totalTokens ?? 0,
         });
         return c.json(
           { job: toJsonValue(updatedJob), clarification: toJsonValue(clarification) },
@@ -248,6 +280,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
         compileJobId: job.id,
         generation: result.planGeneration,
       });
+      await assertCompileJobActive(repository, job.id);
       const stored = await planRepository(c.env).saveVersionStored({
         artifactId: planId,
         plan: { ...result.plan, version: artifact.version + 1 },
@@ -259,14 +292,18 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
       const totalTokens =
         (result.interpretationGeneration.totalTokens ?? 0) +
         (result.planGeneration.totalTokens ?? 0);
-      const updatedJob = await repository.updateJob(job.id, {
+      const updatedJob = await repository.transitionJob(job.id, ["running"], {
         phase: "review",
         status: "completed",
-        modelCalls: 2,
+        modelCalls: result.interpretationGeneration.attempt + result.planGeneration.attempt,
         totalTokens,
       });
       return c.json({ job: toJsonValue(updatedJob), ...artifactJson(stored) }, 201);
     } catch (error) {
+      const currentJob = await repository.getJob(job.id);
+      if (currentJob?.status === "cancelled") {
+        return c.json({ job: toJsonValue(currentJob) }, 409);
+      }
       await repository.updateJob(job.id, {
         status: "failed",
         error: error instanceof Error ? error.message.slice(0, 4_000) : "Compile failed",
@@ -281,7 +318,9 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const planId = c.req.param("planId");
     const jobId = c.req.param("jobId");
     await routes.authorize({ type: "plan.compile.read", planId, jobId }, c.get("pearContext"));
-    const job = await new D1CompileRepository(c.env.DB).getJob(jobId);
+    const repository = new D1CompileRepository(c.env.DB);
+    await repository.expireClarifications(planId);
+    const job = await repository.getJob(jobId);
     if (!job || job.planArtifactId !== planId) throw new CompileJobNotFoundError(jobId);
     return c.json({ job: toJsonValue(job) });
   });
@@ -296,7 +335,13 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     if (!["queued", "running", "waiting"].includes(job.status)) {
       throw new HTTPException(409, { message: `Cannot cancel a ${job.status} compile job` });
     }
-    return c.json({ job: toJsonValue(await repository.updateJob(jobId, { status: "cancelled" })) });
+    return c.json({
+      job: toJsonValue(
+        await repository.transitionJob(jobId, ["queued", "running", "waiting"], {
+          status: "cancelled",
+        }),
+      ),
+    });
   });
 
   app.post("/plans/:planId/compile-jobs/:jobId/retry", async (c) => {
@@ -329,8 +374,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
       .object({ answers: z.record(z.string(), z.string().trim().min(1).max(10_000)) })
       .parse(await c.req.json()).answers;
     const repository = new D1CompileRepository(c.env.DB);
-    const clarification = await repository.answerClarification(clarificationId, answers);
-    if (clarification.planArtifactId !== planId) throw new CompileJobNotFoundError(clarificationId);
+    const clarification = await repository.answerClarification(planId, clarificationId, answers);
     await repository.updateJob(clarification.compileJobId, {
       status: "cancelled",
       error: "Superseded by a resumed compile with clarification answers",
@@ -351,6 +395,16 @@ async function requireArtifact(env: { DB: D1Database }, planId: string) {
   const artifact = await planRepository(env).getStored(planId);
   if (!artifact) throw new PlanArtifactNotFoundError(planId);
   return artifact;
+}
+
+async function assertCompileJobActive(
+  repository: D1CompileRepository,
+  jobId: string,
+): Promise<void> {
+  const current = await repository.getJob(jobId);
+  if (!current || current.status !== "running") {
+    throw new Error(`Compile job is no longer active (${current?.status ?? "missing"})`);
+  }
 }
 
 function normalizeMediaType(value: string): string {
@@ -375,29 +429,58 @@ function assertSize(size: number, mediaType: string): void {
   }
 }
 
-function validatePublicUrl(raw: string): URL {
+export function validatePublicUrl(raw: string): URL {
   const url = new URL(raw);
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new HTTPException(400, { message: "Source URL must use http or https" });
   }
-  const host = url.hostname.toLowerCase();
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (
     host === "localhost" ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    host.startsWith("fc") ||
-    host.startsWith("fd") ||
-    host.startsWith("fe80:") ||
     host.endsWith(".local") ||
-    host.startsWith("127.") ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    host.startsWith("169.254.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    isBlockedIpv4(host) ||
+    isBlockedIpv6(host)
   ) {
     throw new HTTPException(400, { message: "Private network source URLs are not allowed" });
   }
   return url;
+}
+
+function isBlockedIpv4(host: string): boolean {
+  const octets = host.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) return false;
+  const [a, b] = octets as [number, number, number, number];
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
+
+function isBlockedIpv6(host: string): boolean {
+  if (!host.includes(":")) return false;
+  const normalized = host.toLowerCase();
+  if (normalized === "::" || normalized === "::1") return true;
+  const firstGroup = Number.parseInt(normalized.split(":", 1)[0] || "0", 16);
+  if (
+    (firstGroup & 0xfe00) === 0xfc00 ||
+    (firstGroup & 0xffc0) === 0xfe80 ||
+    (firstGroup & 0xff00) === 0xff00
+  )
+    return true;
+  const mappedIpv4 = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+  if (mappedIpv4) return isBlockedIpv4(mappedIpv4);
+  const mappedHex = normalized.match(/::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (!mappedHex) return false;
+  const high = Number.parseInt(mappedHex[1]!, 16);
+  const low = Number.parseInt(mappedHex[2]!, 16);
+  return isBlockedIpv4(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
 }
 
 async function fetchPublicSource(initial: URL): Promise<Response> {

@@ -4,6 +4,7 @@ import type {
   InterpretableSource,
   SourceInterpreter,
 } from "@pear-agent/core";
+import { DEFAULT_AI_MAX_CALLS_PER_JOB, DEFAULT_AI_MAX_TOKENS_PER_JOB } from "@pear-agent/core";
 
 import type { AiPlanGenerator } from "./planner.js";
 
@@ -46,23 +47,35 @@ export type CreateAiPlanCompilerOptions = {
   planningObjectives: readonly string[];
   interpreter: SourceInterpreter;
   planner: AiPlanGenerator;
+  validateCompileInput?: (input: unknown) => unknown;
   validateNormalizedInput?: (input: unknown) => unknown;
   validatePlan?: (input: { plan: ExecutionPlan; normalizedInput: unknown }) => void | Promise<void>;
+  maxModelCalls?: number;
+  maxTokens?: number;
 };
 
 /** Compose the two AI phases without coupling either Core or Cloudflare to AI SDK. */
 export function createAiPlanCompiler(options: CreateAiPlanCompilerOptions): AiPlanCompiler {
   return {
     async compile(input) {
+      const compileInput = options.validateCompileInput
+        ? options.validateCompileInput(input.compileInput)
+        : input.compileInput;
       const interpreted = await options.interpreter.interpret({
         domainId: input.artifact.domainId,
         domainVersion: options.domainVersion,
-        compileInput: input.compileInput,
+        compileInput,
         sources: input.sources,
         instructions: options.interpretationInstructions,
         ...(input.clarificationAnswers ? { clarificationAnswers: input.clarificationAnswers } : {}),
         context: input.context,
+        ...(input.signal ? { signal: input.signal } : {}),
       });
+      assertBudget(
+        interpreted.generation.attempt,
+        interpreted.generation.totalTokens ?? 0,
+        options,
+      );
       if (interpreted.kind === "clarification_required") {
         return {
           kind: "clarification_required",
@@ -83,7 +96,13 @@ export function createAiPlanCompiler(options: CreateAiPlanCompilerOptions): AiPl
         instructions: options.planningInstructions,
         objectives: options.planningObjectives,
         context: input.context,
+        ...(input.signal ? { signal: input.signal } : {}),
       });
+      assertBudget(
+        interpreted.generation.attempt + planned.generation.attempt,
+        (interpreted.generation.totalTokens ?? 0) + (planned.generation.totalTokens ?? 0),
+        options,
+      );
       await options.validatePlan?.({ plan: planned.plan, normalizedInput });
       return {
         kind: "ready",
@@ -95,4 +114,19 @@ export function createAiPlanCompiler(options: CreateAiPlanCompilerOptions): AiPl
       };
     },
   };
+}
+
+function assertBudget(
+  modelCalls: number,
+  totalTokens: number,
+  options: Pick<CreateAiPlanCompilerOptions, "maxModelCalls" | "maxTokens">,
+): void {
+  const maxModelCalls = options.maxModelCalls ?? DEFAULT_AI_MAX_CALLS_PER_JOB;
+  const maxTokens = options.maxTokens ?? DEFAULT_AI_MAX_TOKENS_PER_JOB;
+  if (modelCalls > maxModelCalls) {
+    throw new Error(`AI compile exceeded its ${maxModelCalls}-call budget`);
+  }
+  if (totalTokens > maxTokens) {
+    throw new Error(`AI compile exceeded its ${maxTokens}-token budget`);
+  }
 }

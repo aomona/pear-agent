@@ -303,7 +303,25 @@ export function listVoiceToolDeclarations(): VoiceToolDeclaration[] {
   return Object.entries(BUILTIN_TOOLS).map(([name, def]) => ({
     name,
     description: def.description,
-    parameters: def.parameters,
+    parameters:
+      def.authorizeEventType === null
+        ? def.parameters
+        : {
+            ...def.parameters,
+            properties: {
+              ...def.parameters.properties,
+              confidence: {
+                type: "number",
+                description:
+                  "0..1 confidence that the user explicitly requested or completed this state change",
+              },
+              confirmed: {
+                type: "boolean",
+                description:
+                  "true only after the user explicitly confirms an ambiguous state change",
+              },
+            },
+          },
   }));
 }
 

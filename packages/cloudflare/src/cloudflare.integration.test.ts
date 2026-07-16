@@ -410,6 +410,7 @@ describe("cloudflare runtime integration", () => {
           toolName: "start_step",
           args: { stepId: "pack" },
           callId: "call-0",
+          confirmed: true,
         }),
       }),
     );
@@ -424,6 +425,7 @@ describe("cloudflare runtime integration", () => {
           toolName: "complete_step",
           args: { stepId: "pack" },
           callId: "call-1",
+          confirmed: true,
         }),
       }),
     );

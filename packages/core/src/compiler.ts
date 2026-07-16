@@ -159,6 +159,7 @@ export type SourceInterpretInput = {
   instructions: string;
   clarificationAnswers?: Readonly<Record<string, string>>;
   context?: unknown;
+  signal?: AbortSignal;
 };
 
 export type SourceInterpretResult<TNormalizedInput = unknown> =

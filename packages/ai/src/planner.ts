@@ -19,6 +19,7 @@ export type AiPlanGeneratorInput = {
   instructions: string;
   objectives: readonly string[];
   context?: unknown;
+  signal?: AbortSignal;
 };
 
 export type AiPlanGenerationResult = {
@@ -84,6 +85,7 @@ export function createAiPlanGenerator(options: CreateAiPlanGeneratorOptions): Ai
         stage: "plan",
         promptVersion: options.promptVersion ?? "pear-plan-v1",
         schemaVersion: `${input.domainId}@${input.domainVersion}`,
+        ...(input.signal ? { signal: input.signal } : {}),
         system: [
           "Create a coherent executable DAG plan from normalized domain input.",
           "Use temporary unique ids and valid after dependencies; Runtime replaces persistent ids.",

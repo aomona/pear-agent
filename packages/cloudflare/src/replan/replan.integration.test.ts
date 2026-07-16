@@ -49,6 +49,7 @@ describe("cloudflare replan integration", () => {
           toolName: "report_domain_event",
           args: { domainType: "delay", payload: { minutes: 15 } },
           callId: `delay-${crypto.randomUUID()}`,
+          confirmed: true,
         }),
       }),
     );

@@ -33,6 +33,8 @@ export type RegisterVoiceRoutesOptions = {
   authorize: AuthorizeFn;
   voiceTokenMinter: VoiceTokenMinter;
   geminiLiveModel?: string;
+  realtimeInstructions?: string;
+  realtimeLocale?: string;
   requestReplan?: (input: {
     request: Request;
     env: PearEnv;
@@ -139,6 +141,10 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         snapshot,
         lease,
         ...(options.geminiLiveModel === undefined ? {} : { model: options.geminiLiveModel }),
+        ...(options.realtimeInstructions === undefined
+          ? {}
+          : { realtimeInstructions: options.realtimeInstructions }),
+        ...(options.realtimeLocale === undefined ? {} : { locale: options.realtimeLocale }),
       });
       return c.json({ token: minted.token, model: minted.model });
     } catch (caught) {
@@ -160,6 +166,11 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         confirmed: z.boolean().default(false),
       })
       .parse(await c.req.json());
+    const confidence =
+      body.confidence ??
+      (typeof body.args.confidence === "number" ? body.args.confidence : undefined);
+    const confirmed =
+      body.confirmed || (typeof body.args.confirmed === "boolean" && body.args.confirmed);
 
     await authorize({ type: "voice.tool", sessionId, toolName: body.toolName }, context);
 
@@ -184,9 +195,9 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
     }
     if (eventType !== null) {
       if (
-        body.confidence !== undefined &&
-        body.confidence < DEFAULT_REALTIME_OBSERVATION_CONFIDENCE &&
-        !body.confirmed
+        body.callId !== undefined &&
+        !confirmed &&
+        (confidence === undefined || confidence < DEFAULT_REALTIME_OBSERVATION_CONFIDENCE)
       ) {
         return c.json(
           {

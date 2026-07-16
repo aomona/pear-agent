@@ -24,6 +24,7 @@ export type StructuredGenerationRequest<TSchema extends z.ZodType> = {
   schemaVersion: string;
   maxAttempts?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
 };
 
 export type StructuredGenerationResult<T> = {
@@ -85,7 +86,12 @@ export const generateStructured: StructuredGenerator = async <TSchema extends z.
         prompt: request.prompt,
         maxRetries: 0,
         temperature: 0,
-        abortSignal: AbortSignal.timeout(request.timeoutMs ?? DEFAULT_AI_CALL_TIMEOUT_MS),
+        abortSignal: request.signal
+          ? AbortSignal.any([
+              request.signal,
+              AbortSignal.timeout(request.timeoutMs ?? DEFAULT_AI_CALL_TIMEOUT_MS),
+            ])
+          : AbortSignal.timeout(request.timeoutMs ?? DEFAULT_AI_CALL_TIMEOUT_MS),
       });
       return {
         output: request.schema.parse(result.output),

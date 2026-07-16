@@ -1,6 +1,7 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import {
   DEFAULT_GEMINI_TEXT_MODEL,
+  createAiPlanImprover,
   createAiPlanCompiler,
   createAiPlanGenerator,
   createAiSourceInterpreter,
@@ -31,6 +32,8 @@ const denyAllAuthorize: AuthorizeFn = () => {
 function createStarterWorker(authorize: AuthorizeFn) {
   return createPearWorker({
     authorize,
+    realtimeInstructions: starterDomain.realtime.instructions,
+    realtimeLocale: starterDomain.realtime.defaultLocale,
     // Explicit deterministic adapter for tests and direct legacy session creation.
     planGenerator: {
       async generatePlan(input) {
@@ -41,6 +44,15 @@ function createStarterWorker(authorize: AuthorizeFn) {
       },
     },
     planLibrary: {
+      createPlanImprover(env) {
+        if (!env.GEMINI_API_KEY) return undefined;
+        const google = createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY });
+        return createAiPlanImprover({
+          model: google(DEFAULT_GEMINI_TEXT_MODEL),
+          stepDataSchema: starterDomain.schemas.stepData,
+          instructions: starterDomain.planning.instructions,
+        });
+      },
       createCompileRuntime(env) {
         if (!env.GEMINI_API_KEY) return undefined;
         const google = createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY });
@@ -55,6 +67,7 @@ function createStarterWorker(authorize: AuthorizeFn) {
             normalizedInputSchema: starterDomain.schemas.normalizedInput,
           }),
           planner: createAiPlanGenerator({ model, stepDataSchema: starterDomain.schemas.stepData }),
+          validateCompileInput: (input) => starterDomain.schemas.compileInput.parse(input),
           validateNormalizedInput: (input) => starterDomain.schemas.normalizedInput.parse(input),
           async validatePlan({ plan, normalizedInput }) {
             const validation = await starterDomain.planning.validatePlan(

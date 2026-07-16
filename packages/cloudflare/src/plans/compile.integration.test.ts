@@ -70,15 +70,53 @@ describe("AI-native plan compile", () => {
     expect(response.status).toBe(202);
     const body = (await response.json()) as {
       job: { status: string };
-      clarification: { id: string; status: string };
+      clarification: { id: string; status: string; questions: Array<{ id: string }> };
     };
     expect(body.job.status).toBe("waiting");
     expect(body.clarification.status).toBe("pending");
     const answered = await api(`/plans/${planId}/clarifications/${body.clarification.id}/answer`, {
       method: "POST",
-      body: JSON.stringify({ answers: { answer: "09:00" } }),
+      body: JSON.stringify({ answers: { [body.clarification.questions[0]!.id]: "09:00" } }),
     });
     expect(answered.status).toBe(200);
+  });
+
+  it("cannot answer another plan's clarification", async () => {
+    const createPlan = async () => {
+      const created = await api("/plans", {
+        method: "POST",
+        body: JSON.stringify({ domainId: "outing", goal: outingGoal }),
+      });
+      return ((await created.json()) as { artifact: { id: string } }).artifact.id;
+    };
+    const planId = await createPlan();
+    const otherPlanId = await createPlan();
+    await api(`/plans/${planId}/sources`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "text", label: "Brief", content: "Go somewhere" }),
+    });
+    const response = await api(`/plans/${planId}/compile-jobs`, {
+      method: "POST",
+      body: JSON.stringify({ compileInput: { clarify: true } }),
+    });
+    const clarification = (
+      (await response.json()) as {
+        clarification: { id: string; questions: Array<{ id: string }> };
+      }
+    ).clarification;
+
+    const rejected = await api(`/plans/${otherPlanId}/clarifications/${clarification.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ answers: { [clarification.questions[0]!.id]: "09:00" } }),
+    });
+    expect(rejected.status).toBe(404);
+
+    const inspector = (await (await api(`/plans/${planId}/inspector`)).json()) as {
+      inspector: { clarifications: Array<{ id: string; status: string }> };
+    };
+    expect(inspector.inspector.clarifications).toContainEqual(
+      expect.objectContaining({ id: clarification.id, status: "pending" }),
+    );
   });
 
   it("reviews a natural-language edit diff before applying it", async () => {

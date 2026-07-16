@@ -59,6 +59,13 @@ export function PlanDraftPanel({
     }
   }
 
+  async function improve(request: string): Promise<PlanArtifactDetail> {
+    const proposal = await client.proposePlanEdit(planId, request);
+    const changed = proposal.diff.updatedStepIds.length + proposal.diff.addedStepIds.length;
+    if (!window.confirm(`${changed}件の変更案を適用しますか？`)) return artifact;
+    return (await client.confirmPlanEdit(planId, proposal.id)).artifact;
+  }
+
   async function handleRegenerate() {
     setBusy(true);
     try {
@@ -179,9 +186,7 @@ export function PlanDraftPanel({
                 size="sm"
                 variant="secondary"
                 disabled={busy || !hasSteps}
-                onClick={() =>
-                  void run(chip.label, () => client.improvePlan(planId, { request: chip.request }))
-                }
+                onClick={() => void run(chip.label, () => improve(chip.request))}
               >
                 {chip.label}
               </Button>
@@ -197,11 +202,7 @@ export function PlanDraftPanel({
             <Button
               variant="outline"
               disabled={busy || !hasSteps || !improveRequest.trim()}
-              onClick={() =>
-                void run("改善しました", () =>
-                  client.improvePlan(planId, { request: improveRequest.trim() }),
-                )
-              }
+              onClick={() => void run("改善しました", () => improve(improveRequest.trim()))}
             >
               改善を適用
             </Button>

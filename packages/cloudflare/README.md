@@ -78,7 +78,8 @@ Migration `0004` marks pre-existing sessions with Domain version `0` (unknown/in
 | `POST`   | `/plans/:id/build`                                          | Atomically normalize + generate; failures leave the artifact unchanged                  |
 | `POST`   | `/plans/:id/normalize`                                      | Domain normalize (+ optional freeTextResolver)                                          |
 | `POST`   | `/plans/:id/resolve-field`                                  | Single free-text field → structured (modal add / optional LLM)                          |
-| `POST`   | `/plans/:id/improve`                                        | PlanImprover (host-injected)                                                            |
+| `POST`   | `/plans/:id/edit-proposals`                                 | Generate a reviewable PlanImprover diff                                                 |
+| `POST`   | `/plans/:id/edit-proposals/:proposalId/confirm`             | Confirm and apply a pending edit proposal                                               |
 | `GET`    | `/plans/:id/versions`                                       | Artifact version history                                                                |
 | `GET`    | `/sessions/:id`                                             | Materialized state                                                                      |
 | `GET`    | `/sessions/:id/snapshot`                                    | Runtime snapshot                                                                        |
