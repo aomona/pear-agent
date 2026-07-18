@@ -31,7 +31,7 @@ invariants, records provenance, and owns every durable state transition.
 - `@pear-agent/ai`: Vercel AI SDK implementations of interpretation, planning, editing, and replanning.
 - `@pear-agent/cloudflare`: Workflows, Agents/DO, D1, R2, authorization, and HTTP adapters.
 - `@pear-agent/react`: typed clients and hooks only; applications own UI.
-- `create-pear-agent`: AI-first starter plus explicit Cook, Presentation, and Outing examples.
+- `create-pear-agent`: AI-first Minimal Starter (default). Outing remains an optional compatibility example.
 
 Core never imports Cloudflare, React, Gemini, or AI SDK. Provider keys, authentication,
 authorization, and user data stay in the host application's Cloudflare account.
@@ -54,15 +54,19 @@ and warnings, but not raw prompts or raw provider responses by default.
 - AI failure: bounded retry, then an inspectable error; no implicit deterministic fallback.
 - Realtime: only high-confidence, low-risk observations may be recorded automatically.
 
-## Reference applications
+## Reference applications (v0.1 scope)
 
-Cook is the primary reference: multiple recipe sources, serving time, servings, and
-equipment compile into a resource-aware schedule, then a reported delay triggers partial
-replanning. Presentation is a vertical slice: a PDF and time limit compile into per-slide
-timing, and an overrun redistributes the remaining time. Outing remains a compatibility sample.
+v0.1 ships **Runtime packages + AI-first Minimal Starter**. The starter exercises
+Sources → Compile → Review → Execute with a generic Domain. Outing remains a compatibility
+sample under `examples/`.
+
+Cook (multi-recipe schedule + delay replan) and Presentation (PDF timing slice) are
+**out of v0.1** and will be built later as separate Domain / app deliverables—not as
+Runtime packages.
 
 ## Delivery
 
 All implementation branches target `feat/ai-native-runtime`. The integration branch targets
-`dev` only after the full local gate and both reference E2E flows pass. The v0.1 development
-database is reset to a new migration baseline; pre-v0.1 persisted data is not migrated.
+`dev` only after the full local gate and Minimal Starter compile/execute smoke pass.
+The v0.1 development database is reset to a new migration baseline; pre-v0.1 persisted
+data is not migrated.

@@ -105,7 +105,8 @@ Sources -> Interpret -> Clarify -> Plan -> Review -> Execute -> Assess -> Replan
 
 - ReactはUIを固定せずtyped client/hooksを提供する
 - Starterは`Sources -> Compile -> Review -> Execute`を実演する
-- `--example cook|presentation|outing`を提供する
+- v0.1のCLIはMinimal Starterをデフォルト生成し、`--example outing`のみ互換サンプルとして提供する
+- Cook / Presentation など本格 Reference は v0.1 外（別途）
 - API key未設定時は明示setup errorを返す
 
 ### FR-12 Authorization
@@ -137,9 +138,21 @@ Sources -> Interpret -> Clarify -> Plan -> Review -> Execute -> Assess -> Replan
 - Node durable adapter
 - Hosted control plane、組み込みauth/tenant/key管理
 - 自動provider/deterministic fallback
+- Cook / Presentation など Domain 専用 Reference Application 本体
 - Cookのスマート家電Capability
 
-## 8. 2026年8月20日の完成条件
+## 8. v0.1 完成条件
 
-CookとPresentationの両方でSource入力、AI構造化、Plan生成、自然言語編集、
-Realtime実行、途中Replanを完走し、Artifact Inspectorから全provenanceを追跡できること。
+Minimal Starter（または同等の host app）で次を完走できること。
+
+```text
+Sources → AI Compile → Clarify? → Review → NL Edit → Execute
+```
+
+- Source 入力（text / URL / file）と durable CompileJob
+- AI 構造化・Plan 生成・clarification・自然言語 edit proposal
+- Execution Session でのステップ進行
+- Artifact Inspector から sources / jobs / generations / provenance を追跡
+- ローカル pre-push gate（typecheck / lint / format / test）が緑
+
+Cook / Presentation の E2E は v0.1 の完成条件に含めない。

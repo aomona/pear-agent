@@ -17,16 +17,16 @@ Sources → Interpret → Clarify? → Plan → Review → Execute → Assess �
 - Runtime が ID、version、状態遷移、認可、retry budget、provenance を所有します。LLM 出力は必ず Zod と Domain invariant を通ります。
 - deterministic planner は明示 adapter / fixture として利用できます。AI 障害時の暗黙 fallback はしません。
 
-## Packages
+## Packages (v0.1)
 
 - `@pear-agent/core` — portable schemas, reducers, Domain/AI Ports, plan/replan contracts
-- `@pear-agent/ai` — Vercel AI SDK structured interpretation, planning, editing
+- `@pear-agent/ai` — Vercel AI SDK structured interpretation, planning, editing, replan
 - `@pear-agent/cloudflare` — Hono, Agents/DO, D1 + Drizzle, R2, compile/replan APIs
 - `@pear-agent/react` — hooks-only plan compile, execution, continuation, voice APIs
-- `@pear-agent/cook-domain` — recipe normalization, parallel cooking and serve-time invariants
-- `@pear-agent/presentation-domain` — PDF slide interpretation and hard-duration allocation invariants
+- `create-pear-agent` — AI-first Minimal Starter scaffold
 
-Outing remains a compatibility sample. Cook is the primary product reference; Presentation proves the same runtime works for a different timing domain.
+v0.1 の検証軸は **Runtime + Minimal Starter**（Sources → Compile → Review → Execute）です。  
+Outing（`examples/outing-*`）は互換サンプルとして残します。Cook / Presentation などの本格 Reference Application は v0.1 外で別途作ります。
 
 ## Quick start
 
