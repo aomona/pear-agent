@@ -40,7 +40,12 @@ export async function runPlanCompileJob(input: {
   if (!currentJob) throw new CompileJobNotFoundError(params.jobId);
   if (currentJob.status === "completed") return { job: currentJob, artifact };
   const existingClarification = await repository.getClarificationForJob(params.jobId);
-  if (existingClarification && ["running", "waiting"].includes(currentJob.status)) {
+  // Only short-circuit while a clarification is still pending for this job.
+  // After answer, the job is re-queued with answers and must re-run AI.
+  if (
+    existingClarification?.status === "pending" &&
+    ["running", "waiting"].includes(currentJob.status)
+  ) {
     const job =
       currentJob.status === "waiting"
         ? currentJob

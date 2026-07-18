@@ -583,6 +583,7 @@ export class D1CompileRepository {
       );
     }
     const answeredAt = new Date();
+    // Re-queue the same job so clarification is a resume, not cancel+new-job.
     const [updated] = await this.db.batch([
       this.db
         .update(clarificationRequests)
@@ -602,8 +603,9 @@ export class D1CompileRepository {
       this.db
         .update(compileJobs)
         .set({
-          status: "cancelled",
-          error: "Superseded by a resumed compile with clarification answers",
+          status: "queued",
+          phase: "queued",
+          error: null,
           updatedAt: answeredAt.toISOString(),
         })
         .where(and(eq(compileJobs.id, current.compileJobId), eq(compileJobs.status, "waiting"))),

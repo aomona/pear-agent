@@ -117,27 +117,21 @@ export function usePlanCompiler(planId: string): UsePlanCompilerResult {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
-      return run(async () => {
-        try {
-          await client.answerPlanClarification(planId, clarificationId, answers);
-        } catch (cause) {
-          // Answer is not retriable after success: server marks clarification answered and
-          // cancels the waiting job. On 409 already-answered, continue with compile.
-          const isAnsweredConflict =
-            cause instanceof PearClientError &&
-            cause.status === 409 &&
-            /answered|no longer pending/i.test(cause.message);
-          if (!isAnsweredConflict) throw cause;
-        }
-        const next = await client.compilePlan(planId, {
+      // Server answers + re-queues the same job and continues compile in one request.
+      const next = await run(async () => {
+        const outcome = await client.answerPlanClarification(planId, clarificationId, answers, {
           compileInput,
-          clarificationAnswers: answers,
+          resumeCompile: true,
           signal: controller.signal,
         });
-        setResult(next);
-        await refreshInspectorQuiet();
-        return next;
+        if (!("job" in outcome)) {
+          throw new PearClientError("Clarification answered without compile resume", 500, outcome);
+        }
+        return outcome;
       });
+      setResult(next);
+      await refreshInspectorQuiet();
+      return next;
     },
     refreshInspector,
   };

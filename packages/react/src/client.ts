@@ -1,14 +1,10 @@
 import {
-  dateSchema,
   executionPlanSchema,
   executionSessionSchema,
   affectedSubgraphSchema,
   clarificationRequestSchema,
   compileJobSchema,
-  generationMetadataSchema,
-  interpretationAssumptionSchema,
   sourceArtifactSchema,
-  planArtifactStatusSchema,
   replanAssessmentSchema,
   runtimeEventSchema,
   stepStatesSchema,
@@ -40,6 +36,12 @@ import {
   parseExecutionContinuation,
   parsePlanChange,
 } from "./parse.js";
+import {
+  planArtifactDetailSchema,
+  planArtifactInspectorSchema,
+  planEditProposalSchema,
+  planListItemSchema,
+} from "./plan-schemas.js";
 import type {
   AppendEventInput,
   CreateSessionInput,
@@ -91,76 +93,6 @@ const createSessionResultSchema = z.object({
   plan: executionPlanSchema(z.unknown()),
   stepStates: stepStatesSchema,
   planArtifactId: z.string().min(1).optional(),
-});
-
-const optionalTitle = z.preprocess(
-  (value) => (value === null || value === "" ? undefined : value),
-  z.string().min(1).max(160).optional(),
-);
-
-const planListItemSchema = z.object({
-  id: z.string().min(1),
-  domainId: z.string().min(1),
-  status: planArtifactStatusSchema,
-  title: optionalTitle,
-  version: z.number().int().positive(),
-  goalId: z.string().min(1),
-  createdAt: dateSchema,
-  updatedAt: dateSchema,
-});
-
-const planArtifactDetailSchema = z.object({
-  id: z.string().min(1),
-  domainId: z.string().min(1),
-  status: planArtifactStatusSchema,
-  title: optionalTitle,
-  version: z.number().int().positive(),
-  goal: z.unknown(),
-  currentPlan: executionPlanSchema(z.unknown()),
-  createdAt: dateSchema,
-  updatedAt: dateSchema,
-  normalizedInput: z.unknown().optional(),
-  ownerActorId: z.string().nullable().optional(),
-});
-
-const planArtifactInspectorSchema = z.object({
-  sources: z.array(sourceArtifactSchema),
-  jobs: z.array(compileJobSchema),
-  interpretations: z.array(
-    z.object({
-      id: z.string().min(1),
-      planArtifactId: z.string().min(1),
-      compileJobId: z.string().min(1),
-      revision: z.number().int().positive(),
-      normalizedInput: z.unknown(),
-      assumptions: z.array(interpretationAssumptionSchema),
-      generation: generationMetadataSchema,
-      createdAt: dateSchema,
-    }),
-  ),
-  clarifications: z.array(clarificationRequestSchema),
-  generations: z.array(generationMetadataSchema),
-});
-
-const planEditProposalSchema = z.object({
-  id: z.string().min(1),
-  planArtifactId: z.string().min(1),
-  baseVersion: z.number().int().positive(),
-  request: z.string().min(1),
-  candidatePlan: executionPlanSchema(z.unknown()),
-  diff: z.object({
-    addedStepIds: z.array(z.string()),
-    removedStepIds: z.array(z.string()),
-    updatedStepIds: z.array(z.string()),
-    fieldChanges: z.array(
-      z.object({ stepId: z.string(), field: z.string(), before: z.unknown(), after: z.unknown() }),
-    ),
-    durationDeltaSeconds: z.number(),
-  }),
-  status: z.enum(["pending", "applied", "rejected", "stale"]),
-  createdByActorId: z.string().min(1),
-  createdAt: dateSchema,
-  appliedAt: dateSchema.nullable(),
 });
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -295,6 +227,7 @@ export class PearClient {
     input: {
       compileInput?: unknown;
       clarificationAnswers?: Readonly<Record<string, string>>;
+      resumeJobId?: string;
       signal?: AbortSignal;
     } = {},
   ): Promise<PlanCompileResult> {
@@ -304,6 +237,15 @@ export class PearClient {
       artifact?: unknown;
       clarification?: unknown;
     }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: bodyInput });
+    return this.finishCompileResult(planId, body, signal);
+  }
+
+  /** Poll/normalize a compile-jobs or answer-resume response into a terminal PlanCompileResult. */
+  private async finishCompileResult(
+    planId: string,
+    body: { job?: unknown; artifact?: unknown; clarification?: unknown },
+    signal?: AbortSignal,
+  ): Promise<PlanCompileResult> {
     let result: PlanCompileResult = {
       job: compileJobSchema.parse(body.job),
       ...(body.artifact ? { artifact: planArtifactDetailSchema.parse(body.artifact) } : {}),
@@ -353,16 +295,41 @@ export class PearClient {
     return compileJobSchema.parse(body.job);
   }
 
+  /**
+   * Answer a pending clarification. By default the Worker re-queues the same compile job
+   * and continues compilation in one request (`resumeCompile: true`).
+   */
   async answerPlanClarification(
     planId: string,
     clarificationId: string,
     answers: Readonly<Record<string, string>>,
-  ) {
-    const body = await this.requestJson<{ clarification: unknown }>(
-      `/plans/${planId}/clarifications/${clarificationId}/answer`,
-      { method: "POST", body: { answers } },
-    );
-    return clarificationRequestSchema.parse(body.clarification);
+    options: {
+      compileInput?: unknown;
+      resumeCompile?: boolean;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<
+    PlanCompileResult | { clarification: import("@pear-agent/core").ClarificationRequest }
+  > {
+    const resumeCompile = options.resumeCompile ?? true;
+    const body = await this.requestJson<{
+      job?: unknown;
+      artifact?: unknown;
+      clarification?: unknown;
+    }>(`/plans/${planId}/clarifications/${clarificationId}/answer`, {
+      method: "POST",
+      body: {
+        answers,
+        resumeCompile,
+        ...(options.compileInput !== undefined ? { compileInput: options.compileInput } : {}),
+      },
+    });
+    if (!resumeCompile || !body.job) {
+      return {
+        clarification: clarificationRequestSchema.parse(body.clarification),
+      };
+    }
+    return this.finishCompileResult(planId, body, options.signal);
   }
 
   async getPlanInspector(planId: string): Promise<PlanArtifactInspector> {

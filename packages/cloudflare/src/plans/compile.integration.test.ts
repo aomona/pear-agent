@@ -76,9 +76,13 @@ describe("AI-native plan compile", () => {
     expect(body.clarification.status).toBe("pending");
     const answered = await api(`/plans/${planId}/clarifications/${body.clarification.id}/answer`, {
       method: "POST",
-      body: JSON.stringify({ answers: { [body.clarification.questions[0]!.id]: "09:00" } }),
+      body: JSON.stringify({
+        answers: { [body.clarification.questions[0]!.id]: "09:00" },
+        // Resume the same job; product default is resumeCompile true.
+      }),
     });
-    expect(answered.status).toBe(200);
+    // Answer re-queues and continues compile (inline runtime may complete or wait again).
+    expect([200, 201, 202]).toContain(answered.status);
   });
 
   it("cannot answer another plan's clarification", async () => {
