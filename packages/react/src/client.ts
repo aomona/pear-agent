@@ -28,7 +28,7 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
-import { joinUrl, newId, responseToPearClientError } from "./client-transport.js";
+import { delay, joinUrl, newId, responseToPearClientError } from "./client-transport.js";
 import { PEAR_CONTEXT_HEADER, serializePearClientContext } from "./context-wire.js";
 import { PearClientError } from "./errors.js";
 import {
@@ -323,7 +323,6 @@ export class PearClient {
     input: {
       compileInput?: unknown;
       clarificationAnswers?: Readonly<Record<string, string>>;
-      resumeJobId?: string;
       signal?: AbortSignal;
     } = {},
   ): Promise<PlanCompileResult> {
@@ -332,12 +331,23 @@ export class PearClient {
       job: unknown;
       artifact?: unknown;
       clarification?: unknown;
-    }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: bodyInput });
+    }>(`/plans/${planId}/compile-jobs`, {
+      method: "POST",
+      body: bodyInput,
+      ...(signal ? { signal } : {}),
+    });
     return this.finishCompileResult(planId, body, signal);
   }
 
-  async getCompileJob(planId: string, jobId: string): Promise<CompileJob> {
-    const body = await this.requestJson<{ job: unknown }>(`/plans/${planId}/compile-jobs/${jobId}`);
+  async getCompileJob(
+    planId: string,
+    jobId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<CompileJob> {
+    const body = await this.requestJson<{ job: unknown }>(
+      `/plans/${planId}/compile-jobs/${jobId}`,
+      options?.signal ? { signal: options.signal } : undefined,
+    );
     return compileJobSchema.parse(body.job);
   }
 
@@ -367,6 +377,7 @@ export class PearClient {
         resumeCompile,
         ...(options.compileInput !== undefined ? { compileInput: options.compileInput } : {}),
       },
+      ...(options.signal ? { signal: options.signal } : {}),
     });
     if (!resumeCompile || !body.job) {
       return {
@@ -376,8 +387,14 @@ export class PearClient {
     return this.finishCompileResult(planId, body, options.signal);
   }
 
-  async getPlanInspector(planId: string): Promise<PlanArtifactInspector> {
-    const body = await this.requestJson<{ inspector: unknown }>(`/plans/${planId}/inspector`);
+  async getPlanInspector(
+    planId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<PlanArtifactInspector> {
+    const body = await this.requestJson<{ inspector: unknown }>(
+      `/plans/${planId}/inspector`,
+      options?.signal ? { signal: options.signal } : undefined,
+    );
     return planArtifactInspectorSchema.parse(body.inspector);
   }
 
@@ -703,14 +720,20 @@ export class PearClient {
           job: result.job,
         });
       }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      result = { job: await this.getCompileJob(planId, result.job.id) };
+      try {
+        await delay(500, signal);
+      } catch {
+        throw new PearClientError("Plan compile aborted", 499, { job: result.job });
+      }
+      result = {
+        job: await this.getCompileJob(planId, result.job.id, signal ? { signal } : undefined),
+      };
     }
     if (result.job.status === "completed") {
       return { ...result, artifact: await this.getPlan(planId) };
     }
     if (result.job.status === "waiting") {
-      const inspector = await this.getPlanInspector(planId);
+      const inspector = await this.getPlanInspector(planId, signal ? { signal } : undefined);
       const clarification = inspector.clarifications.find(
         ({ compileJobId, status }) => compileJobId === result.job.id && status === "pending",
       );
@@ -799,7 +822,13 @@ export class PearClient {
 
   private async requestJson<T>(
     path: string,
-    init?: { method?: string; body?: unknown; keepalive?: boolean; contextHeader?: string },
+    init?: {
+      method?: string;
+      body?: unknown;
+      keepalive?: boolean;
+      contextHeader?: string;
+      signal?: AbortSignal;
+    },
   ): Promise<T> {
     let contextHeader =
       init?.contextHeader ?? (init?.keepalive === true ? this.cachedContextHeader : undefined);
@@ -815,6 +844,7 @@ export class PearClient {
       method,
       headers,
       ...(init?.keepalive === true ? { keepalive: true } : {}),
+      ...(init?.signal ? { signal: init.signal } : {}),
     };
     if (init?.body !== undefined) {
       headers["content-type"] = "application/json";

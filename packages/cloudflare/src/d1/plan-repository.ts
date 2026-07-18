@@ -13,7 +13,7 @@ import {
   type PlanRepository,
   type PlanVersionRecord,
 } from "@pear-agent/core";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { parseJson, serializeJson } from "../serialize.js";
@@ -260,6 +260,9 @@ export class D1PlanRepository implements PlanRepository {
     // SQL errors, but if the CAS-UPDATE matches 0 rows (concurrent race), the
     // version-history INSERT already committed. In that case we DELETE the orphaned
     // row manually before throwing the conflict error.
+    //
+    // Active compile exclusion is enforced in the CAS WHERE (not only preflight
+    // assertPlanMutable) so a compile that starts mid-write cannot lose the race.
     try {
       const results = await this.db.batch([
         this.db.insert(planArtifactVersions).values({
@@ -287,6 +290,11 @@ export class D1PlanRepository implements PlanRepository {
             and(
               eq(planArtifacts.id, input.artifactId),
               eq(planArtifacts.version, existing.version),
+              sql`NOT EXISTS (
+                SELECT 1 FROM compile_jobs
+                WHERE plan_artifact_id = ${input.artifactId}
+                  AND status IN ('queued', 'running', 'waiting')
+              )`,
             ),
           ),
       ]);
@@ -302,6 +310,19 @@ export class D1PlanRepository implements PlanRepository {
               eq(planArtifactVersions.version, plan.version),
             ),
           );
+        const activeCompile = await this.d1
+          .prepare(
+            `SELECT id FROM compile_jobs
+             WHERE plan_artifact_id = ? AND status IN ('queued', 'running', 'waiting')
+             LIMIT 1`,
+          )
+          .bind(input.artifactId)
+          .first();
+        if (activeCompile) {
+          throw new PlanArtifactConflictError(
+            `Cannot update plan ${input.artifactId} while a compile job is active`,
+          );
+        }
         throw new PlanArtifactConflictError(
           `Plan artifact ${input.artifactId} version race: base ${existing.version} was updated concurrently`,
         );

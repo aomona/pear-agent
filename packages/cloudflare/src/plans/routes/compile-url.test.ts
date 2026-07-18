@@ -10,6 +10,9 @@ describe("validatePublicUrl", () => {
     "http://[::ffff:127.0.0.1]/secret",
     "http://127.0.0.1/secret",
     "http://169.254.169.254/metadata",
+    "http://localhost/secret",
+    "http://localhost./secret",
+    "http://service.localhost/secret",
   ])("rejects private address %s", (url) => {
     expect(() => validatePublicUrl(url)).toThrow("Private network");
   });

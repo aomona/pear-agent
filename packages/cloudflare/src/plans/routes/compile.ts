@@ -44,8 +44,6 @@ const sourceBodySchema = z.discriminatedUnion("kind", [
 const compileBodySchema = z.object({
   compileInput: z.unknown().default({}),
   clarificationAnswers: z.record(z.string(), z.string().trim().min(1).max(10_000)).optional(),
-  /** Resume an existing re-queued job (used after clarification answer). */
-  resumeJobId: z.string().min(1).optional(),
 });
 
 export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext): void {
@@ -279,6 +277,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
       return c.json({ clarification: toJsonValue(clarification) });
     }
     // Single product path: answer + resume same job (no cancel + second POST).
+    // resumeJobId stays internal — never accepted from external compile POST bodies.
     return executeCompileStart({
       env: c.env,
       routes,
@@ -286,8 +285,8 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
       body: {
         compileInput: body.compileInput ?? {},
         clarificationAnswers: body.answers,
-        resumeJobId: clarification.compileJobId,
       },
+      resumeJobId: clarification.compileJobId,
       context,
       requestSignal: c.req.raw.signal,
     });
@@ -307,6 +306,8 @@ async function executeCompileStart(input: {
   routes: PlanRouteContext;
   planId: string;
   body: z.infer<typeof compileBodySchema>;
+  /** Internal only: job id requeued by the clarification answer flow. */
+  resumeJobId?: string;
   context: PearRequestContext;
   requestSignal: AbortSignal;
 }): Promise<Response> {
@@ -317,12 +318,13 @@ async function executeCompileStart(input: {
   }
   const repository = new D1CompileRepository(input.env.DB);
   let job;
-  if (input.body.resumeJobId) {
-    const existing = await repository.getJob(input.body.resumeJobId);
+  if (input.resumeJobId) {
+    const existing = await repository.getJob(input.resumeJobId);
     if (!existing || existing.planArtifactId !== input.planId) {
-      throw new CompileJobNotFoundError(input.body.resumeJobId);
+      throw new CompileJobNotFoundError(input.resumeJobId);
     }
-    if (existing.status !== "queued" && existing.status !== "running") {
+    // Clarification answer requeues to `queued`. Do not accept arbitrary running jobs.
+    if (existing.status !== "queued") {
       throw new HTTPException(409, {
         message: `Cannot resume a ${existing.status} compile job`,
       });

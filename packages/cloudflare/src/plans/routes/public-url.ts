@@ -70,9 +70,13 @@ export function validatePublicUrl(raw: string): URL {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new HTTPException(400, { message: "Source URL must use http or https" });
   }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const host = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.+$/, "");
   if (
     host === "localhost" ||
+    host.endsWith(".localhost") ||
     host.endsWith(".local") ||
     isBlockedIpv4(host) ||
     isBlockedIpv6(host)

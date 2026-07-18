@@ -118,6 +118,26 @@ describe("PearClient", () => {
     } satisfies Partial<PearClientError>);
   });
 
+  it("preserves plain-text error response bodies", async () => {
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: vi.fn(
+        async () =>
+          new Response("upstream gateway timeout", {
+            status: 504,
+            headers: { "content-type": "text/plain" },
+          }),
+      ) as typeof fetch,
+    });
+
+    await expect(client.getSession("s1")).rejects.toMatchObject({
+      name: "PearClientError",
+      status: 504,
+      message: "upstream gateway timeout",
+    } satisfies Partial<PearClientError>);
+  });
+
   it("uses a response message when the error field is non-string", async () => {
     const client = new PearClient({
       baseUrl: "https://worker.example",

@@ -359,6 +359,66 @@ describe("@pear-agent/ai", () => {
       type: "add_step",
       step: { id: "step-runtime" },
     });
+    expect(patch.affectedStepIds).toEqual(["step-runtime"]);
+  });
+
+  it("rejects replan steps that invent source provenance", async () => {
+    const replanner = createAiReplanGenerator({
+      model: {} as never,
+      stepDataSchema: z.object({ kind: z.string() }),
+      createId: () => "runtime",
+      generate: fixtureGenerate({
+        operations: [
+          {
+            type: "add_step",
+            step: {
+              id: "model-step",
+              executor: { type: "human" },
+              after: [],
+              requirements: [],
+              estimatedDurationSeconds: 30,
+              timers: [],
+              domainData: { kind: "prep" },
+              sourceRefs: [{ sourceId: "invented-source" }],
+            },
+          },
+        ],
+        summary: "Add prep",
+      }),
+    });
+    await expect(
+      replanner.generatePatch({
+        domainId: "cook",
+        instructions: "Replan",
+        plan: {
+          id: "trusted-plan",
+          version: 1,
+          goal: {
+            id: "goal-1",
+            description: "Dinner",
+            successCriteria: [],
+            completionPolicy: "automatic",
+          },
+          steps: [
+            {
+              id: "existing",
+              executor: { type: "human" },
+              after: [],
+              requirements: [],
+              estimatedDurationSeconds: 30,
+              timers: [],
+              domainData: { kind: "prep" },
+              sourceRefs: [{ sourceId: "source-1" }],
+            },
+          ],
+        },
+        normalizedInput: {},
+        assessment: {},
+        affectedStepIds: ["model-step"],
+        causeRefs: [{ type: "runtime_event", eventId: "event-1" }],
+        baseLastEventId: "event-1",
+      }),
+    ).rejects.toThrow(/unknown source/);
   });
 
   it("replaces model plan and step ids while preserving dependencies", async () => {

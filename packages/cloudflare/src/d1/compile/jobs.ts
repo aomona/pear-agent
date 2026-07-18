@@ -207,6 +207,12 @@ export async function saveInterpretation(
         generationJson: serializeJson(generation),
       })
       .where(eq(interpretationArtifacts.id, row.id));
+    // Keep generation_records aligned with the latest interpretation attempt (upsert).
+    await recordGeneration(ctx, {
+      planArtifactId: input.planArtifactId,
+      compileJobId: input.compileJobId,
+      generation,
+    });
     return {
       id: row.id,
       planArtifactId: row.planArtifactId,
@@ -257,18 +263,26 @@ export async function recordGeneration(
     generation: GenerationMetadata;
   },
 ): Promise<void> {
+  const generation = generationMetadataSchema.parse(input.generation);
   const existing = await ctx.db
     .select({ id: generationRecords.id })
     .from(generationRecords)
     .where(
       and(
         eq(generationRecords.compileJobId, input.compileJobId),
-        eq(generationRecords.stage, input.generation.stage),
+        eq(generationRecords.stage, generation.stage),
       ),
     )
     .limit(1);
-  if (existing[0]) return;
-  await ctx.db.insert(generationRecords).values(generationToRow(input, input.generation));
+  if (existing[0]) {
+    // Same job+stage resume/retry: refresh metadata instead of inserting a duplicate.
+    await ctx.db
+      .update(generationRecords)
+      .set({ metadataJson: serializeJson(generation) })
+      .where(eq(generationRecords.id, existing[0].id));
+    return;
+  }
+  await ctx.db.insert(generationRecords).values(generationToRow(input, generation));
 }
 
 export async function createClarification(
@@ -280,12 +294,19 @@ export async function createClarification(
     expiresAt: Date;
   },
 ): Promise<ClarificationRequest> {
-  const existing = await ctx.db
+  // Reuse an in-flight pending request; allow a new round after answered/expired.
+  const pending = await ctx.db
     .select()
     .from(clarificationRequests)
-    .where(eq(clarificationRequests.compileJobId, input.compileJobId))
+    .where(
+      and(
+        eq(clarificationRequests.compileJobId, input.compileJobId),
+        eq(clarificationRequests.status, "pending"),
+      ),
+    )
+    .orderBy(desc(clarificationRequests.createdAt))
     .limit(1);
-  if (existing[0]) return clarificationFromRow(existing[0]);
+  if (pending[0]) return clarificationFromRow(pending[0]);
   const now = new Date();
   const request = clarificationRequestSchema.parse({
     id: crypto.randomUUID(),
@@ -303,10 +324,24 @@ export async function getClarificationForJob(
   ctx: CompileRepoContext,
   compileJobId: string,
 ): Promise<ClarificationRequest | null> {
+  // Prefer the latest pending round; otherwise the most recent request for the job.
+  const pending = await ctx.db
+    .select()
+    .from(clarificationRequests)
+    .where(
+      and(
+        eq(clarificationRequests.compileJobId, compileJobId),
+        eq(clarificationRequests.status, "pending"),
+      ),
+    )
+    .orderBy(desc(clarificationRequests.createdAt))
+    .limit(1);
+  if (pending[0]) return clarificationFromRow(pending[0]);
   const rows = await ctx.db
     .select()
     .from(clarificationRequests)
     .where(eq(clarificationRequests.compileJobId, compileJobId))
+    .orderBy(desc(clarificationRequests.createdAt))
     .limit(1);
   return rows[0] ? clarificationFromRow(rows[0]) : null;
 }
@@ -363,7 +398,9 @@ export async function answerClarification(
   }
   const answeredAt = new Date();
   // Re-queue the same job so clarification is a resume, not cancel+new-job.
-  const [updated] = await ctx.db.batch([
+  // Clarification may only be consumed while the job is still waiting — otherwise
+  // a concurrent cancel would answer without resuming.
+  const [clarificationUpdated, jobUpdated] = await ctx.db.batch([
     ctx.db
       .update(clarificationRequests)
       .set({
@@ -376,6 +413,10 @@ export async function answerClarification(
           eq(clarificationRequests.planArtifactId, planArtifactId),
           eq(clarificationRequests.id, id),
           eq(clarificationRequests.status, "pending"),
+          sql`EXISTS (
+            SELECT 1 FROM compile_jobs
+            WHERE id = ${current.compileJobId} AND status = 'waiting'
+          )`,
         ),
       )
       .returning(),
@@ -387,12 +428,15 @@ export async function answerClarification(
         error: null,
         updatedAt: answeredAt.toISOString(),
       })
-      .where(and(eq(compileJobs.id, current.compileJobId), eq(compileJobs.status, "waiting"))),
+      .where(and(eq(compileJobs.id, current.compileJobId), eq(compileJobs.status, "waiting")))
+      .returning(),
   ]);
-  if (!updated[0]) {
-    throw new CompileJobConflictError("Clarification request is no longer pending");
+  if (!clarificationUpdated[0] || !jobUpdated[0]) {
+    throw new CompileJobConflictError(
+      "Clarification answer could not requeue a waiting compile job",
+    );
   }
-  return clarificationFromRow(updated[0]);
+  return clarificationFromRow(clarificationUpdated[0]);
 }
 
 export async function inspect(

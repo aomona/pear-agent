@@ -10,7 +10,7 @@ import type { LanguageModel } from "ai";
 import { z } from "zod";
 
 import { generateStructured, type StructuredGenerator } from "./generate.js";
-import { rewritePatchStepIdentity } from "./identity.js";
+import { rewriteAffectedStepIds, rewritePatchStepIdentity } from "./identity.js";
 
 export type CreateAiReplanGeneratorOptions = {
   model: LanguageModel;
@@ -82,21 +82,26 @@ export function createAiReplanGenerator(options: CreateAiReplanGeneratorOptions)
       if (causeEventIds.length === 0) {
         throw new Error("Runtime replan requires at least one runtime_event cause reference");
       }
-      const operations = rewritePatchStepIdentity(
+      const rewritten = rewritePatchStepIdentity(
         candidate.operations as PlanPatchOperation[],
         input.plan,
         createId,
+        { causeRefs: input.causeRefs },
       );
       return planPatchSchema.parse({
         ...candidate,
-        operations,
+        operations: rewritten.operations,
         id: `patch-${createId()}`,
         basePlanId: input.plan.id,
         basePlanVersion: input.plan.version,
         baseLastEventId: input.baseLastEventId,
         causeEventIds,
         causeRefs: input.causeRefs,
-        affectedStepIds: [...input.affectedStepIds],
+        affectedStepIds: rewriteAffectedStepIds(
+          input.affectedStepIds,
+          rewritten.stepIds,
+          rewritten.addedStepIds,
+        ),
       });
     },
   };
