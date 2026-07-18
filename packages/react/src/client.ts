@@ -292,13 +292,18 @@ export class PearClient {
 
   async compilePlan(
     planId: string,
-    input: { compileInput?: unknown; clarificationAnswers?: Readonly<Record<string, string>> } = {},
+    input: {
+      compileInput?: unknown;
+      clarificationAnswers?: Readonly<Record<string, string>>;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<PlanCompileResult> {
+    const { signal, ...bodyInput } = input;
     const body = await this.requestJson<{
       job: unknown;
       artifact?: unknown;
       clarification?: unknown;
-    }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: input });
+    }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: bodyInput });
     let result: PlanCompileResult = {
       job: compileJobSchema.parse(body.job),
       ...(body.artifact ? { artifact: planArtifactDetailSchema.parse(body.artifact) } : {}),
@@ -307,7 +312,14 @@ export class PearClient {
         : {}),
     };
     for (let polls = 0; ["queued", "running"].includes(result.job.status); polls += 1) {
-      if (polls >= 3_600) throw new Error("Plan compile did not finish within 30 minutes");
+      if (signal?.aborted) {
+        throw new PearClientError("Plan compile aborted", 499, { job: result.job });
+      }
+      if (polls >= 3_600) {
+        throw new PearClientError("Plan compile did not finish within 30 minutes", 504, {
+          job: result.job,
+        });
+      }
       await new Promise((resolve) => setTimeout(resolve, 500));
       result = { job: await this.getCompileJob(planId, result.job.id) };
     }
@@ -322,9 +334,18 @@ export class PearClient {
       return clarification ? { ...result, clarification } : result;
     }
     if (result.job.status === "failed") {
-      throw new Error(result.job.error ?? "Plan compile failed");
+      throw new PearClientError(result.job.error ?? "Plan compile failed", 502, {
+        job: result.job,
+      });
     }
-    return result;
+    if (result.job.status === "cancelled" || result.job.status === "expired") {
+      throw new PearClientError(result.job.error ?? `Plan compile ${result.job.status}`, 409, {
+        job: result.job,
+      });
+    }
+    throw new PearClientError(`Unexpected compile job status: ${result.job.status}`, 500, {
+      job: result.job,
+    });
   }
 
   async getCompileJob(planId: string, jobId: string) {

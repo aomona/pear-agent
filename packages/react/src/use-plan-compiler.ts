@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { PearClientError } from "./errors.js";
 import { usePearContext } from "./provider.js";
 import type { PlanArtifactInspector, PlanCompileResult } from "./types.js";
 
@@ -31,6 +32,29 @@ export function usePlanCompiler(planId: string): UsePlanCompilerResult {
   const [result, setResult] = useState<PlanCompileResult | null>(null);
   const [inspector, setInspector] = useState<PlanArtifactInspector | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setStatus("idle");
+    setResult(null);
+    setInspector(null);
+    setError(null);
+    abortRef.current?.abort();
+    abortRef.current = null;
+    let cancelled = false;
+    void client.getPlanInspector(planId).then(
+      (next) => {
+        if (!cancelled) setInspector(next);
+      },
+      () => {
+        /* inspector load is best-effort on mount */
+      },
+    );
+    return () => {
+      cancelled = true;
+      abortRef.current?.abort();
+    };
+  }, [client, planId]);
 
   const run = useCallback(async <T>(operation: () => Promise<T>): Promise<T> => {
     setStatus("loading");
@@ -47,6 +71,15 @@ export function usePlanCompiler(planId: string): UsePlanCompilerResult {
     }
   }, []);
 
+  const refreshInspectorQuiet = useCallback(async () => {
+    try {
+      const next = await client.getPlanInspector(planId);
+      setInspector(next);
+    } catch {
+      /* keep last inspector if refresh fails after a successful mutation */
+    }
+  }, [client, planId]);
+
   const refreshInspector = useCallback(async () => {
     const next = await run(() => client.getPlanInspector(planId));
     setInspector(next);
@@ -59,30 +92,52 @@ export function usePlanCompiler(planId: string): UsePlanCompilerResult {
     error,
     addTextSource: async (input) => {
       await run(() => client.addPlanTextSource(planId, input));
-      await refreshInspector();
+      await refreshInspectorQuiet();
     },
     addUrlSource: async (input) => {
       await run(() => client.addPlanUrlSource(planId, input));
-      await refreshInspector();
+      await refreshInspectorQuiet();
     },
     addFileSource: async (file, label) => {
       await run(() => client.addPlanFileSource(planId, file, label));
-      await refreshInspector();
+      await refreshInspectorQuiet();
     },
     compile: async (compileInput = {}) => {
-      const next = await run(() => client.compilePlan(planId, { compileInput }));
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const next = await run(() =>
+        client.compilePlan(planId, { compileInput, signal: controller.signal }),
+      );
       setResult(next);
-      await refreshInspector();
+      await refreshInspectorQuiet();
       return next;
     },
     answerAndCompile: async (clarificationId, answers, compileInput = {}) => {
-      await run(() => client.answerPlanClarification(planId, clarificationId, answers));
-      const next = await run(() =>
-        client.compilePlan(planId, { compileInput, clarificationAnswers: answers }),
-      );
-      setResult(next);
-      await refreshInspector();
-      return next;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      return run(async () => {
+        try {
+          await client.answerPlanClarification(planId, clarificationId, answers);
+        } catch (cause) {
+          // Answer is not retriable after success: server marks clarification answered and
+          // cancels the waiting job. On 409 already-answered, continue with compile.
+          const isAnsweredConflict =
+            cause instanceof PearClientError &&
+            cause.status === 409 &&
+            /answered|no longer pending/i.test(cause.message);
+          if (!isAnsweredConflict) throw cause;
+        }
+        const next = await client.compilePlan(planId, {
+          compileInput,
+          clarificationAnswers: answers,
+          signal: controller.signal,
+        });
+        setResult(next);
+        await refreshInspectorQuiet();
+        return next;
+      });
     },
     refreshInspector,
   };
