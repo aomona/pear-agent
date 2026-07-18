@@ -43,12 +43,9 @@ const confirmBodySchema = z.object({ confirmed: z.literal(true) });
 class PublicReplanError extends Error {}
 
 class ReplanGeneratorError extends Error {
-  constructor(stage: "assessment" | "patch", detail?: string) {
-    super(
-      detail && detail.trim().length > 0
-        ? `Replan ${stage} generation failed: ${detail.trim().slice(0, 500)}`
-        : `Replan ${stage} generation failed`,
-    );
+  /** Public-safe message only — never include provider/raw error text (may leak secrets). */
+  constructor(stage: "assessment" | "patch") {
+    super(`Replan ${stage} generation failed`);
   }
 }
 
@@ -184,8 +181,8 @@ export function registerReplanRoutes(
       try {
         generatedAssessment = await resolvedRuntime.generator.assess(generatorInput);
       } catch (caught) {
-        const detail = caught instanceof Error ? caught.message : String(caught);
-        throw new ReplanGeneratorError("assessment", detail);
+        console.error("replan assessment generation failed", caught);
+        throw new ReplanGeneratorError("assessment");
       }
       const assessment = replanAssessmentSchema.parse(generatedAssessment);
       const recentEventIds = new Set(snapshot.recentEvents.map(({ id }) => id));
@@ -216,8 +213,8 @@ export function registerReplanRoutes(
           mode,
         });
       } catch (caught) {
-        const detail = caught instanceof Error ? caught.message : String(caught);
-        throw new ReplanGeneratorError("patch", detail);
+        console.error("replan patch generation failed", caught);
+        throw new ReplanGeneratorError("patch");
       }
       const generatedPatchFields =
         typeof generatedPatch === "object" &&
