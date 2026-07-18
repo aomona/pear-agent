@@ -80,6 +80,7 @@ export { D1PlanEditRepository, type PlanEditProposal } from "./d1/plan-edit-repo
 export {
   D1CompileRepository,
   CompileJobConflictError,
+  ClarificationNotFoundError,
   CompileJobNotFoundError,
   type PlanArtifactInspector,
   type StoredInterpretation,

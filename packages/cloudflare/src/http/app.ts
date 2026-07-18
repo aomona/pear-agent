@@ -34,7 +34,11 @@ import {
   PlanArtifactConflictError,
   PlanArtifactNotFoundError,
 } from "../d1/plan-repository.js";
-import { CompileJobConflictError, CompileJobNotFoundError } from "../d1/compile-repository.js";
+import {
+  ClarificationNotFoundError,
+  CompileJobConflictError,
+  CompileJobNotFoundError,
+} from "../d1/compile-repository.js";
 import { resolvePlanGenerator, type PlanGenerator } from "../planner.js";
 import { registerPlanRoutes, type PlanLibraryOptions } from "../plans/routes.js";
 import { registerReplanRoutes } from "../replan/routes.js";
@@ -159,6 +163,7 @@ export function createPearApp(options: CreatePearAppOptions): PearApp {
       error instanceof PlanArtifactNotFoundError ||
       error instanceof PlanArtifactConflictError ||
       error instanceof CompileJobNotFoundError ||
+      error instanceof ClarificationNotFoundError ||
       error instanceof CompileJobConflictError
     ) {
       return c.json({ error: error.message }, error.status);

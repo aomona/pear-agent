@@ -15,7 +15,6 @@ import {
   type SourceKind,
 } from "@pear-agent/core";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
-import { z } from "zod";
 
 import { parseJson, serializeJson } from "../serialize.js";
 import { createPearDatabase, type PearDatabase } from "./client.js";
@@ -53,6 +52,15 @@ export class CompileJobNotFoundError extends Error {
   constructor(id: string) {
     super(`Compile job not found: ${id}`);
     this.name = "CompileJobNotFoundError";
+  }
+}
+
+export class ClarificationNotFoundError extends Error {
+  readonly status = 404;
+
+  constructor(id: string) {
+    super(`Clarification request not found: ${id}`);
+    this.name = "ClarificationNotFoundError";
   }
 }
 
@@ -414,15 +422,28 @@ export class D1CompileRepository {
       .where(eq(interpretationArtifacts.compileJobId, input.compileJobId))
       .limit(1);
     if (existingRows[0]) {
+      // Workflow retries re-run AI for the same jobId; overwrite so plan and interpretation stay aligned.
       const row = existingRows[0];
+      const assumptions = input.assumptions.map((item) =>
+        interpretationAssumptionSchema.parse(item),
+      );
+      const generation = generationMetadataSchema.parse(input.generation);
+      await this.db
+        .update(interpretationArtifacts)
+        .set({
+          normalizedInputJson: serializeJson(input.normalizedInput),
+          assumptionsJson: serializeJson(assumptions),
+          generationJson: serializeJson(generation),
+        })
+        .where(eq(interpretationArtifacts.id, row.id));
       return {
         id: row.id,
         planArtifactId: row.planArtifactId,
         compileJobId: row.compileJobId,
         revision: row.revision,
-        normalizedInput: parseJson(row.normalizedInputJson),
-        assumptions: z.array(interpretationAssumptionSchema).parse(parseJson(row.assumptionsJson)),
-        generation: generationMetadataSchema.parse(parseJson(row.generationJson)),
+        normalizedInput: input.normalizedInput,
+        assumptions,
+        generation,
         createdAt: new Date(row.createdAt),
       };
     }
@@ -526,7 +547,7 @@ export class D1CompileRepository {
       )
       .limit(1);
     const current = rows[0] ? clarificationFromRow(rows[0]) : null;
-    if (!current) throw new CompileJobNotFoundError(id);
+    if (!current) throw new ClarificationNotFoundError(id);
     if (current.status !== "pending") {
       throw new CompileJobConflictError(`Clarification request is ${current.status}`);
     }
