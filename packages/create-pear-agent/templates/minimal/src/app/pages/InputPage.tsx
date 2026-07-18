@@ -1,5 +1,5 @@
 import { usePlanCompiler } from "@pear-agent/react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { links } from "../navigation";
 
@@ -9,11 +9,47 @@ export function InputPage({ planId }: { planId: string }) {
   const [source, setSource] = useState("");
   const [url, setUrl] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const clarification = compiler.result?.clarification;
+
+  useEffect(() => {
+    // Drop answers from a previous clarification round (server requires exact key set).
+    setAnswers({});
+  }, [clarification?.id]);
+
+  const hasReadySource = useMemo(() => {
+    const sources = compiler.inspector?.sources ?? [];
+    return sources.some((item) => item.status === "ready" || item.status === "pending");
+  }, [compiler.inspector?.sources]);
+
+  const canCompile =
+    compiler.status !== "loading" &&
+    request.trim().length > 0 &&
+    (source.trim().length > 0 || url.trim().length > 0 || hasReadySource);
+
+  async function ensureSources() {
+    // Only add when the field has content; clear after success so recompile does not duplicate.
+    if (source.trim()) {
+      await compiler.addTextSource({ label: "Brief", content: source.trim() });
+      setSource("");
+    }
+    if (url.trim()) {
+      await compiler.addUrlSource({ url: url.trim() });
+      setUrl("");
+    }
+  }
 
   async function compile() {
-    if (source.trim()) await compiler.addTextSource({ label: "Brief", content: source.trim() });
-    if (url.trim()) await compiler.addUrlSource({ url: url.trim() });
+    await ensureSources();
     const result = await compiler.compile({ request });
+    if (result.artifact) window.location.hash = links.plan(planId).slice(1);
+  }
+
+  async function continueCompile() {
+    if (!clarification) return;
+    const scopedAnswers = Object.fromEntries(
+      clarification.questions.map((question) => [question.id, answers[question.id]?.trim() ?? ""]),
+    );
+    const result = await compiler.answerAndCompile(clarification.id, scopedAnswers, { request });
     if (result.artifact) window.location.hash = links.plan(planId).slice(1);
   }
 
@@ -59,20 +95,23 @@ export function InputPage({ planId }: { planId: string }) {
               accept=".pdf,.txt,.md,.json"
               onChange={(event) => {
                 const file = event.target.files?.[0];
-                if (file) void compiler.addFileSource(file);
+                if (file) void compiler.addFileSource(file).catch(() => {});
+                event.target.value = "";
               }}
             />
           </label>
           <button
-            disabled={compiler.status === "loading" || !request.trim()}
-            onClick={() => void compile()}
+            disabled={!canCompile}
+            onClick={() => {
+              void compile().catch(() => {});
+            }}
           >
             {compiler.status === "loading" ? "Compiling…" : "Compile with AI"}
           </button>
-          {compiler.result?.clarification && (
+          {clarification && (
             <div className="clarification-box">
               <p className="eyebrow">Clarification required</p>
-              {compiler.result.clarification.questions.map((question) => (
+              {clarification.questions.map((question) => (
                 <label key={question.id}>
                   {question.question}
                   <input
@@ -86,17 +125,11 @@ export function InputPage({ planId }: { planId: string }) {
               <button
                 disabled={
                   compiler.status === "loading" ||
-                  !compiler.result.clarification.questions.every((question) =>
-                    answers[question.id]?.trim(),
-                  )
+                  !clarification.questions.every((question) => answers[question.id]?.trim())
                 }
-                onClick={() =>
-                  void compiler
-                    .answerAndCompile(compiler.result!.clarification!.id, answers, { request })
-                    .then((result) => {
-                      if (result.artifact) window.location.hash = links.plan(planId).slice(1);
-                    })
-                }
+                onClick={() => {
+                  void continueCompile().catch(() => {});
+                }}
               >
                 Continue compile
               </button>
@@ -110,7 +143,17 @@ export function InputPage({ planId }: { planId: string }) {
           <p>{compiler.inspector?.sources.length ?? 0} sources</p>
           <p>{compiler.inspector?.jobs.length ?? 0} compile jobs</p>
           <p>{compiler.inspector?.generations.length ?? 0} model generations</p>
-          <button className="secondary" onClick={() => void compiler.refreshInspector()}>
+          <ul className="source-list">
+            {(compiler.inspector?.sources ?? []).map((item) => (
+              <li key={item.id}>
+                {item.label} <span className="muted">({item.kind})</span>
+              </li>
+            ))}
+          </ul>
+          <button
+            className="secondary"
+            onClick={() => void compiler.refreshInspector().catch(() => {})}
+          >
             Refresh
           </button>
         </aside>
