@@ -4,7 +4,6 @@ import {
   type VoiceLease,
   type VoiceProvider,
   type VoiceSessionStatus,
-  type VoiceToolCall,
   type VoiceTranscriptEntry,
   type ContinuationWakeCondition,
   type ExecutionContinuation,
@@ -20,6 +19,7 @@ import {
   createResumeHandleSync,
   type ResumeHandleSync,
 } from "./voice/resume-handle-sync.js";
+import { handleVoiceToolCalls } from "./voice/tool-bridge.js";
 
 /**
  * Gemini Live emits sessionResumptionUpdate very frequently.
@@ -228,56 +228,6 @@ export function useVoiceSession(
 
   const appendTranscript = appendTranscriptEntry;
 
-  const handleToolCalls = useCallback(
-    async (sid: string, conn: VoiceConnection, calls: VoiceToolCall[], epoch: number) => {
-      if (!isCurrent(epoch)) return;
-      const responses: Array<{
-        id: string;
-        name: string;
-        response: { result: unknown } | { error: true; message: string };
-      }> = [];
-      for (const call of calls) {
-        appendTranscript({ role: "tool", text: `tool: ${call.name}` });
-        try {
-          const result = await clientRef.current.executeVoiceTool(sid, {
-            toolName: call.name,
-            args: call.args,
-            callId: call.id,
-            ...(typeof call.args.confidence === "number"
-              ? { confidence: call.args.confidence }
-              : {}),
-          });
-          if (result.ok) {
-            responses.push({
-              id: call.id,
-              name: call.name,
-              response: { result: result.result ?? null },
-            });
-          } else {
-            responses.push({
-              id: call.id,
-              name: call.name,
-              response: {
-                error: true,
-                message: result.message ?? `Tool failed: ${call.name}`,
-              },
-            });
-          }
-        } catch (caught) {
-          const message = caught instanceof Error ? caught.message : String(caught);
-          responses.push({
-            id: call.id,
-            name: call.name,
-            response: { error: true, message },
-          });
-        }
-      }
-      if (!isCurrent(epoch)) return;
-      conn.sendToolResponse(responses);
-    },
-    [appendTranscript, isCurrent],
-  );
-
   const attachConnectionListeners = useCallback(
     (sid: string, conn: VoiceConnection, epoch: number) => {
       const unsubscribe = attachVoiceConnectionListeners(conn, {
@@ -301,7 +251,17 @@ export function useVoiceSession(
           const queue = toolQueueRef.current ?? Promise.resolve();
           toolQueueRef.current = queue
             .catch(() => undefined)
-            .then(() => handleToolCalls(sid, conn, calls, epoch))
+            .then(() =>
+              handleVoiceToolCalls({
+                sessionId: sid,
+                connection: conn,
+                calls,
+                isCurrent: () => isCurrent(epoch),
+                appendTranscript,
+                executeVoiceTool: (toolSessionId, input) =>
+                  clientRef.current.executeVoiceTool(toolSessionId, input),
+              }),
+            )
             .catch((caught) => {
               if (!isCurrent(epoch)) return;
               const next = caught instanceof Error ? caught : new Error(String(caught));
@@ -311,7 +271,7 @@ export function useVoiceSession(
       });
       unsubscribersRef.current = [unsubscribe];
     },
-    [appendTranscript, handleToolCalls, isCurrent, setError, setStatus],
+    [appendTranscript, isCurrent, setError, setStatus],
   );
 
   const bindConnection = useCallback(

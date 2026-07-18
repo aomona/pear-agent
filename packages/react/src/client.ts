@@ -22,9 +22,13 @@ import {
   type ReplanAssessment,
   type ReplanMode,
   type AffectedSubgraph,
+  type SourceArtifact,
+  type ClarificationRequest,
+  type CompileJob,
 } from "@pear-agent/core";
 import { z } from "zod";
 
+import { joinUrl, newId, responseToPearClientError } from "./client-transport.js";
 import { PEAR_CONTEXT_HEADER, serializePearClientContext } from "./context-wire.js";
 import { PearClientError } from "./errors.js";
 import {
@@ -95,19 +99,6 @@ const createSessionResultSchema = z.object({
   planArtifactId: z.string().min(1).optional(),
 });
 
-function joinUrl(baseUrl: string, path: string): string {
-  const base = baseUrl.replace(/\/+$/, "");
-  const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${base}${suffix}`;
-}
-
-function newId(prefix: string): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `${prefix}-${crypto.randomUUID()}`;
-  }
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 /**
  * Typed HTTP client for the PEAR Worker API (`createPearApp` / `createPearWorker`).
  * Does not open WebSockets; realtime is handled by hooks + `agents/client`.
@@ -135,13 +126,17 @@ export class PearClient {
     this.cachedContextHeader = undefined;
   }
 
+  // --- Health ---
+
   async health(): Promise<{ ok: true }> {
     const response = await this.fetchImpl(joinUrl(this.baseUrl, "/health"));
     if (!response.ok) {
-      throw await this.toError(response);
+      throw await responseToPearClientError(response);
     }
     return (await response.json()) as { ok: true };
   }
+
+  // --- Sessions ---
 
   async createSession(input: CreateSessionInput): Promise<CreateSessionResult> {
     const body = await this.requestJson<unknown>("/sessions", {
@@ -149,273 +144,6 @@ export class PearClient {
       body: input,
     });
     return createSessionResultSchema.parse(body);
-  }
-
-  async listPlans(filter?: {
-    domainId?: string;
-    status?: "draft" | "ready" | "archived";
-  }): Promise<PlanListItem[]> {
-    const params = new URLSearchParams();
-    if (filter?.domainId !== undefined) params.set("domainId", filter.domainId);
-    if (filter?.status !== undefined) params.set("status", filter.status);
-    const query = params.size > 0 ? `?${params.toString()}` : "";
-    const body = await this.requestJson<{ plans: unknown }>(`/plans${query}`);
-    return z.array(planListItemSchema).parse(body.plans);
-  }
-
-  async createPlan(input: {
-    id?: string;
-    domainId: string;
-    goal: unknown;
-    title?: string;
-    plan?: unknown;
-    status?: "draft" | "ready" | "archived";
-    normalizedInput?: unknown;
-  }): Promise<PlanArtifactDetail> {
-    const body = await this.requestJson<{ artifact: unknown }>("/plans", {
-      method: "POST",
-      body: input,
-    });
-    return planArtifactDetailSchema.parse(body.artifact);
-  }
-
-  async getPlan(planId: string): Promise<PlanArtifactDetail> {
-    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}`);
-    return planArtifactDetailSchema.parse(body.artifact);
-  }
-
-  async addPlanTextSource(
-    planId: string,
-    input: {
-      label: string;
-      content: string;
-      mediaType?: "text/plain" | "text/markdown" | "application/json";
-    },
-  ): Promise<import("@pear-agent/core").SourceArtifact> {
-    const body = await this.requestJson<{ source: unknown }>(`/plans/${planId}/sources`, {
-      method: "POST",
-      body: { kind: "text", ...input },
-    });
-    return sourceArtifactSchema.parse(body.source);
-  }
-
-  async addPlanUrlSource(
-    planId: string,
-    input: { url: string; label?: string },
-  ): Promise<import("@pear-agent/core").SourceArtifact> {
-    const body = await this.requestJson<{ source: unknown }>(`/plans/${planId}/sources`, {
-      method: "POST",
-      body: { kind: "url", ...input },
-    });
-    return sourceArtifactSchema.parse(body.source);
-  }
-
-  async addPlanFileSource(
-    planId: string,
-    file: File,
-    label?: string,
-  ): Promise<import("@pear-agent/core").SourceArtifact> {
-    const form = new FormData();
-    form.set("file", file);
-    if (label) form.set("label", label);
-    const body = await this.requestForm<{ source: unknown }>(`/plans/${planId}/sources`, form);
-    return sourceArtifactSchema.parse(body.source);
-  }
-
-  async compilePlan(
-    planId: string,
-    input: {
-      compileInput?: unknown;
-      clarificationAnswers?: Readonly<Record<string, string>>;
-      resumeJobId?: string;
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<PlanCompileResult> {
-    const { signal, ...bodyInput } = input;
-    const body = await this.requestJson<{
-      job: unknown;
-      artifact?: unknown;
-      clarification?: unknown;
-    }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: bodyInput });
-    return this.finishCompileResult(planId, body, signal);
-  }
-
-  /** Poll/normalize a compile-jobs or answer-resume response into a terminal PlanCompileResult. */
-  private async finishCompileResult(
-    planId: string,
-    body: { job?: unknown; artifact?: unknown; clarification?: unknown },
-    signal?: AbortSignal,
-  ): Promise<PlanCompileResult> {
-    let result: PlanCompileResult = {
-      job: compileJobSchema.parse(body.job),
-      ...(body.artifact ? { artifact: planArtifactDetailSchema.parse(body.artifact) } : {}),
-      ...(body.clarification
-        ? { clarification: clarificationRequestSchema.parse(body.clarification) }
-        : {}),
-    };
-    for (let polls = 0; ["queued", "running"].includes(result.job.status); polls += 1) {
-      if (signal?.aborted) {
-        throw new PearClientError("Plan compile aborted", 499, { job: result.job });
-      }
-      if (polls >= 3_600) {
-        throw new PearClientError("Plan compile did not finish within 30 minutes", 504, {
-          job: result.job,
-        });
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      result = { job: await this.getCompileJob(planId, result.job.id) };
-    }
-    if (result.job.status === "completed") {
-      return { ...result, artifact: await this.getPlan(planId) };
-    }
-    if (result.job.status === "waiting") {
-      const inspector = await this.getPlanInspector(planId);
-      const clarification = inspector.clarifications.find(
-        ({ compileJobId, status }) => compileJobId === result.job.id && status === "pending",
-      );
-      return clarification ? { ...result, clarification } : result;
-    }
-    if (result.job.status === "failed") {
-      throw new PearClientError(result.job.error ?? "Plan compile failed", 502, {
-        job: result.job,
-      });
-    }
-    if (result.job.status === "cancelled" || result.job.status === "expired") {
-      throw new PearClientError(result.job.error ?? `Plan compile ${result.job.status}`, 409, {
-        job: result.job,
-      });
-    }
-    throw new PearClientError(`Unexpected compile job status: ${result.job.status}`, 500, {
-      job: result.job,
-    });
-  }
-
-  async getCompileJob(planId: string, jobId: string) {
-    const body = await this.requestJson<{ job: unknown }>(`/plans/${planId}/compile-jobs/${jobId}`);
-    return compileJobSchema.parse(body.job);
-  }
-
-  /**
-   * Answer a pending clarification. By default the Worker re-queues the same compile job
-   * and continues compilation in one request (`resumeCompile: true`).
-   */
-  async answerPlanClarification(
-    planId: string,
-    clarificationId: string,
-    answers: Readonly<Record<string, string>>,
-    options: {
-      compileInput?: unknown;
-      resumeCompile?: boolean;
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<
-    PlanCompileResult | { clarification: import("@pear-agent/core").ClarificationRequest }
-  > {
-    const resumeCompile = options.resumeCompile ?? true;
-    const body = await this.requestJson<{
-      job?: unknown;
-      artifact?: unknown;
-      clarification?: unknown;
-    }>(`/plans/${planId}/clarifications/${clarificationId}/answer`, {
-      method: "POST",
-      body: {
-        answers,
-        resumeCompile,
-        ...(options.compileInput !== undefined ? { compileInput: options.compileInput } : {}),
-      },
-    });
-    if (!resumeCompile || !body.job) {
-      return {
-        clarification: clarificationRequestSchema.parse(body.clarification),
-      };
-    }
-    return this.finishCompileResult(planId, body, options.signal);
-  }
-
-  async getPlanInspector(planId: string): Promise<PlanArtifactInspector> {
-    const body = await this.requestJson<{ inspector: unknown }>(`/plans/${planId}/inspector`);
-    return planArtifactInspectorSchema.parse(body.inspector);
-  }
-
-  async proposePlanEdit(planId: string, request: string): Promise<PlanEditProposal> {
-    const body = await this.requestJson<{ proposal: unknown }>(`/plans/${planId}/edit-proposals`, {
-      method: "POST",
-      body: { request },
-    });
-    return planEditProposalSchema.parse(body.proposal);
-  }
-
-  async confirmPlanEdit(
-    planId: string,
-    proposalId: string,
-  ): Promise<{ artifact: PlanArtifactDetail; proposal: PlanEditProposal }> {
-    const body = await this.requestJson<{ artifact: unknown; proposal: unknown }>(
-      `/plans/${planId}/edit-proposals/${proposalId}/confirm`,
-      { method: "POST", body: {} },
-    );
-    return {
-      artifact: planArtifactDetailSchema.parse(body.artifact),
-      proposal: planEditProposalSchema.parse(body.proposal),
-    };
-  }
-
-  async updatePlan(
-    planId: string,
-    input: {
-      title?: string | null;
-      status?: "draft" | "ready" | "archived";
-      normalizedInput?: unknown;
-      plan?: unknown;
-      summary?: string;
-    },
-  ): Promise<PlanArtifactDetail> {
-    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}`, {
-      method: "PATCH",
-      body: input,
-    });
-    return planArtifactDetailSchema.parse(body.artifact);
-  }
-
-  async generatePlanArtifact(
-    planId: string,
-    input?: { normalizedInput?: unknown; goal?: unknown },
-  ): Promise<PlanArtifactDetail> {
-    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/generate`, {
-      method: "POST",
-      body: input ?? {},
-    });
-    return planArtifactDetailSchema.parse(body.artifact);
-  }
-
-  async normalizePlanInput(planId: string, input: unknown): Promise<PlanArtifactDetail> {
-    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/normalize`, {
-      method: "POST",
-      body: { input },
-    });
-    return planArtifactDetailSchema.parse(body.artifact);
-  }
-
-  /** Normalize and generate a plan artifact in one server-side operation. */
-  async buildPlanArtifact(planId: string, input: unknown): Promise<PlanArtifactDetail> {
-    const body = await this.requestJson<{ artifact: unknown }>(`/plans/${planId}/build`, {
-      method: "POST",
-      body: { input },
-    });
-    return planArtifactDetailSchema.parse(body.artifact);
-  }
-
-  /**
-   * Structure one free-text field (deterministic + optional LLM).
-   * Used when the user confirms an add-item modal — not while typing.
-   */
-  async resolvePlanField(
-    planId: string,
-    input: { field: string; freeText: string },
-  ): Promise<{ field: string; value: unknown }> {
-    return this.requestJson(`/plans/${planId}/resolve-field`, {
-      method: "POST",
-      body: input,
-    });
   }
 
   async getSession(sessionId: string): Promise<MaterializedExecutionState> {
@@ -528,6 +256,207 @@ export class PearClient {
     );
   }
 
+  // --- Plans ---
+
+  async listPlans(filter?: {
+    domainId?: string;
+    status?: "draft" | "ready" | "archived";
+  }): Promise<PlanListItem[]> {
+    const params = new URLSearchParams();
+    if (filter?.domainId !== undefined) params.set("domainId", filter.domainId);
+    if (filter?.status !== undefined) params.set("status", filter.status);
+    const query = params.size > 0 ? `?${params.toString()}` : "";
+    const body = await this.requestJson<{ plans: unknown }>(`/plans${query}`);
+    return z.array(planListItemSchema).parse(body.plans);
+  }
+
+  async createPlan(input: {
+    id?: string;
+    domainId: string;
+    goal: unknown;
+    title?: string;
+    plan?: unknown;
+    status?: "draft" | "ready" | "archived";
+    normalizedInput?: unknown;
+  }): Promise<PlanArtifactDetail> {
+    return this.requestPlanArtifact("/plans", { method: "POST", body: input });
+  }
+
+  async getPlan(planId: string): Promise<PlanArtifactDetail> {
+    return this.requestPlanArtifact(`/plans/${planId}`);
+  }
+
+  async addPlanTextSource(
+    planId: string,
+    input: {
+      label: string;
+      content: string;
+      mediaType?: "text/plain" | "text/markdown" | "application/json";
+    },
+  ): Promise<SourceArtifact> {
+    return this.requestSourceArtifact(`/plans/${planId}/sources`, {
+      method: "POST",
+      body: { kind: "text", ...input },
+    });
+  }
+
+  async addPlanUrlSource(
+    planId: string,
+    input: { url: string; label?: string },
+  ): Promise<SourceArtifact> {
+    return this.requestSourceArtifact(`/plans/${planId}/sources`, {
+      method: "POST",
+      body: { kind: "url", ...input },
+    });
+  }
+
+  async addPlanFileSource(planId: string, file: File, label?: string): Promise<SourceArtifact> {
+    const form = new FormData();
+    form.set("file", file);
+    if (label) form.set("label", label);
+    const body = await this.requestForm<{ source: unknown }>(`/plans/${planId}/sources`, form);
+    return sourceArtifactSchema.parse(body.source);
+  }
+
+  async compilePlan(
+    planId: string,
+    input: {
+      compileInput?: unknown;
+      clarificationAnswers?: Readonly<Record<string, string>>;
+      resumeJobId?: string;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<PlanCompileResult> {
+    const { signal, ...bodyInput } = input;
+    const body = await this.requestJson<{
+      job: unknown;
+      artifact?: unknown;
+      clarification?: unknown;
+    }>(`/plans/${planId}/compile-jobs`, { method: "POST", body: bodyInput });
+    return this.finishCompileResult(planId, body, signal);
+  }
+
+  async getCompileJob(planId: string, jobId: string): Promise<CompileJob> {
+    const body = await this.requestJson<{ job: unknown }>(`/plans/${planId}/compile-jobs/${jobId}`);
+    return compileJobSchema.parse(body.job);
+  }
+
+  /**
+   * Answer a pending clarification. By default the Worker re-queues the same compile job
+   * and continues compilation in one request (`resumeCompile: true`).
+   */
+  async answerPlanClarification(
+    planId: string,
+    clarificationId: string,
+    answers: Readonly<Record<string, string>>,
+    options: {
+      compileInput?: unknown;
+      resumeCompile?: boolean;
+      signal?: AbortSignal;
+    } = {},
+  ): Promise<PlanCompileResult | { clarification: ClarificationRequest }> {
+    const resumeCompile = options.resumeCompile ?? true;
+    const body = await this.requestJson<{
+      job?: unknown;
+      artifact?: unknown;
+      clarification?: unknown;
+    }>(`/plans/${planId}/clarifications/${clarificationId}/answer`, {
+      method: "POST",
+      body: {
+        answers,
+        resumeCompile,
+        ...(options.compileInput !== undefined ? { compileInput: options.compileInput } : {}),
+      },
+    });
+    if (!resumeCompile || !body.job) {
+      return {
+        clarification: clarificationRequestSchema.parse(body.clarification),
+      };
+    }
+    return this.finishCompileResult(planId, body, options.signal);
+  }
+
+  async getPlanInspector(planId: string): Promise<PlanArtifactInspector> {
+    const body = await this.requestJson<{ inspector: unknown }>(`/plans/${planId}/inspector`);
+    return planArtifactInspectorSchema.parse(body.inspector);
+  }
+
+  async proposePlanEdit(planId: string, request: string): Promise<PlanEditProposal> {
+    const body = await this.requestJson<{ proposal: unknown }>(`/plans/${planId}/edit-proposals`, {
+      method: "POST",
+      body: { request },
+    });
+    return planEditProposalSchema.parse(body.proposal);
+  }
+
+  async confirmPlanEdit(
+    planId: string,
+    proposalId: string,
+  ): Promise<{ artifact: PlanArtifactDetail; proposal: PlanEditProposal }> {
+    const body = await this.requestJson<{ artifact: unknown; proposal: unknown }>(
+      `/plans/${planId}/edit-proposals/${proposalId}/confirm`,
+      { method: "POST", body: {} },
+    );
+    return {
+      artifact: planArtifactDetailSchema.parse(body.artifact),
+      proposal: planEditProposalSchema.parse(body.proposal),
+    };
+  }
+
+  async updatePlan(
+    planId: string,
+    input: {
+      title?: string | null;
+      status?: "draft" | "ready" | "archived";
+      normalizedInput?: unknown;
+      plan?: unknown;
+      summary?: string;
+    },
+  ): Promise<PlanArtifactDetail> {
+    return this.requestPlanArtifact(`/plans/${planId}`, { method: "PATCH", body: input });
+  }
+
+  async generatePlanArtifact(
+    planId: string,
+    input?: { normalizedInput?: unknown; goal?: unknown },
+  ): Promise<PlanArtifactDetail> {
+    return this.requestPlanArtifact(`/plans/${planId}/generate`, {
+      method: "POST",
+      body: input ?? {},
+    });
+  }
+
+  async normalizePlanInput(planId: string, input: unknown): Promise<PlanArtifactDetail> {
+    return this.requestPlanArtifact(`/plans/${planId}/normalize`, {
+      method: "POST",
+      body: { input },
+    });
+  }
+
+  /** Normalize and generate a plan artifact in one server-side operation. */
+  async buildPlanArtifact(planId: string, input: unknown): Promise<PlanArtifactDetail> {
+    return this.requestPlanArtifact(`/plans/${planId}/build`, {
+      method: "POST",
+      body: { input },
+    });
+  }
+
+  /**
+   * Structure one free-text field (deterministic + optional LLM).
+   * Used when the user confirms an add-item modal — not while typing.
+   */
+  async resolvePlanField(
+    planId: string,
+    input: { field: string; freeText: string },
+  ): Promise<{ field: string; value: unknown }> {
+    return this.requestJson(`/plans/${planId}/resolve-field`, {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  // --- Voice ---
+
   async acquireVoiceLease(
     sessionId: string,
     input: { ttlMs?: number; leaseId?: string } = {},
@@ -635,6 +564,8 @@ export class PearClient {
     });
   }
 
+  // --- Continuations ---
+
   async suspendContinuation(
     sessionId: string,
     input: {
@@ -696,6 +627,8 @@ export class PearClient {
     return parseExecutionContinuation(body.continuation);
   }
 
+  // --- Replan ---
+
   async requestReplan(sessionId: string, mode?: ReplanMode): Promise<RequestReplanResult> {
     const body = await this.requestJson<Record<string, unknown>>(`/sessions/${sessionId}/replans`, {
       method: "POST",
@@ -746,6 +679,60 @@ export class PearClient {
     return body.planChange === null ? null : parsePlanChange(body.planChange);
   }
 
+  // --- Private: compile polling ---
+
+  /** Poll/normalize a compile-jobs or answer-resume response into a terminal PlanCompileResult. */
+  private async finishCompileResult(
+    planId: string,
+    body: { job?: unknown; artifact?: unknown; clarification?: unknown },
+    signal?: AbortSignal,
+  ): Promise<PlanCompileResult> {
+    let result: PlanCompileResult = {
+      job: compileJobSchema.parse(body.job),
+      ...(body.artifact ? { artifact: planArtifactDetailSchema.parse(body.artifact) } : {}),
+      ...(body.clarification
+        ? { clarification: clarificationRequestSchema.parse(body.clarification) }
+        : {}),
+    };
+    for (let polls = 0; ["queued", "running"].includes(result.job.status); polls += 1) {
+      if (signal?.aborted) {
+        throw new PearClientError("Plan compile aborted", 499, { job: result.job });
+      }
+      if (polls >= 3_600) {
+        throw new PearClientError("Plan compile did not finish within 30 minutes", 504, {
+          job: result.job,
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = { job: await this.getCompileJob(planId, result.job.id) };
+    }
+    if (result.job.status === "completed") {
+      return { ...result, artifact: await this.getPlan(planId) };
+    }
+    if (result.job.status === "waiting") {
+      const inspector = await this.getPlanInspector(planId);
+      const clarification = inspector.clarifications.find(
+        ({ compileJobId, status }) => compileJobId === result.job.id && status === "pending",
+      );
+      return clarification ? { ...result, clarification } : result;
+    }
+    if (result.job.status === "failed") {
+      throw new PearClientError(result.job.error ?? "Plan compile failed", 502, {
+        job: result.job,
+      });
+    }
+    if (result.job.status === "cancelled" || result.job.status === "expired") {
+      throw new PearClientError(result.job.error ?? `Plan compile ${result.job.status}`, 409, {
+        job: result.job,
+      });
+    }
+    throw new PearClientError(`Unexpected compile job status: ${result.job.status}`, 500, {
+      job: result.job,
+    });
+  }
+
+  // --- Private: event envelope ---
+
   private async appendBuiltEvent(
     sessionId: string,
     type: Exclude<RuntimeEvent["type"], "domain_event">,
@@ -792,6 +779,24 @@ export class PearClient {
     };
   }
 
+  // --- Private: HTTP transport ---
+
+  private async requestPlanArtifact(
+    path: string,
+    init?: { method?: string; body?: unknown },
+  ): Promise<PlanArtifactDetail> {
+    const body = await this.requestJson<{ artifact: unknown }>(path, init);
+    return planArtifactDetailSchema.parse(body.artifact);
+  }
+
+  private async requestSourceArtifact(
+    path: string,
+    init: { method?: string; body?: unknown },
+  ): Promise<SourceArtifact> {
+    const body = await this.requestJson<{ source: unknown }>(path, init);
+    return sourceArtifactSchema.parse(body.source);
+  }
+
   private async requestJson<T>(
     path: string,
     init?: { method?: string; body?: unknown; keepalive?: boolean; contextHeader?: string },
@@ -822,7 +827,7 @@ export class PearClient {
     const response = await this.fetchImpl(joinUrl(this.baseUrl, path), requestInit);
 
     if (!response.ok) {
-      throw await this.toError(response);
+      throw await responseToPearClientError(response);
     }
 
     if (response.status === 204) {
@@ -839,7 +844,7 @@ export class PearClient {
       headers: { [PEAR_CONTEXT_HEADER]: contextHeader },
       body,
     });
-    if (!response.ok) throw await this.toError(response);
+    if (!response.ok) throw await responseToPearClientError(response);
     return (await response.json()) as T;
   }
 
@@ -852,23 +857,5 @@ export class PearClient {
 
   private voiceLeaseContextKey(sessionId: string, leaseId: string): string {
     return JSON.stringify([sessionId, leaseId]);
-  }
-
-  private async toError(response: Response): Promise<PearClientError> {
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      body = await response.text().catch(() => undefined);
-    }
-    const message =
-      typeof body === "object" && body !== null
-        ? typeof (body as { error?: unknown }).error === "string"
-          ? (body as { error: string }).error
-          : typeof (body as { message?: unknown }).message === "string"
-            ? (body as { message: string }).message
-            : `PEAR request failed (${response.status})`
-        : `PEAR request failed (${response.status})`;
-    return new PearClientError(message, response.status, body);
   }
 }
