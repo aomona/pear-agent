@@ -99,6 +99,15 @@ export const generationMetadataSchema = z
     totalTokens: z.number().int().nonnegative().nullable().default(null),
     attempt: z.number().int().positive(),
     warnings: z.array(z.string().max(2_000)).max(100).default([]),
+    /** Schema / Domain validation outcome for this generation (null when not recorded). */
+    validation: z
+      .object({
+        ok: z.boolean(),
+        issues: z.array(z.string().max(2_000)).max(100).default([]),
+      })
+      .strict()
+      .nullable()
+      .default(null),
     createdAt: dateSchema,
   })
   .strict();
@@ -196,6 +205,9 @@ export type PlanEditorInput = {
   normalizedInput: unknown;
   sourceRefs: readonly SourceReference[];
   context?: unknown;
+  signal?: AbortSignal;
+  maxAttempts?: number;
+  maxOutputTokens?: number;
 };
 
 export type PlanEditor = {
@@ -212,6 +224,9 @@ export type ReplanGeneratorInput = {
   causeRefs: readonly PlanChangeCauseRef[];
   baseLastEventId: string | null;
   context?: unknown;
+  signal?: AbortSignal;
+  maxAttempts?: number;
+  maxOutputTokens?: number;
 };
 
 export type ReplanGenerator = {
