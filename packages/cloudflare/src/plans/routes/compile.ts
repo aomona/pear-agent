@@ -8,22 +8,24 @@ import type { PearRequestContext } from "../../context.js";
 import type { PearEnv } from "../../env.js";
 import type { PearApp } from "../../http/app.js";
 import { toJsonValue } from "../../serialize.js";
+import { assertPlanMutable } from "../assert-plan-mutable.js";
 import { runPlanCompileJob, type PlanCompileWorkflowParams } from "../compile-runner.js";
 import { artifactJson, planRepository, type PlanRouteContext } from "./shared.js";
+import {
+  assertSize,
+  assertSupportedMediaType,
+  fetchPublicSource,
+  normalizeMediaType,
+  maximumSize,
+  readBodyWithLimit,
+  sha256,
+  validatePublicUrl,
+} from "./public-url.js";
 
 const MAX_TEXT_SOURCE_BYTES = 2 * 1024 * 1024;
-const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024;
-const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const MAX_SOURCES_PER_PLAN = 20;
 const SOURCE_FETCH_TIMEOUT_MS = 30_000;
 const INLINE_COMPILE_TIMEOUT_MS = 30 * 60 * 1_000;
-const SUPPORTED_FILE_TYPES = new Set([
-  "application/json",
-  "application/pdf",
-  "text/html",
-  "text/markdown",
-  "text/plain",
-]);
 
 const sourceBodySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -42,6 +44,8 @@ const sourceBodySchema = z.discriminatedUnion("kind", [
 const compileBodySchema = z.object({
   compileInput: z.unknown().default({}),
   clarificationAnswers: z.record(z.string(), z.string().trim().min(1).max(10_000)).optional(),
+  /** Resume an existing re-queued job (used after clarification answer). */
+  resumeJobId: z.string().min(1).optional(),
 });
 
 export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext): void {
@@ -59,9 +63,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     await routes.authorize({ type: "plan.source.create", planId }, context);
     await requireArtifact(c.env, planId);
     const repository = new D1CompileRepository(c.env.DB);
-    if (await repository.getActiveJob(planId)) {
-      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
-    }
+    await assertPlanMutable(c.env.DB, planId, "change sources");
     const existingSources = (await repository.listSources(planId)).filter(
       ({ status }) => status !== "deleted",
     );
@@ -121,9 +123,8 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const id = crypto.randomUUID();
     const objectKey = `plan-artifacts/${planId}/sources/${id}`;
     const checksumSha256 = await sha256(bytes);
-    if (await repository.getActiveJob(planId)) {
-      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
-    }
+    // Re-check after potentially slow URL fetch before writing R2.
+    await assertPlanMutable(c.env.DB, planId, "change sources");
     await c.env.RAW_INPUTS.put(objectKey, bytes, { httpMetadata: { contentType: mediaType } });
     let source;
     try {
@@ -155,10 +156,8 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const sourceId = c.req.param("sourceId");
     await routes.authorize({ type: "plan.source.delete", planId, sourceId }, c.get("pearContext"));
     await requireArtifact(c.env, planId);
+    await assertPlanMutable(c.env.DB, planId, "change sources");
     const repository = new D1CompileRepository(c.env.DB);
-    if (await repository.getActiveJob(planId)) {
-      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
-    }
     const versions = await planRepository(c.env).getVersionHistory(planId);
     if (
       versions.some(({ plan }) =>
@@ -176,9 +175,6 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     }
     const source = (await repository.listSources(planId)).find(({ id }) => id === sourceId);
     if (!source) throw new HTTPException(404, { message: "Plan source not found" });
-    if (await repository.getActiveJob(planId)) {
-      throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
-    }
     const deleting = await repository.markSourceDeletingIfIdle(planId, sourceId);
     if (!deleting) throw new HTTPException(404, { message: "Plan source not found" });
     await Promise.all([
@@ -263,16 +259,38 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
   app.post("/plans/:planId/clarifications/:clarificationId/answer", async (c) => {
     const planId = c.req.param("planId");
     const clarificationId = c.req.param("clarificationId");
-    await routes.authorize(
-      { type: "plan.clarification.answer", planId, clarificationId },
-      c.get("pearContext"),
-    );
-    const answers = z
-      .object({ answers: z.record(z.string(), z.string().trim().min(1).max(10_000)) })
-      .parse(await c.req.json()).answers;
+    const context = c.get("pearContext");
+    await routes.authorize({ type: "plan.clarification.answer", planId, clarificationId }, context);
+    const body = z
+      .object({
+        answers: z.record(z.string(), z.string().trim().min(1).max(10_000)),
+        compileInput: z.unknown().optional(),
+        /** When true (default), resume the re-queued compile job in the same request. */
+        resumeCompile: z.boolean().default(true),
+      })
+      .parse(await c.req.json());
     const repository = new D1CompileRepository(c.env.DB);
-    const clarification = await repository.answerClarification(planId, clarificationId, answers);
-    return c.json({ clarification: toJsonValue(clarification) });
+    const clarification = await repository.answerClarification(
+      planId,
+      clarificationId,
+      body.answers,
+    );
+    if (!body.resumeCompile) {
+      return c.json({ clarification: toJsonValue(clarification) });
+    }
+    // Single product path: answer + resume same job (no cancel + second POST).
+    return executeCompileStart({
+      env: c.env,
+      routes,
+      planId,
+      body: {
+        compileInput: body.compileInput ?? {},
+        clarificationAnswers: body.answers,
+        resumeJobId: clarification.compileJobId,
+      },
+      context,
+      requestSignal: c.req.raw.signal,
+    });
   });
 
   app.get("/plans/:planId/inspector", async (c) => {
@@ -298,7 +316,21 @@ async function executeCompileStart(input: {
     throw new HTTPException(503, { message: "Plan compile runtime is not configured" });
   }
   const repository = new D1CompileRepository(input.env.DB);
-  const job = await repository.createJob(input.planId);
+  let job;
+  if (input.body.resumeJobId) {
+    const existing = await repository.getJob(input.body.resumeJobId);
+    if (!existing || existing.planArtifactId !== input.planId) {
+      throw new CompileJobNotFoundError(input.body.resumeJobId);
+    }
+    if (existing.status !== "queued" && existing.status !== "running") {
+      throw new HTTPException(409, {
+        message: `Cannot resume a ${existing.status} compile job`,
+      });
+    }
+    job = existing;
+  } else {
+    job = await repository.createJob(input.planId);
+  }
   const sources = (await repository.listSources(input.planId)).filter(
     ({ status }) => status === "ready",
   );
@@ -374,128 +406,4 @@ async function requireArtifact(env: { DB: D1Database }, planId: string) {
   const artifact = await planRepository(env).getStored(planId);
   if (!artifact) throw new PlanArtifactNotFoundError(planId);
   return artifact;
-}
-
-function normalizeMediaType(value: string): string {
-  return value.split(";", 1)[0]!.trim().toLowerCase();
-}
-
-function assertSupportedMediaType(mediaType: string): void {
-  if (!SUPPORTED_FILE_TYPES.has(mediaType)) {
-    throw new HTTPException(415, { message: `Unsupported source media type: ${mediaType}` });
-  }
-}
-
-function assertSize(size: number, mediaType: string): void {
-  const maximum = maximumSize(mediaType);
-  if (size > maximum) {
-    throw new HTTPException(413, { message: `Source exceeds ${maximum} bytes` });
-  }
-}
-
-function maximumSize(mediaType: string): number {
-  return mediaType === "application/pdf"
-    ? MAX_PDF_BYTES
-    : mediaType === "text/html"
-      ? MAX_TEXT_SOURCE_BYTES
-      : MAX_TEXT_FILE_BYTES;
-}
-
-export async function readBodyWithLimit(
-  response: Response,
-  maximum: number,
-  signal?: AbortSignal,
-): Promise<ArrayBuffer> {
-  if (!response.body) return new ArrayBuffer(0);
-  const reader = response.body.getReader();
-  let bytes = new Uint8Array(Math.min(maximum, 64 * 1024));
-  let total = 0;
-  while (true) {
-    signal?.throwIfAborted();
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maximum) {
-      await reader.cancel("PEAR source size limit exceeded");
-      throw new HTTPException(413, { message: `Source exceeds ${maximum} bytes` });
-    }
-    if (total > bytes.byteLength) {
-      const grown = new Uint8Array(Math.min(maximum, Math.max(total, bytes.byteLength * 2)));
-      grown.set(bytes);
-      bytes = grown;
-    }
-    bytes.set(value, total - value.byteLength);
-  }
-  return bytes.buffer.slice(0, total);
-}
-
-export function validatePublicUrl(raw: string): URL {
-  const url = new URL(raw);
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new HTTPException(400, { message: "Source URL must use http or https" });
-  }
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    host === "localhost" ||
-    host.endsWith(".local") ||
-    isBlockedIpv4(host) ||
-    isBlockedIpv6(host)
-  ) {
-    throw new HTTPException(400, { message: "Private network source URLs are not allowed" });
-  }
-  return url;
-}
-
-function isBlockedIpv4(host: string): boolean {
-  const octets = host.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet))) return false;
-  const [a, b] = octets as [number, number, number, number];
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    a >= 224
-  );
-}
-
-function isBlockedIpv6(host: string): boolean {
-  if (!host.includes(":")) return false;
-  const normalized = host.toLowerCase();
-  if (normalized === "::" || normalized === "::1") return true;
-  const firstGroup = Number.parseInt(normalized.split(":", 1)[0] || "0", 16);
-  if (
-    (firstGroup & 0xfe00) === 0xfc00 ||
-    (firstGroup & 0xffc0) === 0xfe80 ||
-    (firstGroup & 0xff00) === 0xff00
-  )
-    return true;
-  const mappedIpv4 = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
-  if (mappedIpv4) return isBlockedIpv4(mappedIpv4);
-  const mappedHex = normalized.match(/::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
-  if (!mappedHex) return false;
-  const high = Number.parseInt(mappedHex[1]!, 16);
-  const low = Number.parseInt(mappedHex[2]!, 16);
-  return isBlockedIpv4(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
-}
-
-async function fetchPublicSource(initial: URL, signal: AbortSignal): Promise<Response> {
-  let url = initial;
-  for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await fetch(url, { redirect: "manual", signal });
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-    const location = response.headers.get("location");
-    if (!location) throw new HTTPException(400, { message: "Source redirect has no location" });
-    url = validatePublicUrl(new URL(location, url).toString());
-  }
-  throw new HTTPException(400, { message: "Source URL redirected too many times" });
-}
-
-async function sha256(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

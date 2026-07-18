@@ -2,11 +2,15 @@ import { assertPlanMatchesGoal, executionGoalSchema, type ExecutionPlan } from "
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 
-import { D1CompileRepository } from "../../d1/compile-repository.js";
 import { PlanArtifactNotFoundError } from "../../d1/plan-repository.js";
 import type { PearApp } from "../../http/app.js";
+import { assertPlanMutable } from "../assert-plan-mutable.js";
 import { artifactJson, planRepository, type PlanRouteContext } from "./shared.js";
 
+/**
+ * Legacy deterministic plan write (PlanGenerator). Prefer AI compile
+ * (`POST /plans/:id/compile-jobs`) for product UIs.
+ */
 export function registerPlanGenerateRoutes(app: PearApp, routes: PlanRouteContext): void {
   app.post("/plans/:planId/generate", async (c) => {
     const context = c.get("pearContext");
@@ -18,11 +22,7 @@ export function registerPlanGenerateRoutes(app: PearApp, routes: PlanRouteContex
     const repository = planRepository(c.env);
     const existing = await repository.getStored(planId);
     if (!existing) throw new PlanArtifactNotFoundError(planId);
-    if (await new D1CompileRepository(c.env.DB).getActiveJob(planId)) {
-      throw new HTTPException(409, {
-        message: "Cannot generate a plan while a compile job is active",
-      });
-    }
+    await assertPlanMutable(c.env.DB, planId, "generate a plan");
     const normalizedInput = body.normalizedInput ?? existing.normalizedInput;
     if (normalizedInput === undefined) {
       throw new HTTPException(400, {
