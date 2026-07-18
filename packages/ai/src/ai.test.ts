@@ -263,6 +263,104 @@ describe("@pear-agent/ai", () => {
     ]);
   });
 
+  it("rejects planner steps that omit or invent source provenance", async () => {
+    const generator = createAiPlanGenerator({
+      model: {} as never,
+      stepDataSchema: z.object({ kind: z.string() }),
+      generate: fixtureGenerate({
+        id: "temporary-plan",
+        version: 1,
+        goal: {
+          id: "goal-1",
+          description: "Dinner",
+          successCriteria: [
+            { id: "done", description: "Done", evaluator: { type: "human_confirmation" } },
+          ],
+          completionPolicy: "automatic",
+        },
+        steps: [
+          {
+            id: "a",
+            executor: { type: "human" },
+            after: [],
+            requirements: [],
+            estimatedDurationSeconds: 60,
+            timers: [],
+            domainData: { kind: "prep" },
+            sourceRefs: [],
+          },
+        ],
+      }),
+    });
+    await expect(
+      generator.generatePlan({
+        domainId: "cook",
+        domainVersion: 1,
+        goal: {
+          id: "goal-1",
+          description: "Dinner",
+          successCriteria: [
+            { id: "done", description: "Done", evaluator: { type: "human_confirmation" } },
+          ],
+          completionPolicy: "automatic",
+        },
+        normalizedInput: {},
+        sourceRefs: [{ sourceId: "source-1" }],
+        instructions: "Plan dinner",
+        objectives: ["Finish together"],
+      }),
+    ).rejects.toThrow(/must cite at least one source/);
+  });
+
+  it("rewrites replan add_step ids and validates domain step data", async () => {
+    const replanner = createAiReplanGenerator({
+      model: {} as never,
+      stepDataSchema: z.object({ kind: z.string() }),
+      createId: () => "runtime",
+      generate: fixtureGenerate({
+        operations: [
+          {
+            type: "add_step",
+            step: {
+              id: "model-step",
+              executor: { type: "human" },
+              after: [],
+              requirements: [],
+              estimatedDurationSeconds: 30,
+              timers: [],
+              domainData: { kind: "prep" },
+            },
+          },
+        ],
+        summary: "Add prep",
+      }),
+    });
+    const patch = await replanner.generatePatch({
+      domainId: "cook",
+      instructions: "Replan",
+      plan: {
+        id: "trusted-plan",
+        version: 1,
+        goal: {
+          id: "goal-1",
+          description: "Dinner",
+          successCriteria: [],
+          completionPolicy: "automatic",
+        },
+        steps: [],
+      },
+      normalizedInput: {},
+      assessment: {},
+      affectedStepIds: ["model-step"],
+      causeRefs: [{ type: "runtime_event", eventId: "event-1" }],
+      baseLastEventId: "event-1",
+    });
+    expect(patch.operations[0]).toMatchObject({
+      type: "add_step",
+      step: { id: "step-runtime" },
+    });
+  });
+
   it("replaces model plan and step ids while preserving dependencies", async () => {
     let next = 0;
     const generator = createAiPlanGenerator({
