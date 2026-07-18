@@ -32,9 +32,10 @@ export const cookStepDataSchema = z.object({
   safetyNote: z.string().optional(),
 });
 
+/** Domain facts only — Core wraps these into WorldState.facts. */
 const cookWorldStateSchema = z.object({
-  facts: z.record(z.string(), z.unknown()),
-  domainData: z.record(z.string(), z.unknown()),
+  activeDish: z.string().optional(),
+  notes: z.array(z.string()).default([]),
 });
 
 const cookEventSchema = z.discriminatedUnion("type", [

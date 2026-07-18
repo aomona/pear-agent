@@ -74,6 +74,7 @@ describe("presentationDomain", () => {
               keyPoints: ["hello"],
               transition: "next",
             },
+            sourceRefs: [{ sourceId: "pdf" }],
           },
         ],
       },

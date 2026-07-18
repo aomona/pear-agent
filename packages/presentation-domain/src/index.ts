@@ -41,9 +41,10 @@ export const presentationStepDataSchema = z.object({
   transition: z.string().min(1),
 });
 
+/** Domain facts only — Core wraps these into WorldState.facts. */
 const presentationWorldStateSchema = z.object({
-  facts: z.record(z.string(), z.unknown()),
-  domainData: z.record(z.string(), z.unknown()),
+  currentPage: z.number().int().positive().optional(),
+  notes: z.array(z.string()).default([]),
 });
 const presentationEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("slide_changed"), page: z.number().int().positive() }),
@@ -91,6 +92,9 @@ export const presentationDomain = defineAiDomain({
       const pages = plan.steps.map((step) => step.domainData.page);
       if (pages.some((page, index) => page !== input.slides[index]?.page))
         issues.push("Slide steps must remain in PDF page order");
+      for (const step of plan.steps) {
+        if (!step.sourceRefs?.length) issues.push(`Step ${step.id} has no slide provenance`);
+      }
       return { valid: issues.length === 0, issues };
     },
   },
