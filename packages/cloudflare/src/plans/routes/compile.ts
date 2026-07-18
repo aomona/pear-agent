@@ -4,6 +4,8 @@ import { z } from "zod";
 
 import { D1CompileRepository, CompileJobNotFoundError } from "../../d1/compile-repository.js";
 import { PlanArtifactNotFoundError } from "../../d1/plan-repository.js";
+import type { PearRequestContext } from "../../context.js";
+import type { PearEnv } from "../../env.js";
 import type { PearApp } from "../../http/app.js";
 import { toJsonValue } from "../../serialize.js";
 import { runPlanCompileJob, type PlanCompileWorkflowParams } from "../compile-runner.js";
@@ -13,6 +15,8 @@ const MAX_TEXT_SOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
 const MAX_SOURCES_PER_PLAN = 20;
+const SOURCE_FETCH_TIMEOUT_MS = 30_000;
+const INLINE_COMPILE_TIMEOUT_MS = 30 * 60 * 1_000;
 const SUPPORTED_FILE_TYPES = new Set([
   "application/json",
   "application/pdf",
@@ -96,7 +100,11 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
         assertSize(bytes.byteLength, mediaType);
       } else {
         const url = validatePublicUrl(body.url);
-        const response = await fetchPublicSource(url);
+        const sourceSignal = AbortSignal.any([
+          c.req.raw.signal,
+          AbortSignal.timeout(SOURCE_FETCH_TIMEOUT_MS),
+        ]);
+        const response = await fetchPublicSource(url, sourceSignal);
         if (!response.ok) {
           throw new HTTPException(400, { message: `Source URL returned HTTP ${response.status}` });
         }
@@ -106,7 +114,7 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
         assertSupportedMediaType(mediaType);
         const declaredLength = Number(response.headers.get("content-length") ?? "0");
         if (declaredLength) assertSize(declaredLength, mediaType);
-        bytes = await readBodyWithLimit(response, maximumSize(mediaType));
+        bytes = await readBodyWithLimit(response, maximumSize(mediaType), sourceSignal);
       }
     }
 
@@ -171,14 +179,15 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     if (await repository.getActiveJob(planId)) {
       throw new HTTPException(409, { message: "Sources cannot change during an active compile" });
     }
-    const deleted = await repository.markSourceDeletedIfIdle(planId, sourceId);
-    if (!deleted) throw new HTTPException(404, { message: "Plan source not found" });
+    const deleting = await repository.markSourceDeletingIfIdle(planId, sourceId);
+    if (!deleting) throw new HTTPException(404, { message: "Plan source not found" });
     await Promise.all([
       source.rawObjectKey ? c.env.RAW_INPUTS.delete(source.rawObjectKey) : Promise.resolve(),
       source.extractedObjectKey
         ? c.env.RAW_INPUTS.delete(source.extractedObjectKey)
         : Promise.resolve(),
     ]);
+    await repository.finalizeSourceDeleted(planId, sourceId);
     await planRepository(c.env).updateMeta({ artifactId: planId, status: "draft" });
     return c.body(null, 204);
   });
@@ -187,62 +196,15 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const planId = c.req.param("planId");
     const context = c.get("pearContext");
     await routes.authorize({ type: "plan.compile.start", planId }, context);
-    await requireArtifact(c.env, planId);
-    const runtime = routes.ports.compile.resolve(c.env);
-    if (!runtime) {
-      throw new HTTPException(503, { message: "Plan compile runtime is not configured" });
-    }
     const body = compileBodySchema.parse(await c.req.json());
-    const repository = new D1CompileRepository(c.env.DB);
-    const job = await repository.createJob(planId);
-    const sources = (await repository.listSources(planId)).filter(
-      ({ status }) => status === "ready",
-    );
-    if (sources.length === 0) {
-      await repository.updateJob(job.id, {
-        status: "failed",
-        error: "At least one source is required",
-      });
-      throw new HTTPException(400, { message: "At least one source is required" });
-    }
-    const params: PlanCompileWorkflowParams = {
-      jobId: job.id,
+    return executeCompileStart({
+      env: c.env,
+      routes,
       planId,
-      compileInput: body.compileInput,
-      ...(body.clarificationAnswers ? { clarificationAnswers: body.clarificationAnswers } : {}),
+      body,
       context,
-    };
-    if (c.env.PLAN_COMPILE_WORKFLOW) {
-      try {
-        const instance = await c.env.PLAN_COMPILE_WORKFLOW.create({ id: job.id, params });
-        const queued = await repository.updateJob(job.id, { workflowInstanceId: instance.id });
-        return c.json({ job: toJsonValue(queued) }, 202);
-      } catch (error) {
-        await repository.updateJob(job.id, {
-          status: "failed",
-          error:
-            error instanceof Error ? error.message.slice(0, 4_000) : "Workflow dispatch failed",
-        });
-        throw new HTTPException(502, { message: "Failed to dispatch plan compile Workflow" });
-      }
-    }
-    try {
-      const result = await runPlanCompileJob({ env: c.env, params, runtime });
-      if (result.artifact) {
-        return c.json({ job: toJsonValue(result.job), ...artifactJson(result.artifact) }, 201);
-      }
-      if (result.clarification) {
-        return c.json(
-          { job: toJsonValue(result.job), clarification: toJsonValue(result.clarification) },
-          202,
-        );
-      }
-      return c.json({ job: toJsonValue(result.job) }, 409);
-    } catch (error) {
-      throw new HTTPException(502, {
-        message: error instanceof Error ? error.message : "Plan compile failed",
-      });
-    }
+      requestSignal: c.req.raw.signal,
+    });
   });
 
   app.get("/plans/:planId/compile-jobs/:jobId", async (c) => {
@@ -288,12 +250,14 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
       throw new HTTPException(409, { message: `Cannot retry a ${job.status} compile job` });
     }
     const body = compileBodySchema.parse(await c.req.json());
-    const retryRequest = new Request(new URL(`/plans/${planId}/compile-jobs`, c.req.url), {
-      method: "POST",
-      headers: c.req.raw.headers,
-      body: JSON.stringify(body),
+    return executeCompileStart({
+      env: c.env,
+      routes,
+      planId,
+      body,
+      context: c.get("pearContext"),
+      requestSignal: c.req.raw.signal,
     });
-    return app.fetch(retryRequest, c.env);
   });
 
   app.post("/plans/:planId/clarifications/:clarificationId/answer", async (c) => {
@@ -318,6 +282,92 @@ export function registerPlanCompileRoutes(app: PearApp, routes: PlanRouteContext
     const inspector = await new D1CompileRepository(c.env.DB).inspect(planId);
     return c.json({ inspector: toJsonValue(inspector) });
   });
+}
+
+async function executeCompileStart(input: {
+  env: PearEnv;
+  routes: PlanRouteContext;
+  planId: string;
+  body: z.infer<typeof compileBodySchema>;
+  context: PearRequestContext;
+  requestSignal: AbortSignal;
+}): Promise<Response> {
+  await requireArtifact(input.env, input.planId);
+  const runtime = input.routes.ports.compile.resolve(input.env);
+  if (!runtime) {
+    throw new HTTPException(503, { message: "Plan compile runtime is not configured" });
+  }
+  const repository = new D1CompileRepository(input.env.DB);
+  const job = await repository.createJob(input.planId);
+  const sources = (await repository.listSources(input.planId)).filter(
+    ({ status }) => status === "ready",
+  );
+  if (sources.length === 0) {
+    await repository.updateJob(job.id, {
+      status: "failed",
+      error: "At least one source is required",
+    });
+    throw new HTTPException(400, { message: "At least one source is required" });
+  }
+  const params: PlanCompileWorkflowParams = {
+    jobId: job.id,
+    planId: input.planId,
+    compileInput: input.body.compileInput,
+    ...(input.body.clarificationAnswers
+      ? { clarificationAnswers: input.body.clarificationAnswers }
+      : {}),
+    context: input.context,
+  };
+  if (input.env.PLAN_COMPILE_WORKFLOW) {
+    try {
+      const instance = await input.env.PLAN_COMPILE_WORKFLOW.create({ id: job.id, params });
+      const queued = await repository.updateJob(job.id, { workflowInstanceId: instance.id });
+      return Response.json({ job: toJsonValue(queued) }, { status: 202 });
+    } catch (error) {
+      await repository.updateJob(job.id, {
+        status: "failed",
+        error: error instanceof Error ? error.message.slice(0, 4_000) : "Workflow dispatch failed",
+      });
+      throw new HTTPException(502, { message: "Failed to dispatch plan compile Workflow" });
+    }
+  }
+  try {
+    const result = await runPlanCompileJob({
+      env: input.env,
+      params,
+      runtime,
+      signal: AbortSignal.any([
+        input.requestSignal,
+        AbortSignal.timeout(INLINE_COMPILE_TIMEOUT_MS),
+      ]),
+    });
+    if (result.artifact) {
+      return Response.json(
+        { job: toJsonValue(result.job), ...artifactJson(result.artifact) },
+        { status: 201 },
+      );
+    }
+    if (result.clarification) {
+      return Response.json(
+        { job: toJsonValue(result.job), clarification: toJsonValue(result.clarification) },
+        { status: 202 },
+      );
+    }
+    return Response.json({ job: toJsonValue(result.job) }, { status: 409 });
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    if (
+      error instanceof Error &&
+      "status" in error &&
+      typeof (error as { status?: unknown }).status === "number"
+    ) {
+      const status = (error as { status: number }).status;
+      if (status === 400 || status === 404 || status === 409) {
+        throw new HTTPException(status, { message: error.message });
+      }
+    }
+    throw new HTTPException(502, { message: "Plan compilation failed" });
+  }
 }
 
 async function requireArtifact(env: { DB: D1Database }, planId: string) {
@@ -351,12 +401,17 @@ function maximumSize(mediaType: string): number {
       : MAX_TEXT_FILE_BYTES;
 }
 
-export async function readBodyWithLimit(response: Response, maximum: number): Promise<ArrayBuffer> {
+export async function readBodyWithLimit(
+  response: Response,
+  maximum: number,
+  signal?: AbortSignal,
+): Promise<ArrayBuffer> {
   if (!response.body) return new ArrayBuffer(0);
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  let bytes = new Uint8Array(Math.min(maximum, 64 * 1024));
   let total = 0;
   while (true) {
+    signal?.throwIfAborted();
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
@@ -364,15 +419,14 @@ export async function readBodyWithLimit(response: Response, maximum: number): Pr
       await reader.cancel("PEAR source size limit exceeded");
       throw new HTTPException(413, { message: `Source exceeds ${maximum} bytes` });
     }
-    chunks.push(value);
+    if (total > bytes.byteLength) {
+      const grown = new Uint8Array(Math.min(maximum, Math.max(total, bytes.byteLength * 2)));
+      grown.set(bytes);
+      bytes = grown;
+    }
+    bytes.set(value, total - value.byteLength);
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes.buffer;
+  return bytes.buffer.slice(0, total);
 }
 
 export function validatePublicUrl(raw: string): URL {
@@ -429,10 +483,10 @@ function isBlockedIpv6(host: string): boolean {
   return isBlockedIpv4(`${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`);
 }
 
-async function fetchPublicSource(initial: URL): Promise<Response> {
+async function fetchPublicSource(initial: URL, signal: AbortSignal): Promise<Response> {
   let url = initial;
   for (let redirects = 0; redirects <= 5; redirects += 1) {
-    const response = await fetch(url, { redirect: "manual" });
+    const response = await fetch(url, { redirect: "manual", signal });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get("location");
     if (!location) throw new HTTPException(400, { message: "Source redirect has no location" });

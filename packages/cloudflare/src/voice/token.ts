@@ -1,4 +1,9 @@
-import { DEFAULT_GEMINI_LIVE_MODEL, type RuntimeSnapshot, type VoiceLease } from "@pear-agent/core";
+import {
+  DEFAULT_GEMINI_LIVE_MODEL,
+  DEFAULT_REALTIME_OBSERVATION_CONFIDENCE,
+  type RuntimeSnapshot,
+  type VoiceLease,
+} from "@pear-agent/core";
 
 import { VoiceTokenUnavailableError } from "../errors.js";
 import { listVoiceToolDeclarations, summarizeSnapshotForVoice } from "./tools.js";
@@ -43,7 +48,7 @@ export function buildVoiceLiveConfig(input: {
     `Respond in ${input.locale ?? "Japanese"} unless the user clearly uses another language.`,
     "Prefer short, concrete guidance focused on focusStepId / the active or ready step in steps[].",
     "Never claim a step, timer, or session state changed until the corresponding tool call succeeds.",
-    "For every state-changing tool include confidence from 0 to 1. If confidence is below 0.8 or uncertain, ask the user; retry only when their explicit answer makes confidence at least 0.8.",
+    `For every state-changing tool include confidence from 0 to 1. If confidence is below ${DEFAULT_REALTIME_OBSERVATION_CONFIDENCE} or uncertain, ask the user; retry only when their explicit answer makes confidence at least ${DEFAULT_REALTIME_OBSERVATION_CONFIDENCE}.`,
     "Voice replanning must use confirm or suggest mode. Never request automatic patch activation.",
     "Use get_runtime_snapshot when state may have changed or when you are unsure.",
     "Plan timers live on steps[].timers (timerId + durationSeconds).",

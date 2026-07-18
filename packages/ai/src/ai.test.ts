@@ -9,7 +9,10 @@ import { z } from "zod";
 import {
   createAiPlanGenerator,
   createAiPlanCompiler,
+  createAiPlanEditor,
+  createAiReplanGenerator,
   createAiSourceInterpreter,
+  generateStructured,
   type StructuredGenerator,
 } from "./index.js";
 
@@ -45,6 +48,21 @@ const source = sourceArtifactSchema.parse({
 });
 
 describe("@pear-agent/ai", () => {
+  it("rejects an invalid retry bound before calling the provider", async () => {
+    await expect(
+      generateStructured({
+        model: {} as never,
+        schema: z.object({ ok: z.boolean() }),
+        stage: "plan",
+        promptVersion: "test",
+        schemaVersion: "test",
+        system: "test",
+        prompt: "test",
+        maxAttempts: Number.POSITIVE_INFINITY,
+      }),
+    ).rejects.toThrow("maxAttempts must be an integer between 1 and 10");
+  });
+
   it("rejects an impossible call budget before invoking a model phase", async () => {
     let interpreterCalled = false;
     const compiler = createAiPlanCompiler({
@@ -108,6 +126,99 @@ describe("@pear-agent/ai", () => {
       expect(result.normalizedInput).toEqual({ title: "Dinner" });
       expect(result.assumptions[0]?.id).toBeTruthy();
     }
+  });
+
+  it("rejects interpretation provenance from an unknown source", async () => {
+    const interpreter = createAiSourceInterpreter({
+      model: {} as never,
+      normalizedInputSchema: z.object({ title: z.string() }),
+      generate: fixtureGenerate({
+        kind: "ready",
+        normalizedInput: { title: "Dinner" },
+        assumptions: [{ summary: "Invented", sourceRefs: [{ sourceId: "unknown" }] }],
+        questions: [],
+      }),
+    });
+    await expect(
+      interpreter.interpret({
+        domainId: "cook",
+        domainVersion: 1,
+        compileInput: {},
+        sources: [{ artifact: source, extractedText: "Cook dinner" }],
+        instructions: "Interpret recipe",
+      }),
+    ).rejects.toThrow("unknown source unknown");
+  });
+
+  it("overrides model-owned plan identity during editing", async () => {
+    const basePlan = {
+      id: "trusted-plan",
+      version: 3,
+      goal: {
+        id: "goal-1",
+        description: "Dinner",
+        successCriteria: [
+          { id: "done", description: "Done", evaluator: { type: "human_confirmation" as const } },
+        ],
+        completionPolicy: "automatic" as const,
+      },
+      steps: [],
+    };
+    const editor = createAiPlanEditor({
+      model: {} as never,
+      stepDataSchema: z.unknown(),
+      instructions: "Edit",
+      generate: fixtureGenerate({ ...basePlan, id: "model-plan", version: 99 }),
+    });
+    const result = await editor.edit({
+      domainId: "cook",
+      basePlan,
+      goal: basePlan.goal,
+      request: "Improve",
+      normalizedInput: {},
+      sourceRefs: [],
+    });
+    expect(result.plan).toMatchObject({ id: "trusted-plan", version: 4 });
+  });
+
+  it("builds replan identity and anchors only from Runtime input", async () => {
+    const replanner = createAiReplanGenerator({
+      model: {} as never,
+      stepDataSchema: z.unknown(),
+      createId: () => "1",
+      generate: fixtureGenerate({
+        operations: [{ type: "remove_step", stepId: "step-1" }],
+        summary: "Remove blocked work",
+      }),
+    });
+    const patch = await replanner.generatePatch({
+      domainId: "cook",
+      instructions: "Replan",
+      plan: {
+        id: "trusted-plan",
+        version: 3,
+        goal: {
+          id: "goal-1",
+          description: "Dinner",
+          successCriteria: [],
+          completionPolicy: "automatic",
+        },
+        steps: [],
+      },
+      normalizedInput: {},
+      assessment: {},
+      affectedStepIds: ["step-1"],
+      causeRefs: [{ type: "runtime_event", eventId: "event-1" }],
+      baseLastEventId: "event-1",
+    });
+    expect(patch).toMatchObject({
+      id: "patch-1",
+      basePlanId: "trusted-plan",
+      basePlanVersion: 3,
+      baseLastEventId: "event-1",
+      causeEventIds: ["event-1"],
+      affectedStepIds: ["step-1"],
+    });
   });
 
   it("passes PDF bytes as an AI SDK file part", async () => {

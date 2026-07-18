@@ -110,6 +110,15 @@ export function createAiSourceInterpreter<TSchema extends z.ZodType>(
           sourceRefs: Array<z.output<typeof sourceReferenceSchema>>;
         }>;
       };
+      const sourceIds = new Set(input.sources.map(({ artifact }) => artifact.id));
+      for (const reference of [
+        ...output.assumptions.flatMap(({ sourceRefs }) => sourceRefs),
+        ...output.questions.flatMap(({ sourceRefs }) => sourceRefs),
+      ]) {
+        if (!sourceIds.has(reference.sourceId)) {
+          throw new Error(`Interpretation referenced unknown source ${reference.sourceId}`);
+        }
+      }
       const assumptions = output.assumptions.map((assumption) =>
         interpretationAssumptionSchema.parse({ ...assumption, id: crypto.randomUUID() }),
       );

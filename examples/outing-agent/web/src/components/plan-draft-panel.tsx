@@ -238,7 +238,12 @@ export function PlanDraftPanel({
                 <Button size="sm" disabled={busy} onClick={() => void applyProposal()}>
                   この変更案を適用
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setProposal(null)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setProposal(null)}
+                >
                   破棄
                 </Button>
               </div>

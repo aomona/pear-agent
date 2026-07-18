@@ -15,6 +15,7 @@ import {
   type SourceKind,
 } from "@pear-agent/core";
 import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { z } from "zod";
 
 import { parseJson, serializeJson } from "../serialize.js";
 import { createPearDatabase, type PearDatabase } from "./client.js";
@@ -189,7 +190,7 @@ export class D1CompileRepository {
     return sourceArtifactSchema.parse({ ...rows[0], status: "deleted", updatedAt });
   }
 
-  async markSourceDeletedIfIdle(
+  async markSourceDeletingIfIdle(
     planArtifactId: string,
     sourceId: string,
   ): Promise<SourceArtifact | null> {
@@ -203,7 +204,7 @@ export class D1CompileRepository {
     const result = await this.d1
       .prepare(
         `UPDATE plan_sources
-         SET status = 'deleted', updated_at = ?
+         SET status = 'deleting', updated_at = ?
          WHERE id = ? AND plan_artifact_id = ? AND status != 'deleted'
            AND NOT EXISTS (
              SELECT 1 FROM compile_jobs
@@ -218,7 +219,20 @@ export class D1CompileRepository {
       }
       return null;
     }
-    return sourceArtifactSchema.parse({ ...rows[0], status: "deleted", updatedAt });
+    return sourceArtifactSchema.parse({ ...rows[0], status: "deleting", updatedAt });
+  }
+
+  async finalizeSourceDeleted(planArtifactId: string, sourceId: string): Promise<void> {
+    await this.db
+      .update(planSources)
+      .set({ status: "deleted", updatedAt: new Date().toISOString() })
+      .where(
+        and(
+          eq(planSources.planArtifactId, planArtifactId),
+          eq(planSources.id, sourceId),
+          eq(planSources.status, "deleting"),
+        ),
+      );
   }
 
   async isSourceReferenced(planArtifactId: string, sourceId: string): Promise<boolean> {
@@ -394,6 +408,24 @@ export class D1CompileRepository {
     assumptions: InterpretationAssumption[];
     generation: GenerationMetadata;
   }): Promise<StoredInterpretation> {
+    const existingRows = await this.db
+      .select()
+      .from(interpretationArtifacts)
+      .where(eq(interpretationArtifacts.compileJobId, input.compileJobId))
+      .limit(1);
+    if (existingRows[0]) {
+      const row = existingRows[0];
+      return {
+        id: row.id,
+        planArtifactId: row.planArtifactId,
+        compileJobId: row.compileJobId,
+        revision: row.revision,
+        normalizedInput: parseJson(row.normalizedInputJson),
+        assumptions: z.array(interpretationAssumptionSchema).parse(parseJson(row.assumptionsJson)),
+        generation: generationMetadataSchema.parse(parseJson(row.generationJson)),
+        createdAt: new Date(row.createdAt),
+      };
+    }
     const revisions = await this.db
       .select({ revision: interpretationArtifacts.revision })
       .from(interpretationArtifacts)
@@ -430,6 +462,17 @@ export class D1CompileRepository {
     compileJobId: string;
     generation: GenerationMetadata;
   }): Promise<void> {
+    const existing = await this.db
+      .select({ id: generationRecords.id })
+      .from(generationRecords)
+      .where(
+        and(
+          eq(generationRecords.compileJobId, input.compileJobId),
+          eq(generationRecords.stage, input.generation.stage),
+        ),
+      )
+      .limit(1);
+    if (existing[0]) return;
     await this.db.insert(generationRecords).values(generationToRow(input, input.generation));
   }
 
@@ -439,6 +482,12 @@ export class D1CompileRepository {
     questions: ClarificationQuestion[];
     expiresAt: Date;
   }): Promise<ClarificationRequest> {
+    const existing = await this.db
+      .select()
+      .from(clarificationRequests)
+      .where(eq(clarificationRequests.compileJobId, input.compileJobId))
+      .limit(1);
+    if (existing[0]) return clarificationFromRow(existing[0]);
     const now = new Date();
     const request = clarificationRequestSchema.parse({
       id: crypto.randomUUID(),
@@ -450,6 +499,15 @@ export class D1CompileRepository {
     });
     await this.db.insert(clarificationRequests).values(clarificationToRow(request));
     return request;
+  }
+
+  async getClarificationForJob(compileJobId: string): Promise<ClarificationRequest | null> {
+    const rows = await this.db
+      .select()
+      .from(clarificationRequests)
+      .where(eq(clarificationRequests.compileJobId, compileJobId))
+      .limit(1);
+    return rows[0] ? clarificationFromRow(rows[0]) : null;
   }
 
   async answerClarification(
@@ -473,17 +531,31 @@ export class D1CompileRepository {
       throw new CompileJobConflictError(`Clarification request is ${current.status}`);
     }
     if (current.expiresAt <= new Date()) {
-      await this.db
-        .update(clarificationRequests)
-        .set({ status: "expired" })
-        .where(eq(clarificationRequests.id, id));
+      const expiredAt = new Date().toISOString();
+      await this.db.batch([
+        this.db
+          .update(clarificationRequests)
+          .set({ status: "expired" })
+          .where(
+            and(eq(clarificationRequests.id, id), eq(clarificationRequests.status, "pending")),
+          ),
+        this.db
+          .update(compileJobs)
+          .set({
+            status: "expired",
+            error: "Clarification request expired",
+            updatedAt: expiredAt,
+          })
+          .where(and(eq(compileJobs.id, current.compileJobId), eq(compileJobs.status, "waiting"))),
+      ]);
       throw new CompileJobConflictError("Clarification request has expired");
     }
     const expectedQuestionIds = current.questions.map(({ id: questionId }) => questionId).sort();
     const answerIds = Object.keys(answers).sort();
     if (
       expectedQuestionIds.length !== answerIds.length ||
-      expectedQuestionIds.some((questionId, index) => questionId !== answerIds[index])
+      expectedQuestionIds.some((questionId, index) => questionId !== answerIds[index]) ||
+      Object.values(answers).some((answer) => answer.trim().length === 0)
     ) {
       throw new CompileJobConflictError(
         "Answers must contain exactly one non-empty value for every clarification question",

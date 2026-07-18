@@ -151,6 +151,15 @@ describe("AI-native plan compile", () => {
     expect(confirmed.status).toBe(200);
     const confirmedBody = (await confirmed.json()) as { artifact: { version: number } };
     expect(confirmedBody.artifact.version).toBe(3);
+    const duplicateConfirm = await api(
+      `/plans/${planId}/edit-proposals/${proposal.proposal.id}/confirm`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+    expect(duplicateConfirm.status).toBe(409);
+    const artifactAfterDuplicate = (await (await api(`/plans/${planId}`)).json()) as {
+      artifact: { version: number };
+    };
+    expect(artifactAfterDuplicate.artifact.version).toBe(3);
   });
 
   it("does not save a plan version when a running compile is cancelled", async () => {
@@ -165,7 +174,7 @@ describe("AI-native plan compile", () => {
     });
     const compiling = api(`/plans/${planId}/compile-jobs`, {
       method: "POST",
-      body: JSON.stringify({ compileInput: { delayMs: 100 } }),
+      body: JSON.stringify({ compileInput: { delayMs: 1_000 } }),
     });
     let jobId: string | undefined;
     for (let attempt = 0; attempt < 20 && !jobId; attempt += 1) {

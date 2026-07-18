@@ -81,6 +81,12 @@ Migration `0004` marks pre-existing sessions with Domain version `0` (unknown/in
 | `POST`   | `/plans/:id/compile-jobs`                                   | Queue a durable compile Workflow (inline fallback when unbound)                         |
 | `GET`    | `/plans/:id/compile-jobs/:jobId`                            | Poll compile phase/status                                                               |
 | `POST`   | `/plans/:id/compile-jobs/:jobId/cancel`                     | Cancel the D1 job and terminate its Workflow instance                                   |
+| `POST`   | `/plans/:id/compile-jobs/:jobId/retry`                      | Retry a failed, cancelled, or expired compile                                           |
+| `GET`    | `/plans/:id/sources`                                        | List durable source metadata                                                            |
+| `POST`   | `/plans/:id/sources`                                        | Add text, URL, or file source material                                                  |
+| `DELETE` | `/plans/:id/sources/:sourceId`                              | Recoverably remove an unreferenced source and its R2 objects                            |
+| `POST`   | `/plans/:id/clarifications/:clarificationId/answer`         | Answer a pending clarification before resuming compile                                  |
+| `GET`    | `/plans/:id/inspector`                                      | Read sources, jobs, interpretations, clarifications, and generations                    |
 | `POST`   | `/plans/:id/edit-proposals`                                 | Generate a reviewable PlanImprover diff                                                 |
 | `POST`   | `/plans/:id/edit-proposals/:proposalId/confirm`             | Confirm and apply a pending edit proposal                                               |
 | `GET`    | `/plans/:id/versions`                                       | Artifact version history                                                                |

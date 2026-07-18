@@ -41,13 +41,14 @@ export class D1PlanEditRepository {
     createdByActorId: string;
   }): Promise<PlanEditProposal> {
     const now = new Date();
+    const candidatePlan = planSchema.parse(input.candidatePlan);
     const proposal: PlanEditProposal = {
       id: crypto.randomUUID(),
       planArtifactId: input.planArtifactId,
       baseVersion: input.basePlan.version,
       request: input.request,
-      candidatePlan: planSchema.parse(input.candidatePlan),
-      diff: diffPlans(input.basePlan, input.candidatePlan),
+      candidatePlan,
+      diff: diffPlans(input.basePlan, candidatePlan),
       status: "pending",
       createdByActorId: input.createdByActorId,
       createdAt: now,

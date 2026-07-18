@@ -11,6 +11,7 @@ import {
   ExecutionSessionAgent,
   allowAllAuthorize,
   createPearWorker,
+  D1CompileRepository,
   runPlanCompileJob,
   type AuthorizeFn,
   type PearEnv,
@@ -54,20 +55,36 @@ function createStarterCompileRuntime(env: StarterEnv) {
 
 export class PlanCompileWorkflow extends WorkflowEntrypoint<StarterEnv, PlanCompileWorkflowParams> {
   async run(event: Readonly<WorkflowEvent<PlanCompileWorkflowParams>>, step: WorkflowStep) {
-    return step.do(
-      "compile-plan",
-      { retries: { limit: 0, delay: "1 second" }, timeout: "30 minutes" },
-      async () => {
-        const runtime = createStarterCompileRuntime(this.env);
-        if (!runtime) throw new Error("GEMINI_API_KEY is not configured");
-        const result = await runPlanCompileJob({
-          env: this.env,
-          params: event.payload,
-          runtime,
+    try {
+      return await step.do(
+        "compile-plan",
+        {
+          retries: { limit: 2, delay: "5 seconds", backoff: "exponential" },
+          timeout: "30 minutes",
+        },
+        async () => {
+          const runtime = createStarterCompileRuntime(this.env);
+          if (!runtime) throw new Error("GEMINI_API_KEY is not configured");
+          const result = await runPlanCompileJob({
+            env: this.env,
+            params: event.payload,
+            runtime,
+            durableRetry: true,
+          });
+          return { jobId: result.job.id, status: result.job.status };
+        },
+      );
+    } catch (error) {
+      const repository = new D1CompileRepository(this.env.DB);
+      const job = await repository.getJob(event.payload.jobId);
+      if (job && ["queued", "running", "waiting"].includes(job.status)) {
+        await repository.updateJob(job.id, {
+          status: "failed",
+          error: error instanceof Error ? error.message.slice(0, 4_000) : "Compile failed",
         });
-        return { jobId: result.job.id, status: result.job.status };
-      },
-    );
+      }
+      throw error;
+    }
   }
 }
 

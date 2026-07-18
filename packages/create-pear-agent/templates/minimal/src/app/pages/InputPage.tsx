@@ -6,9 +6,7 @@ import { links } from "../navigation";
 export function InputPage({ planId }: { planId: string }) {
   const compiler = usePlanCompiler(planId);
   const [request, setRequest] = useState("Turn this source material into a clear execution plan.");
-  const [source, setSource] = useState(
-    "Describe the outcome, constraints, context, and useful facts here.",
-  );
+  const [source, setSource] = useState("");
   const [url, setUrl] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
 
@@ -44,6 +42,7 @@ export function InputPage({ planId }: { planId: string }) {
             rows={10}
             value={source}
             onChange={(event) => setSource(event.target.value)}
+            placeholder="Describe the outcome, constraints, context, and useful facts here."
           />
           <label htmlFor="url">Public source URL (optional)</label>
           <input
@@ -86,6 +85,7 @@ export function InputPage({ planId }: { planId: string }) {
               ))}
               <button
                 disabled={
+                  compiler.status === "loading" ||
                   !compiler.result.clarification.questions.every((question) =>
                     answers[question.id]?.trim(),
                   )

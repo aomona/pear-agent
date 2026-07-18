@@ -77,6 +77,9 @@ export const generateStructured: StructuredGenerator = async <TSchema extends z.
   request: StructuredGenerationRequest<TSchema>,
 ): Promise<StructuredGenerationResult<z.output<TSchema>>> => {
   const maxAttempts = request.maxAttempts ?? DEFAULT_AI_MAX_ATTEMPTS_PER_PHASE;
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 10) {
+    throw new RangeError("maxAttempts must be an integer between 1 and 10");
+  }
   let lastError: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {

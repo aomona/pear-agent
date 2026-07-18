@@ -1,4 +1,4 @@
-import { defineAiDomain } from "@pear-agent/core";
+import { defineAiDomain, sourceReferenceSchema } from "@pear-agent/core";
 import { z } from "zod";
 
 export const starterCompileInputSchema = z.object({
@@ -13,6 +13,7 @@ export const starterNormalizedInputSchema = z.object({
         title: z.string().trim().min(1),
         description: z.string().trim().min(1),
         estimatedDurationSeconds: z.number().int().positive(),
+        sourceRefs: z.array(sourceReferenceSchema).min(1),
       }),
     )
     .min(1),

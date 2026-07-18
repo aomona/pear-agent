@@ -311,10 +311,16 @@ export function listVoiceToolDeclarations(): VoiceToolDeclaration[] {
               ...def.parameters.properties,
               confidence: {
                 type: "number",
+                minimum: 0,
+                maximum: 1,
                 description:
                   "0..1 confidence that the user explicitly requested or completed this state change",
               },
             },
+            required: [
+              ...("required" in def.parameters ? (def.parameters.required ?? []) : []),
+              "confidence",
+            ],
           },
   }));
 }

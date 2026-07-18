@@ -1,4 +1,4 @@
-import { planPatchSchema, type ReplanGenerator } from "@pear-agent/core";
+import { planPatchOperationSchema, planPatchSchema, type ReplanGenerator } from "@pear-agent/core";
 import type { LanguageModel } from "ai";
 import { z } from "zod";
 
@@ -16,11 +16,17 @@ export type CreateAiReplanGeneratorOptions = {
 export function createAiReplanGenerator(options: CreateAiReplanGeneratorOptions): ReplanGenerator {
   const generate = options.generate ?? generateStructured;
   const createId = options.createId ?? (() => crypto.randomUUID());
+  const modelPatchSchema = z
+    .object({
+      operations: z.array(planPatchOperationSchema).min(1).max(1_000),
+      summary: z.string().min(1).max(2_000),
+    })
+    .strict();
   return {
     async generatePatch(input) {
       const result = await generate({
         model: options.model,
-        schema: planPatchSchema,
+        schema: modelPatchSchema,
         stage: "replan",
         promptVersion: options.promptVersion ?? "pear-replan-v1",
         schemaVersion: input.domainId,
@@ -50,6 +56,7 @@ export function createAiReplanGenerator(options: CreateAiReplanGeneratorOptions)
         id: `patch-${createId()}`,
         basePlanId: input.plan.id,
         basePlanVersion: input.plan.version,
+        baseLastEventId: input.baseLastEventId,
         causeEventIds,
         causeRefs: input.causeRefs,
         affectedStepIds: [...input.affectedStepIds],

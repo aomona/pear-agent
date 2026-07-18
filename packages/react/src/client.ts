@@ -5,6 +5,8 @@ import {
   affectedSubgraphSchema,
   clarificationRequestSchema,
   compileJobSchema,
+  generationMetadataSchema,
+  interpretationAssumptionSchema,
   sourceArtifactSchema,
   planArtifactStatusSchema,
   replanAssessmentSchema,
@@ -119,6 +121,25 @@ const planArtifactDetailSchema = z.object({
   updatedAt: dateSchema,
   normalizedInput: z.unknown().optional(),
   ownerActorId: z.string().nullable().optional(),
+});
+
+const planArtifactInspectorSchema = z.object({
+  sources: z.array(sourceArtifactSchema),
+  jobs: z.array(compileJobSchema),
+  interpretations: z.array(
+    z.object({
+      id: z.string().min(1),
+      planArtifactId: z.string().min(1),
+      compileJobId: z.string().min(1),
+      revision: z.number().int().positive(),
+      normalizedInput: z.unknown(),
+      assumptions: z.array(interpretationAssumptionSchema),
+      generation: generationMetadataSchema,
+      createdAt: dateSchema,
+    }),
+  ),
+  clarifications: z.array(clarificationRequestSchema),
+  generations: z.array(generationMetadataSchema),
 });
 
 const planEditProposalSchema = z.object({
@@ -324,10 +345,8 @@ export class PearClient {
   }
 
   async getPlanInspector(planId: string): Promise<PlanArtifactInspector> {
-    const body = await this.requestJson<{ inspector: PlanArtifactInspector }>(
-      `/plans/${planId}/inspector`,
-    );
-    return body.inspector;
+    const body = await this.requestJson<{ inspector: unknown }>(`/plans/${planId}/inspector`);
+    return planArtifactInspectorSchema.parse(body.inspector);
   }
 
   async proposePlanEdit(planId: string, request: string): Promise<PlanEditProposal> {
@@ -855,11 +874,12 @@ export class PearClient {
       body = await response.text().catch(() => undefined);
     }
     const message =
-      typeof body === "object" &&
-      body !== null &&
-      "error" in body &&
-      typeof (body as { error: unknown }).error === "string"
-        ? (body as { error: string }).error
+      typeof body === "object" && body !== null
+        ? typeof (body as { error?: unknown }).error === "string"
+          ? (body as { error: string }).error
+          : typeof (body as { message?: unknown }).message === "string"
+            ? (body as { message: string }).message
+            : `PEAR request failed (${response.status})`
         : `PEAR request failed (${response.status})`;
     return new PearClientError(message, response.status, body);
   }

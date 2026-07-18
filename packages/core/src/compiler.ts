@@ -9,7 +9,13 @@ import type { PlanPatch } from "./replan.js";
 export const sourceKindSchema = z.enum(["text", "url", "file"]);
 export type SourceKind = z.infer<typeof sourceKindSchema>;
 
-export const sourceArtifactStatusSchema = z.enum(["pending", "ready", "failed", "deleted"]);
+export const sourceArtifactStatusSchema = z.enum([
+  "pending",
+  "ready",
+  "failed",
+  "deleting",
+  "deleted",
+]);
 export type SourceArtifactStatus = z.infer<typeof sourceArtifactStatusSchema>;
 
 export const sourceArtifactSchema = z
@@ -204,6 +210,7 @@ export type ReplanGeneratorInput = {
   assessment: unknown;
   affectedStepIds: readonly string[];
   causeRefs: readonly PlanChangeCauseRef[];
+  baseLastEventId: string | null;
   context?: unknown;
 };
 

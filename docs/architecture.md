@@ -42,7 +42,7 @@ Ready Plan Artifact version
   -> AI assessment
   -> typed Plan Patch proposal
   -> confirmation + validation
-  -> atomic Plan version activation
+  -> atomic Execution Session plan activation
 ```
 
 Execution Sessionから元artifactへ変更を自動反映しません。必要な場合だけ最終Planを

@@ -71,7 +71,10 @@ export function PlanPage({ planId }: { planId: string }) {
         <input
           id="edit-request"
           value={editRequest}
-          onChange={(event) => setEditRequest(event.target.value)}
+          onChange={(event) => {
+            setEditRequest(event.target.value);
+            setProposal(null);
+          }}
           placeholder="Move the important work earlier…"
         />
         <button

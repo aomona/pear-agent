@@ -41,6 +41,14 @@ function createImprove(options: CreateAiPlanEditorOptions) {
       ].join("\n"),
       prompt: JSON.stringify(input),
     });
-    return { kind: "full" as const, plan: schema.parse(result.output) };
+    const candidate = schema.parse(result.output);
+    return {
+      kind: "full" as const,
+      plan: schema.parse({
+        ...candidate,
+        id: input.basePlan.id,
+        version: input.basePlan.version + 1,
+      }),
+    };
   };
 }

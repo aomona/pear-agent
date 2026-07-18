@@ -103,13 +103,13 @@ export function registerPlanImproveRoutes(app: PearApp, routes: PlanRouteContext
       await editRepository.setStatus(planId, proposalId, "stale");
       throw new HTTPException(409, { message: "Plan changed after this edit was proposed" });
     }
-    const stored = await repository.saveVersionStored({
+    const stored = await repository.applyEditProposalStored({
       artifactId: planId,
+      proposalId,
+      baseVersion: proposal.baseVersion,
       plan: proposal.candidatePlan,
-      changeReason: "user_edit",
       summary: proposal.request.slice(0, 200),
     });
-    await editRepository.setStatus(planId, proposalId, "applied");
     return c.json({
       ...artifactJson(stored),
       proposal: toJsonValue({ ...proposal, status: "applied" }),

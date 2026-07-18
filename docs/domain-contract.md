@@ -8,7 +8,7 @@ Capabilityを宣言します。モデル呼び出し、retry、identity、proven
 ## 基本形
 
 ```ts
-const domain = defineDomain({
+const domain = defineAiDomain({
   id: "cook",
   version: 1,
   schemas: {
@@ -61,9 +61,9 @@ AIはPlan候補を作成し、RuntimeがIDとsource refsを確定します。Dom
 
 ## EditingとReplanning
 
-実行前編集と実行中Replanは共通PlanPatchを使います。実行前はuser instruction、実行中は
-Runtime Eventをtyped cause refとして持ちます。標準modeは`confirm`で、より緩い要求に
-down-gradeできません。
+実行前編集は`{ kind: "full", plan }`からreview可能なfull-plan diffを作ります。実行中Replanは
+部分的なPlanPatchを使い、Runtime Eventをtyped cause refとして持ちます。標準modeは`confirm`で、
+より緩い要求にdown-gradeできません。
 
 ## Domainが保証するもの
 

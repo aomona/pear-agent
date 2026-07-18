@@ -1,27 +1,37 @@
 import { defineAiDomain, type ExecutionPlan } from "@pear-agent/core";
 import { z } from "zod";
 
-export const presentationCompileInputSchema = z.object({
-  totalSeconds: z.number().int().positive().max(86_400),
-  bufferSeconds: z.number().int().nonnegative().default(0),
-  audience: z.string().max(2_000).optional(),
-});
+export const presentationCompileInputSchema = z
+  .object({
+    totalSeconds: z.number().int().positive().max(86_400),
+    bufferSeconds: z.number().int().nonnegative().default(0),
+    audience: z.string().max(2_000).optional(),
+  })
+  .refine(({ bufferSeconds, totalSeconds }) => bufferSeconds < totalSeconds, {
+    message: "bufferSeconds must be less than totalSeconds",
+    path: ["bufferSeconds"],
+  });
 
-export const presentationNormalizedInputSchema = z.object({
-  totalSeconds: z.number().int().positive(),
-  bufferSeconds: z.number().int().nonnegative(),
-  slides: z
-    .array(
-      z.object({
-        page: z.number().int().positive(),
-        title: z.string().min(1),
-        role: z.string().min(1),
-        keyPoints: z.array(z.string()).min(1),
-        sourceId: z.string().min(1),
-      }),
-    )
-    .min(1),
-});
+export const presentationNormalizedInputSchema = z
+  .object({
+    totalSeconds: z.number().int().positive(),
+    bufferSeconds: z.number().int().nonnegative(),
+    slides: z
+      .array(
+        z.object({
+          page: z.number().int().positive(),
+          title: z.string().min(1),
+          role: z.string().min(1),
+          keyPoints: z.array(z.string()).min(1),
+          sourceId: z.string().min(1),
+        }),
+      )
+      .min(1),
+  })
+  .refine(({ bufferSeconds, totalSeconds }) => bufferSeconds < totalSeconds, {
+    message: "bufferSeconds must be less than totalSeconds",
+    path: ["bufferSeconds"],
+  });
 
 export const presentationStepDataSchema = z.object({
   kind: z.literal("slide"),
@@ -79,7 +89,7 @@ export const presentationDomain = defineAiDomain({
       if (allocated > budget)
         issues.push(`Allocated ${allocated}s exceeds ${budget}s speaking budget`);
       const pages = plan.steps.map((step) => step.domainData.page);
-      if (pages.some((page, index) => page !== index + 1))
+      if (pages.some((page, index) => page !== input.slides[index]?.page))
         issues.push("Slide steps must remain in PDF page order");
       return { valid: issues.length === 0, issues };
     },

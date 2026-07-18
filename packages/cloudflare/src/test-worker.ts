@@ -71,7 +71,17 @@ const worker = createPearWorker({
           "delayMs" in input.compileInput &&
           typeof input.compileInput.delayMs === "number"
         ) {
-          await new Promise((resolve) => setTimeout(resolve, input.compileInput.delayMs));
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, input.compileInput.delayMs);
+            input.signal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                reject(input.signal?.reason ?? new Error("Compile aborted"));
+              },
+              { once: true },
+            );
+          });
         }
         const now = new Date();
         const metadata = (stage: "interpret" | "plan") =>

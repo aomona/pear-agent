@@ -29,20 +29,45 @@ export async function runPlanCompileJob(input: {
   env: PearEnv;
   params: PlanCompileWorkflowParams;
   runtime: PlanCompileRuntime;
+  signal?: AbortSignal;
+  durableRetry?: boolean;
 }): Promise<PlanCompileRunResult> {
   const { env, params, runtime } = input;
   const repository = new D1CompileRepository(env.DB);
   const artifact = await planRepository(env).getStored(params.planId);
   if (!artifact) throw new Error(`Plan artifact not found: ${params.planId}`);
+  const currentJob = await repository.getJob(params.jobId);
+  if (!currentJob) throw new CompileJobNotFoundError(params.jobId);
+  if (currentJob.status === "completed") return { job: currentJob, artifact };
+  const existingClarification = await repository.getClarificationForJob(params.jobId);
+  if (existingClarification && ["running", "waiting"].includes(currentJob.status)) {
+    const job =
+      currentJob.status === "waiting"
+        ? currentJob
+        : await repository.transitionJob(params.jobId, ["running"], {
+            phase: "awaiting_clarification",
+            status: "waiting",
+          });
+    return { job, clarification: existingClarification };
+  }
+  if (currentJob.status !== "queued" && currentJob.status !== "running") {
+    throw new Error(`Compile job cannot resume from ${currentJob.status}`);
+  }
   const sources = (await repository.listSources(params.planId)).filter(
     ({ status }) => status === "ready",
   );
   if (sources.length === 0) throw new Error("At least one source is required");
-  await repository.transitionJob(params.jobId, ["queued"], {
-    phase: "interpret",
-    status: "running",
-  });
+  if (currentJob.status === "queued") {
+    await repository.transitionJob(params.jobId, ["queued"], {
+      phase: "interpret",
+      status: "running",
+    });
+  }
   const abortController = new AbortController();
+  const signal = input.signal
+    ? AbortSignal.any([abortController.signal, input.signal])
+    : abortController.signal;
+  const stopWatchingCancellation = watchForCancellation(repository, params.jobId, abortController);
 
   try {
     const interpretableSources = await Promise.all(
@@ -62,7 +87,7 @@ export async function runPlanCompileJob(input: {
       compileInput: params.compileInput,
       ...(params.clarificationAnswers ? { clarificationAnswers: params.clarificationAnswers } : {}),
       context: params.context,
-      signal: abortController.signal,
+      signal,
     });
     await assertActive(repository, params.jobId);
 
@@ -72,17 +97,17 @@ export async function runPlanCompileJob(input: {
         compileJobId: params.jobId,
         generation: result.interpretationGeneration,
       });
-      const job = await repository.transitionJob(params.jobId, ["running"], {
-        phase: "awaiting_clarification",
-        status: "waiting",
-        modelCalls: result.interpretationGeneration.attempt,
-        totalTokens: result.interpretationGeneration.totalTokens ?? 0,
-      });
       const clarification = await repository.createClarification({
         planArtifactId: params.planId,
         compileJobId: params.jobId,
         questions: result.questions,
         expiresAt: new Date(Date.now() + DEFAULT_CLARIFICATION_TIMEOUT_MS),
+      });
+      const job = await repository.transitionJob(params.jobId, ["running"], {
+        phase: "awaiting_clarification",
+        status: "waiting",
+        modelCalls: result.interpretationGeneration.attempt,
+        totalTokens: result.interpretationGeneration.totalTokens ?? 0,
       });
       return { job, clarification };
     }
@@ -123,14 +148,41 @@ export async function runPlanCompileJob(input: {
   } catch (error) {
     const current = await repository.getJob(params.jobId);
     if (current?.status === "cancelled") return { job: current };
-    if (current && ["queued", "running", "waiting"].includes(current.status)) {
+    if (
+      !input.durableRetry &&
+      current &&
+      ["queued", "running", "waiting"].includes(current.status)
+    ) {
       await repository.updateJob(params.jobId, {
         status: "failed",
         error: error instanceof Error ? error.message.slice(0, 4_000) : "Compile failed",
       });
     }
     throw error;
+  } finally {
+    stopWatchingCancellation();
   }
+}
+
+function watchForCancellation(
+  repository: D1CompileRepository,
+  jobId: string,
+  controller: AbortController,
+): () => void {
+  let checking = false;
+  const timer = setInterval(() => {
+    if (checking || controller.signal.aborted) return;
+    checking = true;
+    void repository
+      .getJob(jobId)
+      .then((job) => {
+        if (job?.status === "cancelled") controller.abort("Compile job cancelled");
+      })
+      .finally(() => {
+        checking = false;
+      });
+  }, 250);
+  return () => clearInterval(timer);
 }
 
 async function assertActive(repository: D1CompileRepository, jobId: string): Promise<void> {
