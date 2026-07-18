@@ -2,6 +2,7 @@ import type {
   ExecutionGoal,
   ExecutionPlan,
   InterpretableSource,
+  PlanCompilePhaseResult,
   SourceInterpreter,
 } from "@pear-agent/core";
 import { DEFAULT_AI_MAX_CALLS_PER_JOB, DEFAULT_AI_MAX_TOKENS_PER_JOB } from "@pear-agent/core";
@@ -21,24 +22,11 @@ export type AiPlanCompilerInput = {
   signal?: AbortSignal;
 };
 
-export type AiPlanCompilerResult =
-  | {
-      kind: "clarification_required";
-      questions: import("@pear-agent/core").ClarificationQuestion[];
-      assumptions: import("@pear-agent/core").InterpretationAssumption[];
-      interpretationGeneration: import("@pear-agent/core").GenerationMetadata;
-    }
-  | {
-      kind: "ready";
-      normalizedInput: unknown;
-      assumptions: import("@pear-agent/core").InterpretationAssumption[];
-      plan: ExecutionPlan;
-      interpretationGeneration: import("@pear-agent/core").GenerationMetadata;
-      planGeneration: import("@pear-agent/core").GenerationMetadata;
-    };
+/** @deprecated Prefer PlanCompilePhaseResult from @pear-agent/core */
+export type AiPlanCompilerResult = PlanCompilePhaseResult;
 
 export type AiPlanCompiler = {
-  compile(input: AiPlanCompilerInput): Promise<AiPlanCompilerResult>;
+  compile(input: AiPlanCompilerInput): Promise<PlanCompilePhaseResult>;
 };
 
 export type CreateAiPlanCompilerOptions = {

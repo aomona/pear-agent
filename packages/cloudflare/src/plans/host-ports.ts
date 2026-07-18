@@ -1,9 +1,6 @@
 import type {
-  ClarificationQuestion,
-  ExecutionPlan,
   FreeTextFieldResolver,
-  GenerationMetadata,
-  InterpretationAssumption,
+  PlanCompilePhaseResult,
   PlanImprover,
   InterpretableSource,
 } from "@pear-agent/core";
@@ -13,22 +10,10 @@ import type { PearEnv } from "../env.js";
 import type { PlanGenerator } from "../planner.js";
 import type { PearRequestContext } from "../context.js";
 import type { StoredPlanArtifact } from "../d1/plan-repository.js";
+import type { ExecutionPlan } from "@pear-agent/core";
 
-export type PlanCompileRuntimeResult =
-  | {
-      kind: "clarification_required";
-      questions: ClarificationQuestion[];
-      assumptions: InterpretationAssumption[];
-      interpretationGeneration: GenerationMetadata;
-    }
-  | {
-      kind: "ready";
-      normalizedInput: unknown;
-      assumptions: InterpretationAssumption[];
-      plan: ExecutionPlan;
-      interpretationGeneration: GenerationMetadata;
-      planGeneration: GenerationMetadata;
-    };
+/** @deprecated Use PlanCompilePhaseResult from @pear-agent/core */
+export type PlanCompileRuntimeResult = PlanCompilePhaseResult;
 
 /** Host-composed AI runtime. Cloudflare persists and orchestrates; the host selects models/domains. */
 export type PlanCompileRuntime = {
@@ -39,7 +24,7 @@ export type PlanCompileRuntime = {
     clarificationAnswers?: Readonly<Record<string, string>>;
     context: PearRequestContext;
     signal?: AbortSignal;
-  }): Promise<PlanCompileRuntimeResult>;
+  }): Promise<PlanCompilePhaseResult>;
 };
 
 type NormalizeDomainInput = (input: {
@@ -64,8 +49,11 @@ export type ValidatePlanEdit = (input: {
 }) => void | Promise<void>;
 
 /**
- * Public host-injection surface. Static ports support tests and simple Workers;
- * `create*` factories take precedence when a port needs per-request env bindings.
+ * Public host-injection surface.
+ *
+ * AI-native v0.1 path: prefer `compileRuntime` / `createCompileRuntime`.
+ * `planGenerator` remains for session bootstrap without an artifact and legacy
+ * `/plans/:id/generate` (deterministic/tests). New product UIs should use compile.
  */
 export type PlanLibraryOptions = {
   authorize: AuthorizeFn;

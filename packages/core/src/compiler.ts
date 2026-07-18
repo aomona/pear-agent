@@ -197,6 +197,26 @@ export type SourceInterpreter<TNormalizedInput = unknown> = {
   interpret(input: SourceInterpretInput): Promise<SourceInterpretResult<TNormalizedInput>>;
 };
 
+/**
+ * Shared host/AI compile phase result. Cloudflare persists this; `@pear-agent/ai` produces it.
+ * Keep one type so host ports do not redeclare a parallel union.
+ */
+export type PlanCompilePhaseResult =
+  | {
+      kind: "clarification_required";
+      questions: ClarificationQuestion[];
+      assumptions: InterpretationAssumption[];
+      interpretationGeneration: GenerationMetadata;
+    }
+  | {
+      kind: "ready";
+      normalizedInput: unknown;
+      assumptions: InterpretationAssumption[];
+      plan: ExecutionPlan;
+      interpretationGeneration: GenerationMetadata;
+      planGeneration: GenerationMetadata;
+    };
+
 export type PlanEditorInput = {
   domainId: string;
   basePlan: ExecutionPlan;
