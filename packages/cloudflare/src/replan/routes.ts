@@ -175,6 +175,7 @@ export function registerReplanRoutes(
         goal: snapshot.plan.goal,
         plan: snapshot.plan,
         worldState: snapshot.worldState,
+        stepStates: snapshot.stepStates,
         recentEvents: snapshot.recentEvents,
       };
       let generatedAssessment: unknown;

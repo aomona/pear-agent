@@ -107,8 +107,12 @@ export function createAiSdkReplanGenerator(
       const delayAssessment = assessOutingDelayReplan({
         plan: input.plan,
         recentEvents: asOutingEvents(input),
+        stepStates: input.stepStates,
       });
-      if (delayAssessment.needsReplan) return delayAssessment;
+      // Return both needsReplan true and false delay outcomes (e.g. charge already done).
+      if (delayAssessment.causeEventIds.length > 0 || delayAssessment.needsReplan) {
+        return delayAssessment;
+      }
 
       const output = await generate({
         model: options.model,
@@ -135,6 +139,7 @@ export function createAiSdkReplanGenerator(
       const delayAssessment = assessOutingDelayReplan({
         plan: input.plan,
         recentEvents: asOutingEvents(input),
+        stepStates: input.stepStates,
       });
       if (
         delayAssessment.needsReplan &&

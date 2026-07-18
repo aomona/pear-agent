@@ -5,6 +5,7 @@ import type {
   ReplanCapabilityPolicy,
   ReplanAssessment,
   ReplanMode,
+  StepStates,
   WorldState,
 } from "@pear-agent/core";
 import { replanCapabilityPolicySchema, replanModeSchema } from "@pear-agent/core";
@@ -29,6 +30,8 @@ export type ReplanAssessInput = AssessInput & {
   instructions: string;
   context: PearRequestContext;
   normalizedInput: unknown;
+  /** Current step FSM — needed so Domain assess can skip completed work. */
+  stepStates: StepStates;
 };
 
 export type ReplanGeneratePatchInput = ReplanAssessInput & {

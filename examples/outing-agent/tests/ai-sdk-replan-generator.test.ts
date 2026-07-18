@@ -26,6 +26,10 @@ const assessInput = {
   goal: outingPlan.goal,
   plan: outingPlan,
   worldState: initialOutingWorldState,
+  stepStates: {
+    pack: { status: "completed" as const },
+    charge: { status: "ready" as const },
+  },
   recentEvents: [delayEvent],
 } satisfies ReplanAssessInput;
 
@@ -104,5 +108,31 @@ describe("createAiSdkReplanGenerator", () => {
       stepId: "charge",
     });
     expect(patch.summary).toMatch(/charging/i);
+  });
+
+  it("does not replan delay when charge is already completed", async () => {
+    let calls = 0;
+    const generator = createAiSdkReplanGenerator({
+      model: {} as LanguageModel,
+      generateStructured: async () => {
+        calls += 1;
+        throw new Error("model should not be called when charge is done");
+      },
+    });
+
+    const assessment = await generator.assess({
+      ...assessInput,
+      stepStates: {
+        pack: { status: "completed" },
+        charge: { status: "completed" },
+      },
+    });
+    expect(assessment).toMatchObject({
+      needsReplan: false,
+      causeEventIds: [delayEvent.id],
+      directlyAffectedStepIds: [],
+    });
+    expect(assessment.reason).toMatch(/already completed/i);
+    expect(calls).toBe(0);
   });
 });

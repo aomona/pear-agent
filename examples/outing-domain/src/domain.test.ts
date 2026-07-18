@@ -213,6 +213,30 @@ describe("outingDomain", () => {
     }
   });
 
+  it("does not replan a delay when charge is already completed", () => {
+    const assessment = assessOutingDelayReplan({
+      plan: outingPlan,
+      recentEvents: [
+        {
+          id: "evt-delay-done",
+          type: "domain_event",
+          domainType: "delay",
+          payload: { minutes: 15 },
+        },
+      ],
+      stepStates: {
+        pack: { status: "completed" },
+        charge: { status: "completed" },
+      },
+    });
+    expect(assessment).toMatchObject({
+      needsReplan: false,
+      causeEventIds: ["evt-delay-done"],
+      directlyAffectedStepIds: [],
+    });
+    expect(assessment.reason).toMatch(/already completed/i);
+  });
+
   it("does not replan a delay when the plan has no charge step", () => {
     const plan = buildOutingPlan({
       departureAt: "2026-08-20T09:00:00Z",

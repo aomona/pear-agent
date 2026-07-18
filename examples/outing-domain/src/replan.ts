@@ -3,6 +3,7 @@ import {
   type ExecutionPlan,
   type PlanPatch,
   type ReplanAssessment,
+  type StepStates,
   type WorldState,
 } from "@pear-agent/core";
 
@@ -26,9 +27,14 @@ function isDelayEvent(
   return typeof (event.payload as { minutes?: unknown }).minutes === "number";
 }
 
+/** Terminal step statuses that must not be rewritten by a delay patch. */
+const CHARGE_IMMUTABLE_STATUSES = new Set(["completed", "skipped"]);
+
 export function assessOutingDelayReplan(input: {
   plan: ExecutionPlan;
   recentEvents: readonly OutingReplanEventLike[];
+  /** When provided, skip delay replan if charge is already finished. */
+  stepStates?: StepStates;
 }): ReplanAssessment {
   const cause = [...input.recentEvents].reverse().find(isDelayEvent);
   if (!cause) {
@@ -45,6 +51,15 @@ export function assessOutingDelayReplan(input: {
       causeEventIds: [cause.id],
       directlyAffectedStepIds: [],
       reason: "The plan has no charge step affected by the delay",
+    };
+  }
+  const chargeStatus = input.stepStates?.charge?.status;
+  if (chargeStatus !== undefined && CHARGE_IMMUTABLE_STATUSES.has(chargeStatus)) {
+    return {
+      needsReplan: false,
+      causeEventIds: [cause.id],
+      directlyAffectedStepIds: [],
+      reason: `Charge is already ${chargeStatus}; delay does not require a plan change`,
     };
   }
   return {
