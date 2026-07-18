@@ -43,8 +43,12 @@ const confirmBodySchema = z.object({ confirmed: z.literal(true) });
 class PublicReplanError extends Error {}
 
 class ReplanGeneratorError extends Error {
-  constructor(stage: "assessment" | "patch") {
-    super(`Replan ${stage} generation failed`);
+  constructor(stage: "assessment" | "patch", detail?: string) {
+    super(
+      detail && detail.trim().length > 0
+        ? `Replan ${stage} generation failed: ${detail.trim().slice(0, 500)}`
+        : `Replan ${stage} generation failed`,
+    );
   }
 }
 
@@ -62,7 +66,12 @@ class ReplanCommitBoundaryError extends Error {
 
 function publicFailureReason(caught: unknown): string {
   if (caught instanceof ReplanGeneratorError) return caught.message;
-  if (caught instanceof z.ZodError) return "Generated replan output failed schema validation";
+  if (caught instanceof z.ZodError) {
+    const issue = caught.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "root";
+    const detail = issue ? `${path}: ${issue.message}` : caught.message;
+    return `Generated replan output failed schema validation (${detail})`.slice(0, 2_000);
+  }
   if (caught instanceof PublicReplanError || caught instanceof PlanPatchValidationError) {
     return caught.message.slice(0, 2_000);
   }
@@ -174,8 +183,9 @@ export function registerReplanRoutes(
       let generatedAssessment: unknown;
       try {
         generatedAssessment = await resolvedRuntime.generator.assess(generatorInput);
-      } catch {
-        throw new ReplanGeneratorError("assessment");
+      } catch (caught) {
+        const detail = caught instanceof Error ? caught.message : String(caught);
+        throw new ReplanGeneratorError("assessment", detail);
       }
       const assessment = replanAssessmentSchema.parse(generatedAssessment);
       const recentEventIds = new Set(snapshot.recentEvents.map(({ id }) => id));
@@ -205,8 +215,9 @@ export function registerReplanRoutes(
           affectedStepIds: affected.stepIds,
           mode,
         });
-      } catch {
-        throw new ReplanGeneratorError("patch");
+      } catch (caught) {
+        const detail = caught instanceof Error ? caught.message : String(caught);
+        throw new ReplanGeneratorError("patch", detail);
       }
       const generatedPatchFields =
         typeof generatedPatch === "object" &&

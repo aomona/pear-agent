@@ -71,7 +71,38 @@ describe("createAiSdkReplanGenerator", () => {
       baseLastEventId: delayEvent.id,
       causeEventIds: [delayEvent.id],
       affectedStepIds: ["charge"],
-      summary: "Extend charging",
     });
+    expect(patch.summary).toMatch(/charging/i);
+  });
+
+  it("uses deterministic delay assessment and patch without calling the model", async () => {
+    let calls = 0;
+    const generator = createAiSdkReplanGenerator({
+      model: {} as LanguageModel,
+      generateStructured: async () => {
+        calls += 1;
+        throw new Error("model should not be called for delay replan");
+      },
+    });
+
+    const assessment = await generator.assess(assessInput);
+    expect(assessment).toMatchObject({
+      needsReplan: true,
+      causeEventIds: [delayEvent.id],
+      directlyAffectedStepIds: ["charge"],
+    });
+    const patch = await generator.generatePatch({
+      ...assessInput,
+      assessment,
+      affectedStepIds: ["charge"],
+      mode: "automatic",
+    } satisfies ReplanGeneratePatchInput);
+
+    expect(calls).toBe(0);
+    expect(patch.operations[0]).toMatchObject({
+      type: "update_step",
+      stepId: "charge",
+    });
+    expect(patch.summary).toMatch(/charging/i);
   });
 });
