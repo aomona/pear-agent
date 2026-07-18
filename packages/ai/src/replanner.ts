@@ -1,7 +1,6 @@
 import {
   executionStepSchema,
   planPatchSchema,
-  type ExecutionPlan,
   type PlanPatch,
   type PlanPatchOperation,
   type ReplanGenerator,
@@ -11,6 +10,7 @@ import type { LanguageModel } from "ai";
 import { z } from "zod";
 
 import { generateStructured, type StructuredGenerator } from "./generate.js";
+import { rewritePatchStepIdentity } from "./identity.js";
 
 export type CreateAiReplanGeneratorOptions = {
   model: LanguageModel;
@@ -43,50 +43,6 @@ function operationSchemas(stepDataSchema: z.ZodType) {
       summary: z.string().min(1).max(2_000),
     })
     .strict();
-}
-
-/** Assign Runtime ids for newly added steps; keep existing plan step ids. */
-function assignPatchStepIdentity(
-  operations: PlanPatchOperation[],
-  basePlan: ExecutionPlan,
-  createId: () => string,
-): PlanPatchOperation[] {
-  const knownStepIds = new Set(basePlan.steps.map((step) => step.id));
-  const stepIds = new Map<string, string>();
-  for (const id of knownStepIds) stepIds.set(id, id);
-
-  for (const op of operations) {
-    if (op.type === "add_step") {
-      // Always mint Runtime-owned ids for add_step (never trust model-chosen ids).
-      stepIds.set(op.step.id, `step-${createId()}`);
-    }
-  }
-
-  return operations.map((op) => {
-    if (op.type === "add_step") {
-      const id = stepIds.get(op.step.id) ?? `step-${createId()}`;
-      return {
-        type: "add_step" as const,
-        step: {
-          ...op.step,
-          id,
-          after: op.step.after.map((dep) => stepIds.get(dep) ?? dep),
-        },
-      };
-    }
-    if (op.type === "update_step") {
-      return {
-        type: "update_step" as const,
-        stepId: op.stepId,
-        step: {
-          ...op.step,
-          id: op.stepId,
-          after: op.step.after.map((dep) => stepIds.get(dep) ?? dep),
-        },
-      };
-    }
-    return op;
-  });
 }
 
 /** Generate a bounded partial patch; Runtime overwrites identity and causal anchors. */
@@ -126,7 +82,7 @@ export function createAiReplanGenerator(options: CreateAiReplanGeneratorOptions)
       if (causeEventIds.length === 0) {
         throw new Error("Runtime replan requires at least one runtime_event cause reference");
       }
-      const operations = assignPatchStepIdentity(
+      const operations = rewritePatchStepIdentity(
         candidate.operations as PlanPatchOperation[],
         input.plan,
         createId,

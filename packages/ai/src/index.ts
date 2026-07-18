@@ -1,6 +1,7 @@
 export * from "./editor.js";
 export * from "./compiler.js";
 export * from "./generate.js";
+export * from "./identity.js";
 export * from "./interpreter.js";
 export * from "./planner.js";
 export * from "./replanner.js";

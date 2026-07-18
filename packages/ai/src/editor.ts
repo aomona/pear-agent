@@ -1,17 +1,16 @@
 import {
   executionPlanSchema,
-  sourceReferenceSchema,
   type PlanEditor,
   type PlanEditorInput,
   type PlanImproveResult,
   type PlanImprover,
   type PlanImproveInput,
-  type ExecutionPlan,
 } from "@pear-agent/core";
 import type { LanguageModel } from "ai";
-import { z } from "zod";
+import type { z } from "zod";
 
 import { generateStructured, type StructuredGenerator } from "./generate.js";
+import { rewriteEditedPlanIdentity } from "./identity.js";
 
 export type CreateAiPlanEditorOptions = {
   model: LanguageModel;
@@ -46,49 +45,6 @@ export function createAiPlanImprover(options: CreateAiPlanEditorOptions): PlanIm
         ...(input.context !== undefined ? { context: input.context } : {}),
       });
     },
-  };
-}
-
-function rewriteEditedPlan(
-  candidate: ExecutionPlan,
-  input: PlanEditorInput,
-  createId: () => string,
-): ExecutionPlan {
-  const knownStepIds = new Set(input.basePlan.steps.map((step) => step.id));
-  const knownSourceIds = new Set(input.sourceRefs.map((ref) => ref.sourceId));
-  const stepIds = new Map<string, string>();
-  for (const step of candidate.steps) {
-    stepIds.set(step.id, knownStepIds.has(step.id) ? step.id : `step-${createId()}`);
-  }
-
-  return {
-    ...candidate,
-    id: input.basePlan.id,
-    version: input.basePlan.version + 1,
-    goal: input.goal,
-    steps: candidate.steps.map((step) => {
-      const refs = step.sourceRefs ?? [];
-      if (knownSourceIds.size > 0) {
-        if (refs.length === 0) {
-          throw new Error(`Step ${step.id} must cite at least one source in sourceRefs`);
-        }
-        for (const ref of refs) {
-          if (!knownSourceIds.has(ref.sourceId)) {
-            throw new Error(`Step ${step.id} references unknown source ${ref.sourceId}`);
-          }
-        }
-      }
-      const nextStep = {
-        ...step,
-        id: stepIds.get(step.id)!,
-        after: step.after.map((id) => stepIds.get(id) ?? id),
-      };
-      if (refs.length === 0) return nextStep;
-      return {
-        ...nextStep,
-        sourceRefs: refs.map((ref) => sourceReferenceSchema.parse(ref)),
-      };
-    }),
   };
 }
 
@@ -143,7 +99,17 @@ function createEdit(options: CreateAiPlanEditorOptions) {
       }),
     });
     const candidate = schema.parse(result.output);
-    const plan = schema.parse(rewriteEditedPlan(candidate, editorInput, createId));
+    const plan = schema.parse(
+      rewriteEditedPlanIdentity(
+        candidate,
+        {
+          basePlan: editorInput.basePlan,
+          goal: editorInput.goal,
+          sourceRefs: editorInput.sourceRefs,
+        },
+        createId,
+      ),
+    );
     return { kind: "full" as const, plan };
   };
 }
