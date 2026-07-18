@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { readBodyWithLimit, validatePublicUrl } from "./compile.js";
+import { readBodyWithLimit, validatePublicUrl } from "./public-url.js";
 
 describe("validatePublicUrl", () => {
   it.each([
