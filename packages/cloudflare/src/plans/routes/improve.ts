@@ -7,6 +7,7 @@ import {
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 
+import { D1CompileRepository } from "../../d1/compile-repository.js";
 import { PlanArtifactNotFoundError } from "../../d1/plan-repository.js";
 import { D1PlanEditRepository } from "../../d1/plan-edit-repository.js";
 import type { PearApp } from "../../http/app.js";
@@ -28,6 +29,11 @@ export function registerPlanImproveRoutes(app: PearApp, routes: PlanRouteContext
     const repository = planRepository(c.env);
     const existing = await repository.getStored(planId);
     if (!existing) throw new PlanArtifactNotFoundError(planId);
+    if (await new D1CompileRepository(c.env.DB).getActiveJob(planId)) {
+      throw new HTTPException(409, {
+        message: "Cannot edit a plan while a compile job is active",
+      });
+    }
     if (existing.currentPlan.steps.length === 0) {
       throw new HTTPException(400, { message: "Compile a plan before editing it" });
     }
@@ -99,6 +105,11 @@ export function registerPlanImproveRoutes(app: PearApp, routes: PlanRouteContext
     const repository = planRepository(c.env);
     const existing = await repository.getStored(planId);
     if (!existing) throw new PlanArtifactNotFoundError(planId);
+    if (await new D1CompileRepository(c.env.DB).getActiveJob(planId)) {
+      throw new HTTPException(409, {
+        message: "Cannot confirm a plan edit while a compile job is active",
+      });
+    }
     if (existing.version !== proposal.baseVersion) {
       await editRepository.setStatus(planId, proposalId, "stale");
       throw new HTTPException(409, { message: "Plan changed after this edit was proposed" });
