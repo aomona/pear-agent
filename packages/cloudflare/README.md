@@ -78,7 +78,17 @@ Migration `0004` marks pre-existing sessions with Domain version `0` (unknown/in
 | `POST`   | `/plans/:id/build`                                          | Atomically normalize + generate; failures leave the artifact unchanged                  |
 | `POST`   | `/plans/:id/normalize`                                      | Domain normalize (+ optional freeTextResolver)                                          |
 | `POST`   | `/plans/:id/resolve-field`                                  | Single free-text field → structured (modal add / optional LLM)                          |
-| `POST`   | `/plans/:id/improve`                                        | PlanImprover (host-injected)                                                            |
+| `POST`   | `/plans/:id/compile-jobs`                                   | Queue a durable compile Workflow (inline fallback when unbound)                         |
+| `GET`    | `/plans/:id/compile-jobs/:jobId`                            | Poll compile phase/status                                                               |
+| `POST`   | `/plans/:id/compile-jobs/:jobId/cancel`                     | Cancel the D1 job and terminate its Workflow instance                                   |
+| `POST`   | `/plans/:id/compile-jobs/:jobId/retry`                      | Retry a failed, cancelled, or expired compile                                           |
+| `GET`    | `/plans/:id/sources`                                        | List durable source metadata                                                            |
+| `POST`   | `/plans/:id/sources`                                        | Add text, URL, or file source material                                                  |
+| `DELETE` | `/plans/:id/sources/:sourceId`                              | Recoverably remove an unreferenced source and its R2 objects                            |
+| `POST`   | `/plans/:id/clarifications/:clarificationId/answer`         | Answer a pending clarification before resuming compile                                  |
+| `GET`    | `/plans/:id/inspector`                                      | Read sources, jobs, interpretations, clarifications, and generations                    |
+| `POST`   | `/plans/:id/edit-proposals`                                 | Generate a reviewable PlanImprover diff                                                 |
+| `POST`   | `/plans/:id/edit-proposals/:proposalId/confirm`             | Confirm and apply a pending edit proposal                                               |
 | `GET`    | `/plans/:id/versions`                                       | Artifact version history                                                                |
 | `GET`    | `/sessions/:id`                                             | Materialized state                                                                      |
 | `GET`    | `/sessions/:id/snapshot`                                    | Runtime snapshot                                                                        |
@@ -117,7 +127,10 @@ Replan requests call the host hook first with mode-neutral `replan.preflight` be
 Session-independent plans live in D1 tables `plan_artifacts` / `plan_artifact_versions` (migration `0005_plan_artifacts.sql`). Do **not** confuse with session-scoped `plan_versions` (runtime replan history).
 
 - Status flow: `draft` → generate steps → `ready` → `POST /sessions` with `planArtifactId` (skips PlanGenerator).
-- Host may inject `planLibrary.normalizeDomainInput`, `freeTextResolver`, and `planImprover` on `createPearApp` / `createPearWorker`.
+- Host may inject `planLibrary.normalizeDomainInput`, `freeTextResolver`, `planImprover`, and
+  `validatePlanEdit` on `createPearApp` / `createPearWorker`.
+- Bind `PLAN_COMPILE_WORKFLOW` to a host Workflow that calls `runPlanCompileJob`; the minimal
+  starter exports `PlanCompileWorkflow` as the reference wiring.
 - Static host ports support deterministic or already-configured services. Use the corresponding
   `create*` factory when a port needs bindings from the current Worker environment; the factory
   takes precedence over the static fallback. Internally, routes consume these adapters as grouped

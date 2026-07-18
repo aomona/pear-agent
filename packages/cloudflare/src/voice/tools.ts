@@ -78,7 +78,7 @@ const domainEventArgsSchema = z.object({
   payload: z.record(z.string(), z.unknown()).default({}),
 });
 const requestReplanArgsSchema = z.object({
-  mode: z.enum(["automatic", "confirm", "suggest"]).default("automatic"),
+  mode: z.enum(["confirm", "suggest"]).default("confirm"),
 });
 
 type ToolDef = {
@@ -281,8 +281,8 @@ const BUILTIN_TOOLS = {
       properties: {
         mode: {
           type: "string",
-          enum: ["automatic", "confirm", "suggest"],
-          description: "Use automatic unless the user requests review before applying changes.",
+          enum: ["confirm", "suggest"],
+          description: "Voice replanning never auto-applies; use confirm unless only suggesting.",
         },
       },
     },
@@ -302,7 +302,26 @@ export function listVoiceToolDeclarations(): VoiceToolDeclaration[] {
   return Object.entries(BUILTIN_TOOLS).map(([name, def]) => ({
     name,
     description: def.description,
-    parameters: def.parameters,
+    parameters:
+      def.authorizeEventType === null
+        ? def.parameters
+        : {
+            ...def.parameters,
+            properties: {
+              ...def.parameters.properties,
+              confidence: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+                description:
+                  "0..1 confidence that the user explicitly requested or completed this state change",
+              },
+            },
+            required: [
+              ...("required" in def.parameters ? (def.parameters.required ?? []) : []),
+              "confidence",
+            ],
+          },
   }));
 }
 

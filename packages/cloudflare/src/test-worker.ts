@@ -3,7 +3,7 @@ import {
   outingGoal,
   outingPlan,
 } from "../../../examples/outing-domain/src/domain.js";
-import { PlanPatchValidationError } from "@pear-agent/core";
+import { PlanPatchValidationError, createStaticPlanImprover } from "@pear-agent/core";
 
 import { allowAllAuthorize, AuthorizationError, type AuthorizeFn } from "./authorize.js";
 import { ExecutionSessionAgent } from "./agent/execution-session-agent.js";
@@ -46,6 +46,94 @@ const worker = createPearWorker({
     },
   },
   planLibrary: {
+    planImprover: createStaticPlanImprover((input) => ({
+      ...input.basePlan,
+      steps: input.basePlan.steps.map((step, index) =>
+        index === 0
+          ? {
+              ...step,
+              estimatedDurationSeconds: step.estimatedDurationSeconds + 30,
+              ...(input.request === "remove provenance" ? { sourceRefs: [] } : {}),
+            }
+          : step,
+      ),
+    })),
+    validatePlanEdit({ plan }) {
+      if (plan.steps.some((step) => !step.sourceRefs?.length)) {
+        throw new Error("Every edited step must preserve source provenance");
+      }
+    },
+    createCompileRuntime: () => ({
+      async compile(input) {
+        if (
+          typeof input.compileInput === "object" &&
+          input.compileInput !== null &&
+          "delayMs" in input.compileInput &&
+          typeof input.compileInput.delayMs === "number"
+        ) {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, input.compileInput.delayMs);
+            input.signal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                reject(input.signal?.reason ?? new Error("Compile aborted"));
+              },
+              { once: true },
+            );
+          });
+        }
+        const now = new Date();
+        const metadata = (stage: "interpret" | "plan") =>
+          ({
+            id: crypto.randomUUID(),
+            stage,
+            provider: "fixture",
+            model: "fixture-model",
+            promptVersion: "test-v1",
+            schemaVersion: "outing@1",
+            inputTokens: 10,
+            outputTokens: 10,
+            totalTokens: 20,
+            attempt: 1,
+            warnings: [],
+            createdAt: now,
+          }) as const;
+        if (
+          typeof input.compileInput === "object" &&
+          input.compileInput !== null &&
+          "clarify" in input.compileInput
+        ) {
+          return {
+            kind: "clarification_required" as const,
+            questions: [
+              {
+                id: crypto.randomUUID(),
+                question: "When?",
+                reason: "Timing changes the plan",
+                sourceRefs: [{ sourceId: input.sources[0]!.artifact.id }],
+              },
+            ],
+            assumptions: [],
+            interpretationGeneration: metadata("interpret"),
+          };
+        }
+        return {
+          kind: "ready" as const,
+          normalizedInput: { fixture: true },
+          assumptions: [],
+          plan: {
+            ...outingPlan,
+            steps: outingPlan.steps.map((step) => ({
+              ...step,
+              sourceRefs: [{ sourceId: input.sources[0]!.artifact.id }],
+            })),
+          },
+          interpretationGeneration: metadata("interpret"),
+          planGeneration: metadata("plan"),
+        };
+      },
+    }),
     normalizeDomainInput: async ({ domainId, input, freeTextResolver, context }) => {
       if (domainId !== outingDomain.id) throw new Error(`Unknown domain: ${domainId}`);
       const parsed = outingDomain.schemas.input.parse(input);

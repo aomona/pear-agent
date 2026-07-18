@@ -118,6 +118,74 @@ describe("PearClient", () => {
     } satisfies Partial<PearClientError>);
   });
 
+  it("preserves plain-text error response bodies", async () => {
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: vi.fn(
+        async () =>
+          new Response("upstream gateway timeout", {
+            status: 504,
+            headers: { "content-type": "text/plain" },
+          }),
+      ) as typeof fetch,
+    });
+
+    await expect(client.getSession("s1")).rejects.toMatchObject({
+      name: "PearClientError",
+      status: 504,
+      message: "upstream gateway timeout",
+    } satisfies Partial<PearClientError>);
+  });
+
+  it("uses a response message when the error field is non-string", async () => {
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: vi.fn(async () =>
+        jsonResponse({ error: true, message: "Explicit confirmation is required" }, 409),
+      ) as typeof fetch,
+    });
+    await expect(client.getSession("s1")).rejects.toMatchObject({
+      status: 409,
+      message: "Explicit confirmation is required",
+    });
+  });
+
+  it("parses inspector dates and nested records", async () => {
+    const client = new PearClient({
+      baseUrl: "https://worker.example",
+      getContext: () => ({ actorId: "traveler" }),
+      fetch: vi.fn(async () =>
+        jsonResponse({
+          inspector: {
+            sources: [],
+            jobs: [
+              {
+                id: "job-1",
+                planArtifactId: "plan-1",
+                workflowInstanceId: null,
+                phase: "review",
+                status: "completed",
+                attempt: 1,
+                modelCalls: 2,
+                totalTokens: 10,
+                error: null,
+                createdAt: "2026-07-18T00:00:00.000Z",
+                updatedAt: "2026-07-18T00:01:00.000Z",
+              },
+            ],
+            interpretations: [],
+            clarifications: [],
+            generations: [],
+          },
+        }),
+      ) as typeof fetch,
+    });
+    const inspector = await client.getPlanInspector("plan-1");
+    expect(inspector.jobs[0]?.createdAt).toBeInstanceOf(Date);
+  });
+
   it("requests a partial replan and parses the affected diff", async () => {
     const patch = {
       id: "patch-1",

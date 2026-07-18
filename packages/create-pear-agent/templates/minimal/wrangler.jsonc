@@ -23,6 +23,13 @@
       "new_sqlite_classes": ["ExecutionSessionAgent"],
     },
   ],
+  "workflows": [
+    {
+      "name": "pear-plan-compile",
+      "binding": "PLAN_COMPILE_WORKFLOW",
+      "class_name": "PlanCompileWorkflow",
+    },
+  ],
   "d1_databases": [
     {
       "binding": "DB",

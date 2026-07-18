@@ -43,6 +43,7 @@ const confirmBodySchema = z.object({ confirmed: z.literal(true) });
 class PublicReplanError extends Error {}
 
 class ReplanGeneratorError extends Error {
+  /** Public-safe message only — never include provider/raw error text (may leak secrets). */
   constructor(stage: "assessment" | "patch") {
     super(`Replan ${stage} generation failed`);
   }
@@ -62,7 +63,12 @@ class ReplanCommitBoundaryError extends Error {
 
 function publicFailureReason(caught: unknown): string {
   if (caught instanceof ReplanGeneratorError) return caught.message;
-  if (caught instanceof z.ZodError) return "Generated replan output failed schema validation";
+  if (caught instanceof z.ZodError) {
+    const issue = caught.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "root";
+    const detail = issue ? `${path}: ${issue.message}` : caught.message;
+    return `Generated replan output failed schema validation (${detail})`.slice(0, 2_000);
+  }
   if (caught instanceof PublicReplanError || caught instanceof PlanPatchValidationError) {
     return caught.message.slice(0, 2_000);
   }
@@ -169,12 +175,14 @@ export function registerReplanRoutes(
         goal: snapshot.plan.goal,
         plan: snapshot.plan,
         worldState: snapshot.worldState,
+        stepStates: snapshot.stepStates,
         recentEvents: snapshot.recentEvents,
       };
       let generatedAssessment: unknown;
       try {
         generatedAssessment = await resolvedRuntime.generator.assess(generatorInput);
-      } catch {
+      } catch (caught) {
+        console.error("replan assessment generation failed", caught);
         throw new ReplanGeneratorError("assessment");
       }
       const assessment = replanAssessmentSchema.parse(generatedAssessment);
@@ -205,7 +213,8 @@ export function registerReplanRoutes(
           affectedStepIds: affected.stepIds,
           mode,
         });
-      } catch {
+      } catch (caught) {
+        console.error("replan patch generation failed", caught);
         throw new ReplanGeneratorError("patch");
       }
       const generatedPatchFields =

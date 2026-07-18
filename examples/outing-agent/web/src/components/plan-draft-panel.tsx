@@ -2,7 +2,12 @@ import {
   buildOutingWorldState,
   type OutingNormalizedInput,
 } from "@pear-agent/outing-domain-example";
-import { useExecutionSession, usePearContext, type PlanArtifactDetail } from "@pear-agent/react";
+import {
+  useExecutionSession,
+  usePearContext,
+  type PlanArtifactDetail,
+  type PlanEditProposal,
+} from "@pear-agent/react";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -39,6 +44,7 @@ export function PlanDraftPanel({
   const session = useExecutionSession();
   const [improveRequest, setImproveRequest] = useState("充電待ちを短くして");
   const [busy, setBusy] = useState(false);
+  const [proposal, setProposal] = useState<PlanEditProposal | null>(null);
 
   const steps = artifact.currentPlan.steps;
   const hasSteps = steps.length > 0;
@@ -57,6 +63,26 @@ export function PlanDraftPanel({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function proposeImprovement(request: string) {
+    setBusy(true);
+    try {
+      setProposal(await client.proposePlanEdit(planId, request));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function applyProposal() {
+    if (!proposal) return;
+    await run("改善しました", async () => {
+      const result = await client.confirmPlanEdit(planId, proposal.id);
+      setProposal(null);
+      return result.artifact;
+    });
   }
 
   async function handleRegenerate() {
@@ -179,9 +205,7 @@ export function PlanDraftPanel({
                 size="sm"
                 variant="secondary"
                 disabled={busy || !hasSteps}
-                onClick={() =>
-                  void run(chip.label, () => client.improvePlan(planId, { request: chip.request }))
-                }
+                onClick={() => void proposeImprovement(chip.request)}
               >
                 {chip.label}
               </Button>
@@ -197,15 +221,34 @@ export function PlanDraftPanel({
             <Button
               variant="outline"
               disabled={busy || !hasSteps || !improveRequest.trim()}
-              onClick={() =>
-                void run("改善しました", () =>
-                  client.improvePlan(planId, { request: improveRequest.trim() }),
-                )
-              }
+              onClick={() => void proposeImprovement(improveRequest.trim())}
             >
-              改善を適用
+              変更案を作成
             </Button>
           </div>
+          {proposal ? (
+            <div className="space-y-2 rounded-md border p-3 text-sm">
+              <p>
+                追加 {proposal.diff.addedStepIds.length}・変更 {proposal.diff.updatedStepIds.length}
+                ・削除 {proposal.diff.removedStepIds.length}・所要時間差{" "}
+                {proposal.diff.durationDeltaSeconds >= 0 ? "+" : ""}
+                {proposal.diff.durationDeltaSeconds}秒
+              </p>
+              <div className="flex gap-2">
+                <Button size="sm" disabled={busy} onClick={() => void applyProposal()}>
+                  この変更案を適用
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setProposal(null)}
+                >
+                  破棄
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </CardContent>
     </Card>

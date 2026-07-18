@@ -9,6 +9,8 @@ import {
 import type { NormalizeInputContext } from "./free-text.js";
 import { executionGoalSchema } from "./goal.js";
 import type { ExecutionGoal } from "./goal.js";
+import type { ExecutionPlan } from "./plan.js";
+import type { WorldState } from "./world-state.js";
 import type { JsonValue } from "./world-state.js";
 
 export type DomainSchemas = {
@@ -18,6 +20,55 @@ export type DomainSchemas = {
   worldState: z.ZodType;
   events: z.ZodType;
 };
+
+export type AiDomainSchemas = {
+  compileInput: z.ZodType;
+  normalizedInput: z.ZodType;
+  stepData: z.ZodType;
+  worldState: z.ZodType;
+  events: z.ZodType;
+};
+
+export type DomainPlanValidation = {
+  valid: boolean;
+  issues: readonly string[];
+};
+
+export interface AiExecutionDomainDefinition<
+  TSchemas extends AiDomainSchemas,
+  TId extends string = string,
+  TVersion extends number = number,
+  TCapabilities extends readonly CapabilityDefinition<any, any, any>[] =
+    readonly CapabilityDefinition<any, any, any>[],
+> {
+  id: TId;
+  version: TVersion;
+  schemas: TSchemas;
+  interpretation: { instructions: string };
+  planning: {
+    instructions: string;
+    objectives: readonly [string, ...string[]];
+    validatePlan(
+      plan: ExecutionPlan<z.output<TSchemas["stepData"]>>,
+      normalizedInput: z.output<TSchemas["normalizedInput"]>,
+    ): DomainPlanValidation | Promise<DomainPlanValidation>;
+    reconcilePlan?(
+      plan: ExecutionPlan<z.output<TSchemas["stepData"]>>,
+      normalizedInput: z.output<TSchemas["normalizedInput"]>,
+    ): ExecutionPlan<z.output<TSchemas["stepData"]>>;
+  };
+  replanning: {
+    instructions: string;
+    defaultMode: ExecutionMode;
+    reconcileWorldState(
+      plan: ExecutionPlan<z.output<TSchemas["stepData"]>>,
+      worldState: WorldState,
+    ): WorldState;
+  };
+  realtime: { instructions: string; defaultLocale: string };
+  capabilities: TCapabilities;
+  completionPolicy: ExecutionGoal["completionPolicy"];
+}
 
 export interface ExecutionDomainDefinition<
   TSchemas extends DomainSchemas,
@@ -113,6 +164,60 @@ export function defineDomain<
       >;
     },
   };
+}
+
+/**
+ * AI-native Domain definition. The Domain declares schemas, instructions and
+ * deterministic invariants; SourceInterpreter/Planner implementations are injected by the host.
+ */
+export function defineAiDomain<
+  const TSchemas extends AiDomainSchemas,
+  const TId extends string,
+  const TVersion extends number,
+  const TCapabilities extends readonly CapabilityDefinition<any, any, any>[],
+>(
+  definition: AiExecutionDomainDefinition<TSchemas, TId, TVersion, TCapabilities>,
+): AiExecutionDomainDefinition<TSchemas, TId, TVersion, TCapabilities> {
+  if (definition.id.trim().length === 0) throw new Error("Domain id must not be empty");
+  if (!Number.isInteger(definition.version) || definition.version < 1) {
+    throw new Error("Domain version must be a positive integer");
+  }
+  if (definition.interpretation.instructions.trim().length === 0) {
+    throw new Error("Domain interpretation instructions must not be empty");
+  }
+  if (definition.planning.instructions.trim().length === 0) {
+    throw new Error("Domain planning instructions must not be empty");
+  }
+  if (definition.planning.objectives.length === 0) {
+    throw new Error("Domain planning objectives must not be empty");
+  }
+  if (definition.planning.objectives.some((objective) => objective.trim().length === 0)) {
+    throw new Error("Domain planning objectives must not contain empty values");
+  }
+  if (typeof definition.planning.validatePlan !== "function") {
+    throw new Error("Domain planning validatePlan is required");
+  }
+  if (definition.replanning.instructions.trim().length === 0) {
+    throw new Error("Domain replanning instructions must not be empty");
+  }
+  executionModeSchema.parse(definition.replanning.defaultMode);
+  if (typeof definition.replanning.reconcileWorldState !== "function") {
+    throw new Error("Domain replanning reconcileWorldState is required");
+  }
+  if (definition.realtime.instructions.trim().length === 0) {
+    throw new Error("Domain realtime instructions must not be empty");
+  }
+  if (definition.realtime.defaultLocale.trim().length === 0) {
+    throw new Error("Domain realtime defaultLocale must not be empty");
+  }
+  for (const schema of Object.values(definition.schemas)) {
+    if (!(schema instanceof z.ZodType)) throw new Error("Domain schemas must be Zod schemas");
+  }
+  for (const capability of definition.capabilities) {
+    capabilityDefinitionSchema(capability.inputSchema, capability.outputSchema).parse(capability);
+  }
+  executionGoalSchema.shape.completionPolicy.parse(definition.completionPolicy);
+  return definition;
 }
 
 /**

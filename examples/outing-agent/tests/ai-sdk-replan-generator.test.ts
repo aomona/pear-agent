@@ -26,6 +26,10 @@ const assessInput = {
   goal: outingPlan.goal,
   plan: outingPlan,
   worldState: initialOutingWorldState,
+  stepStates: {
+    pack: { status: "completed" as const },
+    charge: { status: "ready" as const },
+  },
   recentEvents: [delayEvent],
 } satisfies ReplanAssessInput;
 
@@ -71,7 +75,64 @@ describe("createAiSdkReplanGenerator", () => {
       baseLastEventId: delayEvent.id,
       causeEventIds: [delayEvent.id],
       affectedStepIds: ["charge"],
-      summary: "Extend charging",
     });
+    expect(patch.summary).toMatch(/charging/i);
+  });
+
+  it("uses deterministic delay assessment and patch without calling the model", async () => {
+    let calls = 0;
+    const generator = createAiSdkReplanGenerator({
+      model: {} as LanguageModel,
+      generateStructured: async () => {
+        calls += 1;
+        throw new Error("model should not be called for delay replan");
+      },
+    });
+
+    const assessment = await generator.assess(assessInput);
+    expect(assessment).toMatchObject({
+      needsReplan: true,
+      causeEventIds: [delayEvent.id],
+      directlyAffectedStepIds: ["charge"],
+    });
+    const patch = await generator.generatePatch({
+      ...assessInput,
+      assessment,
+      affectedStepIds: ["charge"],
+      mode: "automatic",
+    } satisfies ReplanGeneratePatchInput);
+
+    expect(calls).toBe(0);
+    expect(patch.operations[0]).toMatchObject({
+      type: "update_step",
+      stepId: "charge",
+    });
+    expect(patch.summary).toMatch(/charging/i);
+  });
+
+  it("does not replan delay when charge is already completed", async () => {
+    let calls = 0;
+    const generator = createAiSdkReplanGenerator({
+      model: {} as LanguageModel,
+      generateStructured: async () => {
+        calls += 1;
+        throw new Error("model should not be called when charge is done");
+      },
+    });
+
+    const assessment = await generator.assess({
+      ...assessInput,
+      stepStates: {
+        pack: { status: "completed" },
+        charge: { status: "completed" },
+      },
+    });
+    expect(assessment).toMatchObject({
+      needsReplan: false,
+      causeEventIds: [delayEvent.id],
+      directlyAffectedStepIds: [],
+    });
+    expect(assessment.reason).toMatch(/already completed/i);
+    expect(calls).toBe(0);
   });
 });

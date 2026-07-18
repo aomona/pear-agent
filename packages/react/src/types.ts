@@ -71,6 +71,33 @@ export type PlanArtifactDetail = {
   ownerActorId?: string | null | undefined;
 };
 
+export type PlanCompileResult = {
+  job: import("@pear-agent/core").CompileJob;
+  artifact?: PlanArtifactDetail;
+  clarification?: import("@pear-agent/core").ClarificationRequest;
+};
+
+export type PlanArtifactInspector = {
+  sources: import("@pear-agent/core").SourceArtifact[];
+  jobs: import("@pear-agent/core").CompileJob[];
+  interpretations: unknown[];
+  clarifications: import("@pear-agent/core").ClarificationRequest[];
+  generations: import("@pear-agent/core").GenerationMetadata[];
+};
+
+export type PlanEditProposal = {
+  id: string;
+  planArtifactId: string;
+  baseVersion: number;
+  request: string;
+  candidatePlan: import("@pear-agent/core").ExecutionPlan;
+  diff: import("@pear-agent/core").PlanDiff;
+  status: "pending" | "applied" | "rejected" | "stale";
+  createdByActorId: string;
+  createdAt: Date;
+  appliedAt: Date | null;
+};
+
 export type AppendEventInput = {
   id?: string;
   idempotencyKey?: string;

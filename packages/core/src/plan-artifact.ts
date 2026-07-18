@@ -7,6 +7,7 @@ import { executionPlanSchema } from "./plan.js";
 /** CE-12 */
 export const planChangeReasonSchema = z.enum([
   "initial",
+  "ai_generation",
   "improve",
   "runtime_replan",
   "user_edit",

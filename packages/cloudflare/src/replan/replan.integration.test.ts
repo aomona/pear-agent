@@ -49,11 +49,26 @@ describe("cloudflare replan integration", () => {
           toolName: "report_domain_event",
           args: { domainType: "delay", payload: { minutes: 15 } },
           callId: `delay-${crypto.randomUUID()}`,
+          confidence: 1,
         }),
       }),
     );
     expect(report.status).toBe(200);
     expect(((await report.json()) as { ok: boolean }).ok).toBe(true);
+
+    const automatic = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          toolName: "request_replan",
+          args: { mode: "automatic" },
+          callId: `automatic-${crypto.randomUUID()}`,
+        }),
+      }),
+    );
+    expect(automatic.status).toBe(200);
+    expect((await automatic.json()) as { ok: boolean }).toMatchObject({ ok: false });
 
     const replan = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
@@ -61,7 +76,7 @@ describe("cloudflare replan integration", () => {
         headers: { "content-type": "application/json", ...contextHeaders() },
         body: JSON.stringify({
           toolName: "request_replan",
-          args: { mode: "automatic" },
+          args: { mode: "confirm" },
           callId: `replan-${crypto.randomUUID()}`,
         }),
       }),
@@ -72,8 +87,8 @@ describe("cloudflare replan integration", () => {
       result: { kind: string; state: { plan: { version: number } } };
     };
     expect(body.ok).toBe(true);
-    expect(body.result.kind).toBe("applied");
-    expect(body.result.state.plan.version).toBe(2);
+    expect(body.result.kind).toBe("pending_confirmation");
+    expect(body.result.state.plan.version).toBe(1);
   });
 
   it("automatically applies a delay patch only to the affected subgraph", async () => {

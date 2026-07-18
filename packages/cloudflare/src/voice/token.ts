@@ -1,4 +1,9 @@
-import { DEFAULT_GEMINI_LIVE_MODEL, type RuntimeSnapshot, type VoiceLease } from "@pear-agent/core";
+import {
+  DEFAULT_GEMINI_LIVE_MODEL,
+  DEFAULT_REALTIME_OBSERVATION_CONFIDENCE,
+  type RuntimeSnapshot,
+  type VoiceLease,
+} from "@pear-agent/core";
 
 import { VoiceTokenUnavailableError } from "../errors.js";
 import { listVoiceToolDeclarations, summarizeSnapshotForVoice } from "./tools.js";
@@ -16,6 +21,8 @@ export type MintVoiceTokenInput = {
   snapshot: RuntimeSnapshot;
   lease: VoiceLease;
   model?: string;
+  realtimeInstructions?: string;
+  locale?: string;
 };
 
 /**
@@ -31,19 +38,24 @@ export type VoiceTokenMinter = (input: MintVoiceTokenInput) => Promise<VoiceEphe
 export function buildVoiceLiveConfig(input: {
   snapshot: RuntimeSnapshot;
   lease: VoiceLease;
+  realtimeInstructions?: string;
+  locale?: string;
 }): Record<string, unknown> {
   const summary = summarizeSnapshotForVoice(input.snapshot);
   const tools = listVoiceToolDeclarations();
   const systemInstruction = [
     "You are a PEAR Runtime voice assistant helping the user execute a real-world plan.",
-    "Respond in Japanese unless the user clearly speaks English.",
+    `Respond in ${input.locale ?? "Japanese"} unless the user clearly uses another language.`,
     "Prefer short, concrete guidance focused on focusStepId / the active or ready step in steps[].",
     "Never claim a step, timer, or session state changed until the corresponding tool call succeeds.",
+    `For every state-changing tool include confidence from 0 to 1. If confidence is below ${DEFAULT_REALTIME_OBSERVATION_CONFIDENCE} or uncertain, ask the user; retry only when their explicit answer makes confidence at least ${DEFAULT_REALTIME_OBSERVATION_CONFIDENCE}.`,
+    "Voice replanning must use confirm or suggest mode. Never request automatic patch activation.",
     "Use get_runtime_snapshot when state may have changed or when you are unsure.",
     "Plan timers live on steps[].timers (timerId + durationSeconds).",
     "If the user asks to start a charge/wait timer and a step has e.g. charge-wait, call start_timer with that timerId and durationSeconds immediately — do NOT ask how long when durationSeconds is already defined.",
     "When the user reports a plan-affecting domain change, call report_domain_event first, then request_replan. Never invent or apply a patch directly.",
     "Voice disconnect must never be treated as session cancellation; only call pause_session when the user asks to pause work.",
+    ...(input.realtimeInstructions ? [`Domain instructions: ${input.realtimeInstructions}`] : []),
     "Current runtime summary JSON:",
     JSON.stringify(summary),
     ...(input.snapshot.continuation

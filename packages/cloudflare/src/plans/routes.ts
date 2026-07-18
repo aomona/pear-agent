@@ -5,6 +5,7 @@ import { registerPlanCrudRoutes } from "./routes/crud.js";
 import { registerPlanGenerateRoutes } from "./routes/generate.js";
 import { registerPlanImproveRoutes } from "./routes/improve.js";
 import { registerPlanNormalizeRoutes } from "./routes/normalize.js";
+import { registerPlanCompileRoutes } from "./routes/compile.js";
 
 export type { PlanLibraryOptions } from "./host-ports.js";
 
@@ -19,4 +20,5 @@ export function registerPlanRoutes(app: PearApp, options: PlanLibraryOptions): v
   registerPlanBuildRoutes(app, routeContext);
   registerPlanNormalizeRoutes(app, routeContext);
   registerPlanImproveRoutes(app, routeContext);
+  registerPlanCompileRoutes(app, routeContext);
 }

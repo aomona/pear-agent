@@ -410,6 +410,7 @@ describe("cloudflare runtime integration", () => {
           toolName: "start_step",
           args: { stepId: "pack" },
           callId: "call-0",
+          confidence: 1,
         }),
       }),
     );
@@ -424,6 +425,7 @@ describe("cloudflare runtime integration", () => {
           toolName: "complete_step",
           args: { stepId: "pack" },
           callId: "call-1",
+          confidence: 1,
         }),
       }),
     );
@@ -431,6 +433,32 @@ describe("cloudflare runtime integration", () => {
     const toolBody = (await toolRes.json()) as { ok: boolean; result: { eventType: string } };
     expect(toolBody.ok).toBe(true);
     expect(toolBody.result.eventType).toBe("step_completed");
+
+    const lowConfidence = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({
+          toolName: "complete_step",
+          args: { stepId: "charge" },
+          callId: "call-low-confidence",
+          confidence: 0.5,
+        }),
+      }),
+    );
+    expect(lowConfidence.status).toBe(409);
+    expect(
+      ((await lowConfidence.json()) as { requiresConfirmation: boolean }).requiresConfirmation,
+    ).toBe(true);
+
+    const missingConfidence = await exports.default.fetch(
+      new Request(`http://example.com/sessions/${sessionId}/voice/tools`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...contextHeaders() },
+        body: JSON.stringify({ toolName: "pause_session", args: {} }),
+      }),
+    );
+    expect(missingConfidence.status).toBe(409);
 
     const releaseRes = await exports.default.fetch(
       new Request(`http://example.com/sessions/${sessionId}/voice/lease`, {

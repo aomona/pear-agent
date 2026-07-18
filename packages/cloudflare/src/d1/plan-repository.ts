@@ -13,7 +13,7 @@ import {
   type PlanRepository,
   type PlanVersionRecord,
 } from "@pear-agent/core";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { parseJson, serializeJson } from "../serialize.js";
@@ -55,9 +55,11 @@ export class PlanArtifactConflictError extends Error {
  * Extra columns: normalizedInput, ownerActorId (Adapter-only).
  */
 export class D1PlanRepository implements PlanRepository {
+  private readonly d1: D1Database;
   private readonly db: PearDatabase;
 
   constructor(d1: D1Database) {
+    this.d1 = d1;
     this.db = createPearDatabase(d1);
   }
 
@@ -216,6 +218,7 @@ export class D1PlanRepository implements PlanRepository {
     summary?: string;
     status?: PlanArtifactStatus;
     normalizedInput?: unknown;
+    compileCommit?: { jobId: string; modelCalls: number; totalTokens: number };
   }): Promise<StoredPlanArtifact> {
     const existing = await this.getStored(input.artifactId);
     if (!existing) throw new PlanArtifactNotFoundError(input.artifactId);
@@ -235,6 +238,20 @@ export class D1PlanRepository implements PlanRepository {
       input.normalizedInput !== undefined ? input.normalizedInput : existing.normalizedInput;
     const planJson = serializeJson(plan);
 
+    if (input.compileCommit) {
+      return this.saveCompileVersionStored({
+        input,
+        existing,
+        plan,
+        planJson,
+        changeReason,
+        status,
+        title,
+        normalizedInput,
+        now,
+      });
+    }
+
     // Insert history first, then CAS-update current — one D1 batch so concurrent
     // writers cannot expose current_plan_json without a matching history row.
     // Unique(artifact_id, version) fails and rolls the batch back if two writers race.
@@ -243,6 +260,9 @@ export class D1PlanRepository implements PlanRepository {
     // SQL errors, but if the CAS-UPDATE matches 0 rows (concurrent race), the
     // version-history INSERT already committed. In that case we DELETE the orphaned
     // row manually before throwing the conflict error.
+    //
+    // Active compile exclusion is enforced in the CAS WHERE (not only preflight
+    // assertPlanMutable) so a compile that starts mid-write cannot lose the race.
     try {
       const results = await this.db.batch([
         this.db.insert(planArtifactVersions).values({
@@ -270,6 +290,11 @@ export class D1PlanRepository implements PlanRepository {
             and(
               eq(planArtifacts.id, input.artifactId),
               eq(planArtifacts.version, existing.version),
+              sql`NOT EXISTS (
+                SELECT 1 FROM compile_jobs
+                WHERE plan_artifact_id = ${input.artifactId}
+                  AND status IN ('queued', 'running', 'waiting')
+              )`,
             ),
           ),
       ]);
@@ -285,6 +310,19 @@ export class D1PlanRepository implements PlanRepository {
               eq(planArtifactVersions.version, plan.version),
             ),
           );
+        const activeCompile = await this.d1
+          .prepare(
+            `SELECT id FROM compile_jobs
+             WHERE plan_artifact_id = ? AND status IN ('queued', 'running', 'waiting')
+             LIMIT 1`,
+          )
+          .bind(input.artifactId)
+          .first();
+        if (activeCompile) {
+          throw new PlanArtifactConflictError(
+            `Cannot update plan ${input.artifactId} while a compile job is active`,
+          );
+        }
         throw new PlanArtifactConflictError(
           `Plan artifact ${input.artifactId} version race: base ${existing.version} was updated concurrently`,
         );
@@ -299,6 +337,222 @@ export class D1PlanRepository implements PlanRepository {
       throw error;
     }
 
+    const updated = await this.getStored(input.artifactId);
+    if (!updated) throw new PlanArtifactNotFoundError(input.artifactId);
+    return updated;
+  }
+
+  private async saveCompileVersionStored(input: {
+    input: {
+      artifactId: string;
+      summary?: string;
+      compileCommit?: { jobId: string; modelCalls: number; totalTokens: number };
+    };
+    existing: StoredPlanArtifact;
+    plan: ExecutionPlan;
+    planJson: string;
+    changeReason: PlanChangeReason;
+    status: PlanArtifactStatus;
+    title: string | undefined;
+    normalizedInput: unknown;
+    now: Date;
+  }): Promise<StoredPlanArtifact> {
+    const commit = input.input.compileCommit!;
+    const token = `compile-commit:${crypto.randomUUID()}`;
+    const now = input.now.toISOString();
+    const results = await this.d1.batch([
+      this.d1
+        .prepare(
+          `UPDATE compile_jobs
+           SET error = ?, updated_at = ?
+           WHERE id = ? AND plan_artifact_id = ? AND status = 'running'`,
+        )
+        .bind(token, now, commit.jobId, input.input.artifactId),
+      this.d1
+        .prepare(
+          `UPDATE plan_artifacts
+           SET status = ?, title = ?, goal_json = ?, current_plan_json = ?, version = ?,
+               normalized_input_json = ?, updated_at = ?
+           WHERE id = ? AND version = ?
+             AND EXISTS (SELECT 1 FROM compile_jobs WHERE id = ? AND error = ? AND status = 'running')`,
+        )
+        .bind(
+          input.status,
+          input.title ?? null,
+          serializeJson(input.plan.goal),
+          input.planJson,
+          input.plan.version,
+          input.normalizedInput === undefined ? null : serializeJson(input.normalizedInput),
+          now,
+          input.input.artifactId,
+          input.existing.version,
+          commit.jobId,
+          token,
+        ),
+      this.d1
+        .prepare(
+          `INSERT INTO plan_artifact_versions
+             (artifact_id, version, plan_json, parent_version, change_reason, summary, created_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM plan_artifacts
+             WHERE id = ? AND version = ? AND current_plan_json = ?
+           ) AND EXISTS (
+             SELECT 1 FROM compile_jobs WHERE id = ? AND error = ? AND status = 'running'
+           )`,
+        )
+        .bind(
+          input.input.artifactId,
+          input.plan.version,
+          input.planJson,
+          input.existing.version,
+          input.changeReason,
+          input.input.summary ?? null,
+          now,
+          input.input.artifactId,
+          input.plan.version,
+          input.planJson,
+          commit.jobId,
+          token,
+        ),
+      this.d1
+        .prepare(
+          `UPDATE compile_jobs
+           SET phase = 'review', status = 'completed', model_calls = ?, total_tokens = ?,
+               error = NULL, updated_at = ?
+           WHERE id = ? AND error = ? AND status = 'running'
+             AND EXISTS (
+               SELECT 1 FROM plan_artifact_versions
+               WHERE artifact_id = ? AND version = ? AND parent_version = ? AND plan_json = ?
+             )`,
+        )
+        .bind(
+          commit.modelCalls,
+          commit.totalTokens,
+          now,
+          commit.jobId,
+          token,
+          input.input.artifactId,
+          input.plan.version,
+          input.existing.version,
+          input.planJson,
+        ),
+    ]);
+    const claimed = results[0]?.meta.changes ?? 0;
+    const updatedArtifact = results[1]?.meta.changes ?? 0;
+    const completed = results[3]?.meta.changes ?? 0;
+    if (claimed === 0) {
+      const job = await this.d1
+        .prepare("SELECT status FROM compile_jobs WHERE id = ?")
+        .bind(commit.jobId)
+        .first<{ status: string }>();
+      throw new PlanArtifactConflictError(`Compile job is ${job?.status ?? "missing"}`);
+    }
+    if (updatedArtifact === 0 || completed === 0) {
+      await this.d1
+        .prepare(
+          "UPDATE compile_jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status = 'running'",
+        )
+        .bind("Plan artifact changed during compile commit", now, commit.jobId)
+        .run();
+      throw new PlanArtifactConflictError("Plan artifact changed during compile commit");
+    }
+    const updated = await this.getStored(input.input.artifactId);
+    if (!updated) throw new PlanArtifactNotFoundError(input.input.artifactId);
+    return updated;
+  }
+
+  async applyEditProposalStored(input: {
+    artifactId: string;
+    proposalId: string;
+    baseVersion: number;
+    plan: ExecutionPlan;
+    summary?: string;
+  }): Promise<StoredPlanArtifact> {
+    const plan = planSchema.parse(input.plan);
+    if (plan.version !== input.baseVersion + 1) {
+      throw new PlanArtifactConflictError("Edit proposal must increment the plan version once");
+    }
+    const token = `applying:${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    const planJson = serializeJson(plan);
+    const results = await this.d1.batch([
+      this.d1
+        .prepare(
+          `UPDATE plan_edit_proposals SET status = ?
+           WHERE id = ? AND plan_artifact_id = ? AND base_version = ? AND status = 'pending'`,
+        )
+        .bind(token, input.proposalId, input.artifactId, input.baseVersion),
+      this.d1
+        .prepare(
+          `UPDATE plan_artifacts
+           SET title = ?, goal_json = ?, current_plan_json = ?, version = ?, updated_at = ?
+           WHERE id = ? AND version = ?
+             AND EXISTS (SELECT 1 FROM plan_edit_proposals WHERE id = ? AND status = ?)`,
+        )
+        .bind(
+          plan.title ?? null,
+          serializeJson(plan.goal),
+          planJson,
+          plan.version,
+          now,
+          input.artifactId,
+          input.baseVersion,
+          input.proposalId,
+          token,
+        ),
+      this.d1
+        .prepare(
+          `INSERT INTO plan_artifact_versions
+             (artifact_id, version, plan_json, parent_version, change_reason, summary, created_at)
+           SELECT ?, ?, ?, ?, 'user_edit', ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM plan_artifacts WHERE id = ? AND version = ? AND current_plan_json = ?
+           ) AND EXISTS (SELECT 1 FROM plan_edit_proposals WHERE id = ? AND status = ?)`,
+        )
+        .bind(
+          input.artifactId,
+          plan.version,
+          planJson,
+          input.baseVersion,
+          input.summary ?? null,
+          now,
+          input.artifactId,
+          plan.version,
+          planJson,
+          input.proposalId,
+          token,
+        ),
+      this.d1
+        .prepare(
+          `UPDATE plan_edit_proposals SET status = 'applied', applied_at = ?
+           WHERE id = ? AND status = ?
+             AND EXISTS (
+               SELECT 1 FROM plan_artifact_versions
+               WHERE artifact_id = ? AND version = ? AND parent_version = ? AND plan_json = ?
+             )`,
+        )
+        .bind(
+          now,
+          input.proposalId,
+          token,
+          input.artifactId,
+          plan.version,
+          input.baseVersion,
+          planJson,
+        ),
+    ]);
+    const claimed = results[0]?.meta.changes ?? 0;
+    const artifactUpdated = results[1]?.meta.changes ?? 0;
+    const proposalApplied = results[3]?.meta.changes ?? 0;
+    if (claimed === 0) throw new PlanArtifactConflictError("Edit proposal is no longer pending");
+    if (artifactUpdated === 0 || proposalApplied === 0) {
+      await this.d1
+        .prepare("UPDATE plan_edit_proposals SET status = 'stale' WHERE id = ? AND status = ?")
+        .bind(input.proposalId, token)
+        .run();
+      throw new PlanArtifactConflictError("Plan changed after this edit was proposed");
+    }
     const updated = await this.getStored(input.artifactId);
     if (!updated) throw new PlanArtifactNotFoundError(input.artifactId);
     return updated;

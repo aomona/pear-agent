@@ -1,8 +1,31 @@
-import type { FreeTextFieldResolver, PlanImprover } from "@pear-agent/core";
+import type {
+  FreeTextFieldResolver,
+  PlanCompilePhaseResult,
+  PlanImprover,
+  InterpretableSource,
+} from "@pear-agent/core";
 
 import type { AuthorizeFn } from "../authorize.js";
 import type { PearEnv } from "../env.js";
 import type { PlanGenerator } from "../planner.js";
+import type { PearRequestContext } from "../context.js";
+import type { StoredPlanArtifact } from "../d1/plan-repository.js";
+import type { ExecutionPlan } from "@pear-agent/core";
+
+/** @deprecated Use PlanCompilePhaseResult from @pear-agent/core */
+export type PlanCompileRuntimeResult = PlanCompilePhaseResult;
+
+/** Host-composed AI runtime. Cloudflare persists and orchestrates; the host selects models/domains. */
+export type PlanCompileRuntime = {
+  compile(input: {
+    artifact: StoredPlanArtifact;
+    sources: readonly InterpretableSource[];
+    compileInput: unknown;
+    clarificationAnswers?: Readonly<Record<string, string>>;
+    context: PearRequestContext;
+    signal?: AbortSignal;
+  }): Promise<PlanCompilePhaseResult>;
+};
 
 type NormalizeDomainInput = (input: {
   domainId: string;
@@ -19,9 +42,18 @@ type ResolveDomainFreeTextField = (input: {
   context: unknown;
 }) => Promise<unknown>;
 
+export type ValidatePlanEdit = (input: {
+  domainId: string;
+  plan: ExecutionPlan;
+  normalizedInput?: unknown;
+}) => void | Promise<void>;
+
 /**
- * Public host-injection surface. Static ports support tests and simple Workers;
- * `create*` factories take precedence when a port needs per-request env bindings.
+ * Public host-injection surface.
+ *
+ * AI-native v0.1 path: prefer `compileRuntime` / `createCompileRuntime`.
+ * `planGenerator` remains for session bootstrap without an artifact and legacy
+ * `/plans/:id/generate` (deterministic/tests). New product UIs should use compile.
  */
 export type PlanLibraryOptions = {
   authorize: AuthorizeFn;
@@ -31,18 +63,25 @@ export type PlanLibraryOptions = {
   createFreeTextResolver?: (env: PearEnv) => FreeTextFieldResolver | undefined;
   planImprover?: PlanImprover;
   createPlanImprover?: (env: PearEnv) => PlanImprover | undefined;
+  validatePlanEdit?: ValidatePlanEdit;
   normalizeDomainInput?: NormalizeDomainInput;
   resolveDomainFreeTextField?: ResolveDomainFreeTextField;
+  compileRuntime?: PlanCompileRuntime;
+  createCompileRuntime?: (env: PearEnv) => PlanCompileRuntime | undefined;
 };
 
 export type PlanLibraryHostPorts = {
   generator: { resolve(env: PearEnv): PlanGenerator };
   freeText: { resolve(env: PearEnv): FreeTextFieldResolver | undefined };
-  improvement: { resolve(env: PearEnv): PlanImprover | undefined };
+  improvement: {
+    resolve(env: PearEnv): PlanImprover | undefined;
+    validate?: ValidatePlanEdit;
+  };
   domain: {
     normalizeInput?: NormalizeDomainInput;
     resolveFreeTextField?: ResolveDomainFreeTextField;
   };
+  compile: { resolve(env: PearEnv): PlanCompileRuntime | undefined };
 };
 
 function resolveOptionalEnvPort<T>(
@@ -64,12 +103,17 @@ export function createPlanLibraryHostPorts(options: PlanLibraryOptions): PlanLib
     improvement: {
       resolve: (env) =>
         resolveOptionalEnvPort(options.createPlanImprover, options.planImprover, env),
+      ...(options.validatePlanEdit ? { validate: options.validatePlanEdit } : {}),
     },
     domain: {
       ...(options.normalizeDomainInput ? { normalizeInput: options.normalizeDomainInput } : {}),
       ...(options.resolveDomainFreeTextField
         ? { resolveFreeTextField: options.resolveDomainFreeTextField }
         : {}),
+    },
+    compile: {
+      resolve: (env) =>
+        resolveOptionalEnvPort(options.createCompileRuntime, options.compileRuntime, env),
     },
   };
 }

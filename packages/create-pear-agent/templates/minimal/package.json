@@ -17,7 +17,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.93",
     "@google/genai": "^2.11.0",
+    "@pear-agent/ai": "workspace:*",
     "@pear-agent/cloudflare": "workspace:*",
     "@pear-agent/core": "workspace:*",
     "@pear-agent/react": "workspace:*",

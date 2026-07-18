@@ -1,129 +1,91 @@
 # Domain Contract
 
-`defineDomain()`が返す公開型は`ExecutionDomainDefinition`です。Domainが生成する共通計画・Step・Goalには、それぞれ`ExecutionPlan`、`ExecutionStep`、`ExecutionGoal`を使用します。Stepの状態は`StepStatus`で表します。
-
 ## 目的
 
-Domain Contractは、PEAR Runtimeへ用途固有の入力、計画指示、イベント、Capability、成功条件を接続する契約です。
+Domainは用途固有の入力制約、interpretation/planning/replanning指示、Schema、validator、
+Capabilityを宣言します。モデル呼び出し、retry、identity、provenance、永続化はRuntimeが担当します。
 
 ## 基本形
 
 ```ts
-const outingDomain = defineDomain({
-  id: "outing",
+const domain = defineAiDomain({
+  id: "cook",
   version: 1,
-
   schemas: {
-    input: outingInputSchema,
-    normalizedInput: normalizedOutingSchema,
-    stepData: outingStepDataSchema,
-    worldState: outingWorldStateSchema,
-    events: outingEventSchema,
+    compileInput: cookCompileInputSchema,
+    normalizedInput: normalizedCookInputSchema,
+    stepData: cookStepDataSchema,
+    worldState: cookWorldStateSchema,
+    events: cookEventSchema,
   },
-
-  normalizeInput,
-
+  interpretation: {
+    instructions: "Extract recipes, ingredients, timings, dependencies, and equipment.",
+  },
   planning: {
-    instructions: outingPlannerInstructions,
-    objectives: ["出発時刻までに必要な準備を完了する", "待機時間に並行可能な準備を進める"],
+    instructions: "Create one resource-safe schedule that finishes dishes together.",
+    objectives: ["Serve every dish on time", "Avoid equipment conflicts"],
+    validatePlan,
+    reconcilePlan,
   },
-
   replanning: {
-    instructions: outingReplannerInstructions,
-    defaultMode: "automatic",
+    instructions: "Change only work affected by the recorded observation.",
+    defaultMode: "confirm",
+    reconcileWorldState,
   },
-
+  realtime: {
+    instructions: "Guide the current cooking step and use Runtime tools for changes.",
+    defaultLocale: "ja-JP",
+  },
   capabilities,
   completionPolicy: "automatic",
 });
 ```
 
-## 必須項目
+## SourceとCompile Input
 
-### IDとVersion
+SourceはRuntime共通の`text | url | file`です。Domain固有の提供時刻、人数、設備、
+発表時間などは`schemas.compileInput`で表現します。`schemas.normalizedInput`は複数Sourceを
+統合したDomain modelです。
 
-Domain IDは永続データへ保存する安定した識別子です。VersionはSchemaやPlanner指示の互換性管理に使用します。
+## Interpretation
 
-### Schema
+DomainはinstructionsとNormalized Input Schemaを提供します。`@pear-agent/ai`が標準
+SourceInterpreterを構築します。特殊用途だけhostがInterpreter Portを差し替えます。
+重大な不足はClarificationを返し、軽微な推測はassumptionとして記録します。
 
-すべての外部入力、AI出力、Domain EventはRuntime境界で検証します。
+## Planning
 
-- Raw Input
-- Normalized Input
-- Step Domain Data
-- Domain固有WorldState
-- Domain Event
-- Capability Input / Output
+AIはPlan候補を作成し、RuntimeがIDとsource refsを確定します。Domainの`validatePlan`は必須、
+`reconcilePlan`は任意です。Reconcilerは時間合計やresource scheduleのように安全かつ
+決定論的な補正だけを行い、新しい意味を創作してはいけません。
 
-### `normalizeInput()`
+## EditingとReplanning
 
-Raw / 構造化 Input を受け取り、型付き Normalized Input を返します。取得・解析・外部 API は Domain の責任です。
-
-**フィールド単位の自由文**もサポートできます。input Schema で各フィールドを
-
-`structured | { freeText: string }`
-
-の union にし、normalize 内で:
-
-1. 構造化値はそのまま使う
-2. 自由文は **決定論パーサ**を試す
-3. 失敗したら host の **`freeTextResolver`（典型は LLM structured output）** に任せる
-4. 最終結果を `schemas.normalizedInput` で検証する
-
-Core は `freeTextValueSchema` / `resolveMaybeFreeTextField` / `NormalizeInputContext` を提供します。  
-**LLM は必須ではなく Port**です。outing デモは決定論パーサ付きで、resolver は任意注入です。
-
-### Planning
-
-開発者はSchema、instructions、objectivesを宣言します。PEAR RuntimeがAI SDKによる構造化Plan生成、再試行、検証を担当します。
-
-### Replanning
-
-開発者はDomain固有の再計画指示と標準Modeを宣言します。PEAR RuntimeがImpact Analysis、Patch生成、検証、Version保存を担当します。
-
-### Capabilities
-
-```ts
-type CapabilityDefinition<TInput, TOutput> = {
-  id: string;
-  description: string;
-  inputSchema: Schema<TInput>;
-  outputSchema: Schema<TOutput>;
-  executionMode: "automatic" | "confirm" | "suggest";
-  riskLevel: "low" | "medium" | "high";
-  execute(input: TInput, context: CapabilityContext): Promise<TOutput>;
-};
-```
-
-FoundationはCapability定義のSchemaと、`executionMode` / `riskLevel`に基づくPolicy評価を提供します。Capabilityの呼び出し、認可Hookの適用、実行結果のExecution Stateへの反映はまだ統合しません。
-
-### Authorization
-
-認証Contextと操作単位の認可Hookは後続のCloudflare / Execution State PhaseでDomain Contractへ追加し、Capability実行へ統合します。Foundationの`ExecutionDomainDefinition`にはまだ含まれません。
-
-## RuntimeがDomainへ保証するもの
-
-- Execution Planの共通Schema
-- DAGとStep状態遷移
-- ActorとAssignment
-- Goal評価の実行基盤
-- Capability Policy
-
-Event追加とWorldState更新、認可HookとCapability実行統合、Continuation、Voice Session lifecycle、Plan Patch、Plan Version / Rollback、React hooksは後続のCloudflare / Execution State Phase以降で提供します。
+実行前編集は`{ kind: "full", plan }`からreview可能なfull-plan diffを作ります。実行中Replanは
+部分的なPlanPatchを使い、Runtime Eventをtyped cause refとして持ちます。標準modeは`confirm`で、
+より緩い要求にdown-gradeできません。
 
 ## Domainが保証するもの
 
-- SchemaがDomainの入力と出力を十分に表すこと
-- Normalized InputがPlannerへ必要な情報を含むこと
-- Planner指示がDomainの安全ルールを含むこと
-- EventがWorldStateへ与える意味を定義すること
-- Capabilityが冪等性または重複実行への対策を持つこと
-- AI評価だけでは判断できない高リスク条件を明示すること
+- 全SchemaがJSON-safeな永続境界を表現する
+- instructionsがDomainの安全ルールと判断基準を含む
+- `validatePlan`がDomain固有invariantを網羅する
+- Reconcilerが冪等で、意味を勝手に追加しない
+- EventがWorldStateへ与える意味を定義する
+- Capabilityがrisk/execution modeと重複実行対策を持つ
 
-## v0.1で保証しないもの
+## Runtimeが保証するもの
 
-- 任意のPlanner実装との互換性
-- Domain間でのPlan合成
-- 動的に取得した任意コードの実行
+- bounded AI generationとSchema validation
+- Runtime-owned identityとStep単位provenance
+- DAG、Step state、Capability policy、Domain invariant validation
+- version、diff、confirmation、atomic activation、rollback
+- Raw Source、Normalized Model、generation metadata、causeの追跡
+
+## v0.1非目標
+
+- Domain間のPlan合成
+- 動的コード実行
 - Domain Marketplace
-- Schema Versionの自動Migration
+- 自動Schema migration
+- Provider完全互換

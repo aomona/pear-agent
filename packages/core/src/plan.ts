@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { executionGoalSchema, type ExecutionGoal } from "./goal.js";
 import { validatePlanGraph } from "./plan-graph.js";
+import { sourceReferenceSchema, type SourceReference } from "./compiler.js";
 import { jsonValueSchema } from "./world-state.js";
 
 export const wakeConditionSchema = z.discriminatedUnion("type", [
@@ -92,6 +93,8 @@ export type ExecutionStep<TStepData = unknown> = {
   resourceRequirements?: ResourceRequirement[];
   /** CE-04: relative timeline window. */
   timeline?: StepTimeline;
+  /** Source fragments supporting this generated step. Required for AI-compiled plans. */
+  sourceRefs?: SourceReference[];
 };
 
 export type ExecutionPlan<TStepData = unknown> = {
@@ -142,6 +145,7 @@ export function executionStepSchema<TStepDataSchema extends z.ZodType>(
     notes: z.array(nonEmptyTrimmed(200)).max(20).optional(),
     resourceRequirements: z.array(resourceRequirementSchema).max(50).optional(),
     timeline: stepTimelineSchema.optional(),
+    sourceRefs: z.array(sourceReferenceSchema).max(100).optional(),
   }) as unknown as z.ZodType<ExecutionStep<z.output<TStepDataSchema>>>;
 }
 

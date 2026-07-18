@@ -99,3 +99,9 @@ Minimal StarterとOutingはコピー元を共有しません。Reference Applica
 - `--example outing`を指定した場合だけ`examples/outing-agent`を生成する
 - greenfield生成テストで4ページ、Domain、設定、migrationの同梱を検証する
 - 既存アプリへの導入はSkills / Documentsを主経路として継続整備する
+
+## v0.1 の Reference 方針
+
+- v0.1 の製品完成軸は **Runtime + Minimal Starter**（AI compile 含む）
+- Outing は互換サンプルとして monorepo 内に残す
+- Cook / Presentation は v0.1 に同梱しない（後続で Runtime 外に再構築）

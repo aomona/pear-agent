@@ -1,60 +1,31 @@
 # 状態モデル
 
-## 3つのライフサイクル
+## SourceとCompile
 
-### Execution Session
+- Source Artifact: type、location、media type、checksum、size、R2 key、抽出状態
+- Interpretation Artifact: Domain型付きNormalized Input、assumptions、source refs、revision
+- Clarification: question、affected fields/sources、status、answer
+- Generation Record: stage、provider/model、prompt/schema version、usage、warnings、validation
+- Compile Job: Workflow ID、phase、status、attempt、budget、error、timestamps
 
-現実の作業を表します。
+## Plan Artifact
 
-```text
-not_started → active → paused → active → completed
-                         └────────────→ cancelled
-```
+Plan ArtifactはExecution Sessionから独立した再利用可能なdraft/ready/stale/archived Planです。
+各versionはparent、change reason、typed cause refs、Plan、diff、generation recordを持ちます。
+各Stepは一つ以上のsource refsを持ちます。Runtimeがartifact、Patch、StepのIDを割り当てます。
 
-### Voice Session
+## Execution State
 
-音声Providerとの接続を表します。
+Execution Sessionは開始時のPlan Artifact versionをsnapshot/forkし、Plan、WorldState、
+Step States、Timers、Events、Continuation、active Plan Changeを保持します。
+Runtime Snapshotがresume/read modelであり、provider chat historyは正本ではありません。
 
-```text
-disconnected → connecting → connected
-connected ↔ muted
-connected → recovering → connected
-connected → disconnected
-```
+## 独立するライフサイクル
 
-### Continuation
+- Compile Workflow: sourceからreview可能Planまで
+- Plan Artifact: draft/ready/stale/archivedとversion履歴
+- Execution Session: durableな実行状態
+- Voice Session:一時的なRealtime接続
+- Continuation:中断とwake/resume
 
-中断後に再開する条件と進行を表します。
-
-```text
-none → suspended → wake_pending → resuming → completed
-                                      └────→ expired
-```
-
-## 状態の組み合わせ例
-
-```text
-加熱待ち:
-Execution Session: active
-Voice Session: disconnected
-Continuation: suspended
-Timer: running
-```
-
-## Runtime Snapshot
-
-再開時に参照する正式な状態です。
-
-```ts
-type RuntimeSnapshot = {
-  session: ExecutionSession;
-  planVersion: PlanVersion;
-  stepStates: Record<string, StepState>;
-  activeTimers: ExecutionTimer[];
-  recentEvents: RuntimeEvent[];
-  continuation: ExecutionContinuation | null;
-  generatedAt: string;
-};
-```
-
-Voice Providerの会話履歴はSnapshotの代替ではありません。
+Session内Replanは元Artifactを更新しません。Sessionの最終Planは明示的に新しいArtifactへ保存できます。

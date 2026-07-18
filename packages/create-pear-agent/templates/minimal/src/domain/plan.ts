@@ -20,7 +20,7 @@ export function buildStarterGoal(title: string): ExecutionGoal {
 export function buildStarterPlan(
   goal: ExecutionGoal,
   input: StarterNormalizedInput,
-): ExecutionPlan<{ taskId: string }> {
+): ExecutionPlan<{ task: string }> {
   return {
     id: `starter-${crypto.randomUUID()}`,
     version: 1,
@@ -28,16 +28,17 @@ export function buildStarterPlan(
     goal,
     metadata: { domainId: "starter", domainVersion: 1 },
     steps: input.tasks.map((task, index) => ({
-      id: task.id,
+      id: `task-${index + 1}`,
       label: task.title,
       summary: `Step ${index + 1} of ${input.tasks.length}`,
-      instructions: task.title,
+      instructions: task.description,
       executor: { type: "human" },
-      after: index === 0 ? [] : [input.tasks[index - 1]!.id],
+      after: index === 0 ? [] : [`task-${index}`],
       requirements: [],
       estimatedDurationSeconds: task.estimatedDurationSeconds,
       timers: [],
-      domainData: { taskId: task.id },
+      sourceRefs: task.sourceRefs,
+      domainData: { task: task.title },
     })),
   };
 }

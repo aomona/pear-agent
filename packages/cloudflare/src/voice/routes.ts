@@ -12,7 +12,7 @@ import {
 import type { AuthorizeFn } from "../authorize.js";
 import type { PearRequestContext } from "../context.js";
 import type { PearEnv } from "../env.js";
-import type { ReplanMode } from "@pear-agent/core";
+import { DEFAULT_REALTIME_OBSERVATION_CONFIDENCE, type ReplanMode } from "@pear-agent/core";
 import {
   SessionNotFoundError,
   VoiceLeaseConflictError,
@@ -33,6 +33,8 @@ export type RegisterVoiceRoutesOptions = {
   authorize: AuthorizeFn;
   voiceTokenMinter: VoiceTokenMinter;
   geminiLiveModel?: string;
+  realtimeInstructions?: string;
+  realtimeLocale?: string;
   requestReplan?: (input: {
     request: Request;
     env: PearEnv;
@@ -139,6 +141,10 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         snapshot,
         lease,
         ...(options.geminiLiveModel === undefined ? {} : { model: options.geminiLiveModel }),
+        ...(options.realtimeInstructions === undefined
+          ? {}
+          : { realtimeInstructions: options.realtimeInstructions }),
+        ...(options.realtimeLocale === undefined ? {} : { locale: options.realtimeLocale }),
       });
       return c.json({ token: minted.token, model: minted.model });
     } catch (caught) {
@@ -156,8 +162,12 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
         toolName: z.string().min(1),
         args: z.record(z.string(), z.unknown()).default({}),
         callId: z.string().min(1).optional(),
+        confidence: z.number().min(0).max(1).optional(),
       })
       .parse(await c.req.json());
+    const argsConfidence = z.number().min(0).max(1).safeParse(body.args.confidence);
+    const confidence =
+      body.confidence ?? (argsConfidence.success ? argsConfidence.data : undefined);
 
     await authorize({ type: "voice.tool", sessionId, toolName: body.toolName }, context);
 
@@ -181,6 +191,20 @@ export function registerVoiceRoutes(app: VoiceHono, options: RegisterVoiceRoutes
       );
     }
     if (eventType !== null) {
+      if (confidence === undefined || confidence < DEFAULT_REALTIME_OBSERVATION_CONFIDENCE) {
+        return c.json(
+          {
+            callId: body.callId ?? null,
+            toolName: body.toolName,
+            ok: false,
+            error: true,
+            requiresConfirmation: true,
+            threshold: DEFAULT_REALTIME_OBSERVATION_CONFIDENCE,
+            message: "Realtime state changes require confidence at or above the threshold",
+          },
+          409,
+        );
+      }
       await authorize({ type: "session.appendEvent", sessionId, eventType }, context);
     }
 

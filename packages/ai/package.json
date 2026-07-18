@@ -1,0 +1,23 @@
+{
+  "name": "@pear-agent/ai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "test": "vitest run src"
+  },
+  "dependencies": {
+    "@pear-agent/core": "workspace:*",
+    "ai": "^6.0.224",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@typescript/native-preview": "7.0.0-dev.20260702.3",
+    "vitest": "^4.1.6"
+  }
+}
