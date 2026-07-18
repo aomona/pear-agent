@@ -69,6 +69,7 @@ function metadata(input: {
     totalTokens: usageValue(input.usage.totalTokens),
     attempt: input.attempt,
     warnings: input.warnings.map((warning) => String(warning)),
+    validation: null,
     createdAt: new Date(),
   });
 }

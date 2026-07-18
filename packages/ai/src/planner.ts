@@ -46,32 +46,60 @@ function assignRuntimeIdentity(
   sourceRefs: readonly SourceReference[],
   createId: () => string,
 ): ExecutionPlan {
+  const knownSourceIds = new Set(sourceRefs.map((ref) => ref.sourceId));
   const planId = `plan-${createId()}`;
   const stepIds = new Map(candidate.steps.map((step) => [step.id, `step-${createId()}`]));
+  const timerIds = new Map<string, string>();
+
   return {
     ...candidate,
     id: planId,
     version: 1,
-    steps: candidate.steps.map((step) => ({
-      ...step,
-      id: stepIds.get(step.id)!,
-      after: step.after.map((id) => stepIds.get(id) ?? id),
-      timers: step.timers.map((timer) => {
-        const parsed = z
-          .object({ linkedStepId: z.string().optional() })
-          .passthrough()
-          .safeParse(timer);
-        if (!parsed.success || parsed.data.linkedStepId === undefined) return timer;
-        return {
-          ...parsed.data,
-          linkedStepId: stepIds.get(parsed.data.linkedStepId) ?? parsed.data.linkedStepId,
-        };
-      }),
-      sourceRefs:
-        step.sourceRefs && step.sourceRefs.length > 0
-          ? step.sourceRefs.map((ref) => sourceReferenceSchema.parse(ref))
-          : sourceRefs.map((ref) => sourceReferenceSchema.parse(ref)),
-    })),
+    steps: candidate.steps.map((step) => {
+      const refs = step.sourceRefs ?? [];
+      if (refs.length === 0) {
+        throw new Error(`Step ${step.id} must cite at least one source in sourceRefs`);
+      }
+      for (const ref of refs) {
+        if (!knownSourceIds.has(ref.sourceId)) {
+          throw new Error(`Step ${step.id} references unknown source ${ref.sourceId}`);
+        }
+      }
+      return {
+        ...step,
+        id: stepIds.get(step.id)!,
+        after: step.after.map((id) => stepIds.get(id) ?? id),
+        timers: step.timers.map((timer) => {
+          const parsed = z
+            .object({
+              id: z.string().optional(),
+              linkedStepId: z.string().optional(),
+            })
+            .passthrough()
+            .safeParse(timer);
+          if (!parsed.success) return timer;
+          const nextTimerId =
+            typeof parsed.data.id === "string"
+              ? (timerIds.get(parsed.data.id) ??
+                (() => {
+                  const id = `timer-${createId()}`;
+                  timerIds.set(parsed.data.id!, id);
+                  return id;
+                })())
+              : undefined;
+          return {
+            ...parsed.data,
+            ...(nextTimerId ? { id: nextTimerId } : {}),
+            ...(parsed.data.linkedStepId !== undefined
+              ? {
+                  linkedStepId: stepIds.get(parsed.data.linkedStepId) ?? parsed.data.linkedStepId,
+                }
+              : {}),
+          };
+        }),
+        sourceRefs: refs.map((ref) => sourceReferenceSchema.parse(ref)),
+      };
+    }),
   };
 }
 
@@ -93,7 +121,7 @@ export function createAiPlanGenerator(options: CreateAiPlanGeneratorOptions): Ai
         system: [
           "Create a coherent executable DAG plan from normalized domain input.",
           "Use temporary unique ids and valid after dependencies; Runtime replaces persistent ids.",
-          "Every step must cite supplied source ids in sourceRefs.",
+          "Every step must cite supplied source ids in sourceRefs. Do not invent source ids.",
           "Respect timers, resources, safety constraints, and the requested goal.",
           input.instructions,
           `Objectives: ${input.objectives.join("; ")}`,
@@ -107,7 +135,10 @@ export function createAiPlanGenerator(options: CreateAiPlanGeneratorOptions): Ai
       const identified = assignRuntimeIdentity(result.output, input.sourceRefs, createId);
       return {
         plan: schema.parse({ ...identified, goal: input.goal }),
-        generation: result.metadata,
+        generation: {
+          ...result.metadata,
+          validation: { ok: true, issues: [] },
+        },
       };
     },
   };
