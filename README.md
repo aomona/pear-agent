@@ -31,9 +31,8 @@ Outing（`examples/outing-*`）は互換サンプルとして残します。Cook
 ## Quick start
 
 ```bash
-pnpm install
-pnpm create-pear-agent examples/my-agent
-cd examples/my-agent
+pnpm dlx create-pear-agent@beta my-agent
+cd my-agent
 pnpm install
 cp .env.example .env
 cp .dev.vars.example .dev.vars
@@ -41,7 +40,7 @@ cp .dev.vars.example .dev.vars
 pnpm dev
 ```
 
-The starter demonstrates **Sources → Compile → Review → Execute** and includes an artifact inspector. It fails closed outside local development until the host supplies authorization.
+The starter pins all four PEAR Runtime packages to `0.1.0-beta.1`, carries its own `migrations/0001_init.sql`, and demonstrates **Sources → Compile → Review → Execute** with an artifact inspector. It fails closed outside local development until the host supplies authorization. During the beta, `--example outing` is not bundled in npm; use `--from <pear-agent-root>` or `PEAR_AGENT_ROOT` from a monorepo checkout.
 
 ## Runtime state
 

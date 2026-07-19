@@ -129,7 +129,7 @@ export function rewritePackageJson(options) {
       if (!(name in deps)) continue;
       if (options.mode === "workspace") {
         deps[name] = "workspace:*";
-      } else {
+      } else if (options.mode === "file") {
         if (!options.pearAgentRoot) {
           throw new Error("file: dependencies require --from <pear-agent-root> or PEAR_AGENT_ROOT");
         }
@@ -166,10 +166,7 @@ export function rewritePackageJson(options) {
 }
 
 export function isInsideWorkspace(targetDir, pearAgentRoot) {
-  if (!pearAgentRoot) {
-    const candidate = path.resolve(targetDir, "../../packages/core");
-    return existsSync(candidate);
-  }
+  if (!pearAgentRoot) return false;
   const rel = path.relative(pearAgentRoot, path.resolve(targetDir));
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }

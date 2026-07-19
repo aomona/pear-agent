@@ -5,6 +5,8 @@ The default path is **Sources → Compile with LLM → Review → Execute → As
 Compile requests are queued into the `PlanCompileWorkflow` binding. The browser polls the D1 job,
 while Worker restarts and HTTP disconnects do not interrupt the compile lifecycle.
 
+Generate this starter from the public beta with `pnpm dlx create-pear-agent@beta my-agent`. The scaffold pins all four PEAR Runtime packages to `0.1.0-beta.1`, uses no registry overrides, and owns the D1 baseline at `migrations/0001_init.sql`.
+
 ## Start
 
 ```bash

@@ -4,18 +4,11 @@ PEAR RuntimeのDomain、Goal、Actor、Capability Policy、Plan DAG、Execution 
 
 ## Install
 
-`@pear-agent/core`は現在privateなworkspace packageです。同じpnpm workspace内の利用側packageで次のように指定し、workspace rootで`pnpm install`してください。
+Install the public beta from npm:
 
-```json
-{
-  "dependencies": {
-    "@pear-agent/core": "workspace:*",
-    "zod": "^4.3.5"
-  }
-}
+```bash
+pnpm add @pear-agent/core@beta zod
 ```
-
-Registry公開後は`pnpm add @pear-agent/core zod`で導入できる予定です。
 
 ## 最小Domain定義
 

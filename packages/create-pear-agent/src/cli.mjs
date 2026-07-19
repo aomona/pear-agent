@@ -19,8 +19,8 @@ function printHelp() {
 Scaffold a minimal PEAR execution app (Cloudflare Worker + React).
 
 Options:
-  --example <name>   Generate a reference example (available: outing)
-  --from <path>      Path to pear-agent monorepo root (for file: deps)
+  --example <name>   Generate a reference example (outing: monorepo example; requires --from/PEAR_AGENT_ROOT)
+  --from <path>      Path to pear-agent monorepo root
   --template <path>  Override the template directory
   --help             Show this help
 
@@ -87,11 +87,24 @@ function main() {
 
   const targetDir = path.resolve(dirArg);
   const projectName = path.basename(targetDir);
-  const pearAgentRoot = resolvePearAgentRoot(parsed.from);
+  const explicitRoot = resolvePearAgentRoot(parsed.from);
+  const bundledRoot = defaultPearAgentRoot();
+  const hasBundledRepository =
+    existsSync(path.join(bundledRoot, "packages/core/package.json")) &&
+    existsSync(path.join(bundledRoot, "packages/cloudflare/migrations/0001_init.sql"));
+  const implicitRoot = hasBundledRepository ? bundledRoot : null;
+  const resolvedRoot = explicitRoot ?? implicitRoot;
+
+  if (parsed.example === "outing" && !resolvedRoot) {
+    throw new Error(
+      "The outing example is not included in the npm package; pass --from <pear-agent-root> or use the default minimal starter.",
+    );
+  }
+
   const templateDir = resolveTemplateDir({
     template: parsed.template,
     example: parsed.example,
-    pearAgentRoot,
+    pearAgentRoot: resolvedRoot,
   });
 
   if (existsSync(targetDir) && readdirSync(targetDir).length > 0) {
@@ -100,16 +113,18 @@ function main() {
 
   copyTemplate(templateDir, targetDir);
 
-  const mode = isInsideWorkspace(targetDir, pearAgentRoot) ? "workspace" : "file";
-  const resolvedRoot = pearAgentRoot ?? (mode === "workspace" ? defaultPearAgentRoot() : null);
+  const mode = explicitRoot
+    ? isInsideWorkspace(targetDir, explicitRoot)
+      ? "workspace"
+      : "file"
+    : implicitRoot && isInsideWorkspace(targetDir, implicitRoot)
+      ? "workspace"
+      : "registry";
 
-  // Always materialize migrations next to the app so generated projects are self-contained.
-  // Monorepo sample uses packages/cloudflare/migrations via wrangler relative path;
-  // scaffolds rewrite wrangler to ./migrations after copy.
-  if (resolvedRoot) {
+  if (mode !== "registry" && resolvedRoot) {
     copyCloudflareMigrations(resolvedRoot, targetDir);
-    rewriteWranglerMigrationsDir(targetDir);
   }
+  rewriteWranglerMigrationsDir(targetDir);
 
   rewritePackageJson({
     targetDir,
@@ -134,8 +149,10 @@ Deploy:
 Dependency mode: ${mode}
 ${
   mode === "file"
-    ? "  (packages resolved via file: — set --from or PEAR_AGENT_ROOT if install fails)\n"
-    : "  (workspace:* — keep the project inside the pear-agent monorepo)\n"
+    ? "  (packages resolved via file: from the selected pear-agent root)\n"
+    : mode === "workspace"
+      ? "  (workspace:* — keep the project inside the pear-agent monorepo)\n"
+      : "  (exact beta versions from the npm registry)\n"
 }
 `);
 }
