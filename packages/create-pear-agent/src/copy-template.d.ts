@@ -12,7 +12,7 @@ export function rewriteWranglerMigrationsDir(targetDir: string): void;
 export function rewritePackageJson(options: {
   targetDir: string;
   projectName: string;
-  mode: "workspace" | "file";
+  mode: "registry" | "workspace" | "file";
   pearAgentRoot: string | null;
 }): void;
 export function isInsideWorkspace(targetDir: string, pearAgentRoot: string | null): boolean;

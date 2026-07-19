@@ -13,15 +13,16 @@ PEAR Runtimeの配布物を、製品本体、編集可能なStarter、Reference 
 | Reference Application | PEAR Loop全体を説明・検証する具体的なDomainアプリケーション  | 参考にする         |
 | Skills / Documents    | 既存アプリへの導入、Domain作成、UI変更、デプロイの作業ガイド | 適用する           |
 
-Runtimeの正式な公開面は`@pear-agent/core`、`@pear-agent/cloudflare`、`@pear-agent/react`です。`create-pear-agent`はこれらを利用するプロジェクトを生成しますが、デフォルトのMinimal Starter生成ではRuntime実装やReference Applicationを複製元にはしません。
+Runtimeの正式な公開面は`@pear-agent/core`、`@pear-agent/ai`、`@pear-agent/cloudflare`、`@pear-agent/react`です。`create-pear-agent`はこれらを利用するプロジェクトを生成しますが、デフォルトのMinimal Starter生成ではRuntime実装やReference Applicationを複製元にはしません。
 
 ## CLI契約
 
 ### Minimal Starter
 
 ```bash
-pnpm create pear-agent my-agent
+pnpm dlx create-pear-agent@beta my-agent
 cd my-agent
+pnpm install
 pnpm dev
 pnpm deploy
 ```
@@ -33,6 +34,8 @@ pnpm deploy
 - 一覧、入力、計画、実行の4ページ
 - 環境変数例と最小テスト
 - DomainとPlannerの差し替え口
+
+公開betaのStarterは4つのPEAR依存を`0.1.0-beta.1`へ固定し、`pnpm.overrides`を追加しません。D1 baselineは生成projectの`migrations/0001_init.sql`に同梱され、Wranglerはそのlocal pathを参照します。
 
 主な編集箇所は次の3領域に限定します。
 
@@ -48,7 +51,7 @@ Voice、Continuation、Timer、ReplanなどのRuntime配線は、通常のアプ
 ### Optional Reference Example
 
 ```bash
-pnpm create pear-agent my-agent --example outing
+pnpm dlx create-pear-agent@beta my-agent --example outing --from <pear-agent-root>
 ```
 
 OutingはPEAR Loopを端から端まで実演するReference Applicationです。
@@ -59,7 +62,7 @@ OutingはPEAR Loopを端から端まで実演するReference Applicationです�
 - 遅延Eventによる部分Replan
 - Plan Patch差分
 
-Outingのソースは`examples/outing-agent`に置き、Minimal Starterの正本や暗黙のデフォルトにはしません。CLIから生成する場合は、明示的な`--example outing`を必要とします。
+Outingのソースは`examples/outing-agent`に置き、Minimal Starterの正本や暗黙のデフォルトにはしません。betaのnpm packageにはOutingを同梱しないため、生成には明示的な`--example outing`と`--from <pear-agent-root>`（または`PEAR_AGENT_ROOT`）が必要です。
 
 ## Skills / Documents契約
 
@@ -96,7 +99,7 @@ Minimal StarterとOutingはコピー元を共有しません。Reference Applica
 ## 実装状況
 
 - `create-pear-agent` package内のMinimal Starterをデフォルトとして生成する
-- `--example outing`を指定した場合だけ`examples/outing-agent`を生成する
+- `--example outing`とmonorepo rootを明示した場合だけ`examples/outing-agent`を生成する
 - greenfield生成テストで4ページ、Domain、設定、migrationの同梱を検証する
 - 既存アプリへの導入はSkills / Documentsを主経路として継続整備する
 

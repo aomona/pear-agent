@@ -4,17 +4,10 @@ Typed Worker client, `PearProvider`, and hooks for PEAR Execution Runtime — wi
 
 ## Install
 
-Workspace:
+Install the public beta and its peer dependencies from npm:
 
-```json
-{
-  "dependencies": {
-    "@pear-agent/react": "workspace:*",
-    "@pear-agent/core": "workspace:*",
-    "react": "^19.0.0",
-    "agents": "^0.17.0"
-  }
-}
+```bash
+pnpm add @pear-agent/react@beta @pear-agent/core@beta react agents
 ```
 
 `agents` is required for realtime Agent WebSocket sync. Set `realtime={false}` on `PearProvider` to use HTTP-only snapshot loads (tests / offline tooling).

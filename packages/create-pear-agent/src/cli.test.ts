@@ -1,7 +1,8 @@
-import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import { describe, expect, it, afterEach } from "vitest";
 
@@ -69,6 +70,42 @@ describe("create-pear-agent scaffold", () => {
     expect(worker).toContain("denyAllAuthorize");
   });
 
+  it("keeps exact beta dependencies and bundled migrations in registry mode", () => {
+    const target = mkdtempSync(path.join(tmpdir(), "create-pear-registry-"));
+    temps.push(target);
+    const projectDir = path.join(target, "my-agent");
+    const pearRoot = path.resolve(fileURLToPath(import.meta.url), "../../../../");
+
+    copyTemplate(defaultTemplateDir(), projectDir);
+    rewriteWranglerMigrationsDir(projectDir);
+    rewritePackageJson({
+      targetDir: projectDir,
+      projectName: "my-agent",
+      mode: "registry",
+      pearAgentRoot: null,
+    });
+
+    const pkg = JSON.parse(readFileSync(path.join(projectDir, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+      pnpm?: { overrides?: Record<string, string> };
+    };
+    for (const name of [
+      "@pear-agent/ai",
+      "@pear-agent/cloudflare",
+      "@pear-agent/core",
+      "@pear-agent/react",
+    ]) {
+      expect(pkg.dependencies[name]).toBe("0.1.0-beta.1");
+    }
+    expect(pkg.pnpm?.overrides).toBeUndefined();
+    expect(readFileSync(path.join(projectDir, "migrations/0001_init.sql"))).toEqual(
+      readFileSync(path.join(pearRoot, "packages/cloudflare/migrations/0001_init.sql")),
+    );
+    expect(readFileSync(path.join(projectDir, "wrangler.jsonc"), "utf8")).toContain(
+      '"migrations_dir": "migrations"',
+    );
+  });
+
   it("keeps outing behind an explicit example selection", () => {
     const pearRoot = path.resolve(fileURLToPath(import.meta.url), "../../../../");
     const outing = resolveTemplateDir({ example: "outing", pearAgentRoot: pearRoot });
@@ -105,6 +142,55 @@ describe("create-pear-agent scaffold", () => {
     expect(() => resolveTemplateDir({ example: "unknown" })).toThrow("Unknown example");
     expect(() => resolveTemplateDir({ example: "outing", template: "/tmp/custom" })).toThrow(
       "either --template or --example",
+    );
+  });
+  it("runs the packed CLI without a monorepo and rejects unpackaged outing", () => {
+    const driver = mkdtempSync(path.join(tmpdir(), "create-pear-packed-"));
+    const target = mkdtempSync(path.join(tmpdir(), "create-pear-packed-target-"));
+    temps.push(driver, target);
+    const packageDir = path.resolve(fileURLToPath(import.meta.url), "../..");
+
+    execFileSync("pnpm", ["pack", "--pack-destination", driver], {
+      cwd: packageDir,
+      stdio: "pipe",
+    });
+    const tarball = path.join(driver, readdirSync(driver).find((name) => name.endsWith(".tgz"))!);
+    execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], {
+      cwd: driver,
+      stdio: "pipe",
+    });
+
+    const cli = path.join(driver, "node_modules/.bin/create-pear-agent");
+    const projectDir = path.join(target, "my-agent");
+    const env = { ...process.env };
+    delete env["PEAR_AGENT_ROOT"];
+    const generated = spawnSync(cli, [projectDir], { encoding: "utf8", env });
+    expect(generated.status, generated.stderr).toBe(0);
+
+    const pkg = JSON.parse(readFileSync(path.join(projectDir, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+      pnpm?: { overrides?: Record<string, string> };
+    };
+    expect(
+      Object.entries(pkg.dependencies).filter(([name]) => name.startsWith("@pear-agent/")),
+    ).toEqual([
+      ["@pear-agent/ai", "0.1.0-beta.1"],
+      ["@pear-agent/cloudflare", "0.1.0-beta.1"],
+      ["@pear-agent/core", "0.1.0-beta.1"],
+      ["@pear-agent/react", "0.1.0-beta.1"],
+    ]);
+    expect(pkg.pnpm?.overrides).toBeUndefined();
+    expect(existsSync(path.join(projectDir, "migrations/0001_init.sql"))).toBe(true);
+    expect(existsSync(path.join(projectDir, ".env.example"))).toBe(true);
+    expect(existsSync(path.join(projectDir, ".dev.vars.example"))).toBe(true);
+
+    const outing = spawnSync(cli, [path.join(target, "outing"), "--example", "outing"], {
+      encoding: "utf8",
+      env,
+    });
+    expect(outing.status).not.toBe(0);
+    expect(outing.stderr.trim()).toBe(
+      "The outing example is not included in the npm package; pass --from <pear-agent-root> or use the default minimal starter.",
     );
   });
 });

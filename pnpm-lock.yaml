@@ -139,7 +139,7 @@ importers:
   packages/ai:
     dependencies:
       '@pear-agent/core':
-        specifier: workspace:*
+        specifier: workspace:0.1.0-beta.1
         version: link:../core
       ai:
         specifier: ^6.0.224
@@ -161,7 +161,7 @@ importers:
   packages/cloudflare:
     dependencies:
       '@pear-agent/core':
-        specifier: workspace:*
+        specifier: workspace:0.1.0-beta.1
         version: link:../core
       agents:
         specifier: ^0.17.3
@@ -210,7 +210,7 @@ importers:
   packages/react:
     dependencies:
       '@pear-agent/core':
-        specifier: workspace:*
+        specifier: workspace:0.1.0-beta.1
         version: link:../core
       zod:
         specifier: ^4.3.5

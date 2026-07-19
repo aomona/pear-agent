@@ -35,7 +35,7 @@
       "binding": "DB",
       "database_name": "pear-minimal-starter",
       "database_id": "local-pear-minimal-starter",
-      "migrations_dir": "../../packages/cloudflare/migrations",
+      "migrations_dir": "migrations",
     },
   ],
   "r2_buckets": [

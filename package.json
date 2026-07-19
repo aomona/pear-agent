@@ -2,6 +2,7 @@
   "name": "pear-agent",
   "private": true,
   "scripts": {
+    "build": "pnpm --filter @pear-agent/core build && pnpm --filter @pear-agent/ai build && pnpm --filter @pear-agent/cloudflare build && pnpm --filter @pear-agent/react build",
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run --passWithNoTests && pnpm --filter @pear-agent/cloudflare exec vitest run && pnpm --filter @pear-agent/react exec vitest run",
     "lint": "oxlint .",

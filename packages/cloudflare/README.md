@@ -60,9 +60,7 @@ const worker = createPearWorker({ authorize, planGenerator, replanRuntime });
 export default { fetch: worker.fetch };
 ```
 
-Bind `DB` (D1), `RAW_INPUTS` (R2), and `ExecutionSessionAgent` (Durable Object with SQLite migration) in Wrangler. Apply every SQL migration in order through `migrations/0004_replanning.sql`.
-
-Migration `0004` marks pre-existing sessions with Domain version `0` (unknown/incompatible) instead of guessing a schema version. Migrate those sessions explicitly before replanning; newly created sessions persist the resolved Domain version.
+Bind `DB` (D1), `RAW_INPUTS` (R2), and `ExecutionSessionAgent` (Durable Object with SQLite migration) in Wrangler. Apply the packaged baseline migration `migrations/0001_init.sql` before starting the Worker.
 
 ## HTTP API
 
