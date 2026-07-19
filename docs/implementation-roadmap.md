@@ -1,32 +1,40 @@
-# PEAR Runtime Implementation Roadmap
+# PEAR AI-native v0.1 Implementation Roadmap
 
-## 目標
+## 完成条件（v0.1）
 
-2026年8月20日までに、CLIから外出準備サンプルを生成し、Cloudflareへデプロイして、音声実行、中断、Wake、再開、部分再計画を実演できる状態にします。
+Runtime と AI-first Minimal Starter で次を完走します。
 
-## 実装計画の分割
+```text
+Sources -> AI Compile -> Review -> Natural-language Edit -> Execute
+```
 
-1. **Foundation** — workspace、Oxlint・Oxfmt・tsgo、Core、Goal、Plan DAG、Step State、Domain Contract
-2. **Execution State** — Session、WorldState、Event、Timer、Snapshot
-3. **Cloudflare Runtime** — Agents、D1、R2、認可Hook
-4. **React Client** — 型安全なClient、Provider、hooks、リアルタイム同期
-5. **Gemini Voice** — Voice契約、Gemini Live、Voice Lease、Tool bridge
-6. **Continuation** — Suspend、Wake、Atomic Resume、Snapshot Rehydration
-7. **Partial Replanning** — Assess、Impact Analysis、Plan Patch、Version更新
-8. **CLI and Outing Sample** — CLI、外出準備Domain、サンプルUI、deploy
-9. **Devtools and Hardening** — Devtools、E2E、failure recovery、デモ試験
-10. **PEAR Cook Integration** — cook-agentを第二Reference Applicationとして接続
+Cook / Presentation などの本格 Reference Application は v0.1 の必須スコープ外です（後続で別途）。
 
-## マイルストーン
+## 統合 branch
 
-| 日付 | 完成状態 |
-| --- | --- |
-| 7月17日 | FoundationとDomain Contract |
-| 7月24日 | Execution StateとCloudflare Runtime |
-| 7月31日 | React ClientとGemini Voice |
-| 8月7日 | Continuationの中断・Wake・再開 |
-| 8月13日 | 部分再計画と外出準備サンプル |
-| 8月17日 | CLI、Devtools、E2E |
-| 8月20日 | デモ安定化、文書、動画撮影可能状態 |
+すべての子PRは`feat/ai-native-runtime`をbaseにし、local gate と Starter smoke 通過後に`dev`へmergeします。
 
-最初に実行する詳細計画は[PEAR Runtime Foundation Implementation Plan](./superpowers/plans/2026-07-11-pear-runtime-foundation.md)です。
+## Slices
+
+1. AI-native RFCと正本Docs
+2. Core source/compiler/provenance/Domain contracts
+3. `@pear-agent/ai` Vercel AI SDK adapters
+4. Cloudflare source storage、D1 baseline、Compile Workflow、HTTP API
+5. React typed client/hooks（`usePlanCompiler` 含む）
+6. AI-first Minimal Starter
+7. Outing 互換サンプルの維持（必須 E2E ではない）
+8. Artifact Inspector、hardening、公開 Docs
+
+## Out of v0.1
+
+- Cook Reference Application
+- Presentation Reference Application
+- Domain Marketplace / multi-template catalog
+
+## Milestones
+
+| 状態 | 完成物 |
+| ---- | ------ |
+| Done / in progress | RFC、Core、AI SDK、Cloudflare compile、React hooks、Starter |
+| v0.1 exit | Starter smoke + local gate + docs の v0.1 契約一致 |
+| Later | Cook / Presentation を Runtime 外（別 repo または examples）で再構築 |

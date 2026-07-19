@@ -3,50 +3,67 @@
 ## レイヤー
 
 ```text
-Application
-    ↓
-Domain Adapter（Cookingなど）
-    ↓
-PEAR Runtime（Session / Event / Timer / Continuation）
-    ↓
-Cloudflare Adapter / AI Provider Adapter
+Application / Reference UI
+  -> Domain Definition (schemas, instructions, invariants)
+  -> PEAR Compile + Execution Ports
+  -> @pear-agent/ai (Vercel AI SDK)
+  -> @pear-agent/cloudflare (Workflow / Agent / D1 / R2)
+  -> Gemini text + Gemini Live
 ```
 
-## 提供パッケージ
+`@pear-agent/core`は環境非依存です。Cloudflare、React、AI SDK、Geminiをimportしません。
 
-- `@pear-agent/core`
-- `@pear-agent/cloudflare`
-- `@pear-agent/react`
-- `create-pear-agent`
-
-## Cloudflareの責務
-
-- **Workers**：HTTP API、認証、Tool Call、AI SDK呼び出し、D1アクセス
-- **Agents**：Execution Session単位のdurable identity、状態、スケジュール
-- **D1**：Normalized Input、セッション、Plan、Plan Version、WorldState、Event、Timer、Continuation
-- **R2**：すべてのRaw Input
-- **Workflows**：複数段階の再計画、長時間処理、リトライ
-
-## AI SDKの責務
-
-構造化されたPlan生成、再計画、情報収集用のTool Calling、評価・差分要約を担当します。
-状態の永続化や状態遷移はAI SDKのAgent Loopに任せず、PEAR Runtimeの通常のTypeScript関数で行います。
-
-## Gemini Liveの責務
-
-マイク入力、音声出力、リアルタイム会話、音声Tool Call、Provider resume handleを担当します。
-Gemini Liveの接続状態は、Execution Sessionの正式状態ではありません。
-
-## データフロー
+## Compile data flow
 
 ```text
-ユーザー入力 → Domain Normalizer → AI SDK Planner → Plan Version
-→ Execution Session → Voice / UIによる実行支援
-→ Runtime Event + Timer → Assess → AI SDK Replanner → 新Plan Version
+Plan Artifact draft
+  -> Source upload/fetch (R2 bytes, D1 metadata)
+  -> Compile Workflow
+     -> ingest/extract
+     -> AI SourceInterpreter
+     -> clarification wait when required
+     -> AI PlanGenerator
+     -> Zod + Domain invariant validation
+     -> optional safe reconciliation
+  -> reviewed draft Plan version
+  -> confirmed ready Plan Artifact
 ```
 
-## Cloudflare依存の境界
+`PlanArtifactAgent`はartifact単位のdurable identityと状態broadcastを担当します。
+D1が正本であり、WorkflowやAgentのmemoryを正本にしません。
 
-PEAR Runtimeの中心型はWeb標準APIとTypeScriptだけで表現し、Cloudflare固有APIはAdapterへ閉じ込めます。当面はCloudflare-firstで実装しますが、CoreからCloudflare APIを直接参照しません。
+## Execution data flow
 
-Realtime Voiceはv0.1の必須機能です。Gemini Liveを標準Providerとし、AI SDKはPlan、Assess、Replanへ使用します。
+```text
+Ready Plan Artifact version
+  -> fork Execution Session
+  -> Gemini Live / UI execution
+  -> Runtime Event + WorldState
+  -> AI assessment
+  -> typed Plan Patch proposal
+  -> confirmation + validation
+  -> atomic Execution Session plan activation
+```
+
+Execution Sessionから元artifactへ変更を自動反映しません。必要な場合だけ最終Planを
+`Save as Plan`で明示保存します。
+
+## AI responsibility
+
+AIはSource interpretation、Plan synthesis、自然言語編集、Assess、Patch提案を担当します。
+RuntimeはID、schema、DAG、resource、policy、provenance、永続化を担当します。
+AIがD1/R2やExecution Stateを直接変更することは禁止します。
+
+## Provider boundary
+
+通常生成はVercel AI SDKの`LanguageModel`を注入します。Geminiを公式検証しますが、
+provider固有分岐は`@pear-agent/ai`のcapability検証へ閉じ込めます。
+Realtimeは`@google/genai`とephemeral tokenを使い、Gemini Liveをv0.1で保証します。
+
+## Storage
+
+- R2: Raw source bytesと抽出本文
+- D1: source metadata、compile jobs、interpretations、clarifications、generation metadata、
+  Plan artifacts/versions/changes、Execution Sessions、Events、WorldState、Continuations
+- Workflows: durable compile orchestrationとclarification wait/retry
+- Agents/DO: Plan ArtifactとExecution Sessionのidentity、mutation serialization、state sync

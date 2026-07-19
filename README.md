@@ -1,122 +1,62 @@
 # PEAR Agent 🍐
 
-**Plan, Execute, Assess, Replan.**
+**Natural-language sources → Plan → Execute → Assess → Replan.**
 
-PEAR Agentは、現実の作業をAIと一緒に最後まで進めるための実行支援エージェントです。PEAR Runtimeは、開発者がこの体験を持つアプリを自身のCloudflare環境へ構築するためのTypeScriptランタイムです。
-
-> 計画を作るだけではなく、終わるまで組み直すAI。
-
-## PEAR Loop
+PEAR Runtime は、レシピ、PDF、URL、メモなどの曖昧な入力を LLM で構造化し、一貫した実行計画へ変換して、現実の進行に合わせて更新し続ける Cloudflare-first TypeScript runtime です。
 
 ```text
-Plan → Execute → Assess → Replan
-  ↑                         │
-  └─────────────────────────┘
+Sources → Interpret → Clarify? → Plan → Review → Execute → Assess → Replan
+                         ↑                                  │          │
+                         └──────── durable artifacts ───────┴──────────┘
 ```
 
-- **Plan** — 目標・制約・リソースから計画を生成
-- **Execute** — 人間の実行を音声・UIで支援
-- **Assess** — 完了、遅延、失敗、リソース不足を記録
-- **Replan** — 最新状態から残りの計画を更新
+## AI-native by default
 
-## 解決する課題
+- `@pear-agent/ai` は Vercel AI SDK の structured output を使い、`SourceInterpreter`、Planner、Editor を provider-neutral に実装します。
+- Gemini は検証済みの既定 provider です。text planning と Gemini Live realtime は別セッションです。
+- Runtime が ID、version、状態遷移、認可、retry budget、provenance を所有します。LLM 出力は必ず Zod と Domain invariant を通ります。
+- deterministic planner は明示 adapter / fixture として利用できます。AI 障害時の暗黙 fallback はしません。
 
-現実の作業は、最初に作った手順どおりには進みません。PEAR Agentは計画と実行状態を永続化し、音声接続が中断しても作業セッションを失わないことを重視します。
+## Packages (v0.1)
 
-音声接続は状態の正ではありません。中断後は、保存されたExecution Sessionの最新スナップショットに新しい音声セッションを接続し直します。
+- `@pear-agent/core` — portable schemas, reducers, Domain/AI Ports, plan/replan contracts
+- `@pear-agent/ai` — Vercel AI SDK structured interpretation, planning, editing, replan
+- `@pear-agent/cloudflare` — Hono, Agents/DO, D1 + Drizzle, R2, compile/replan APIs
+- `@pear-agent/react` — hooks-only plan compile, execution, continuation, voice APIs
+- `create-pear-agent` — AI-first Minimal Starter scaffold
 
-## Reference Applications
+v0.1 の検証軸は **Runtime + Minimal Starter**（Sources → Compile → Review → Execute）です。  
+Outing（`examples/outing-*`）は互換サンプルとして残します。Cook / Presentation などの本格 Reference Application は v0.1 外で別途作ります。
 
-最初の縦切りは、CLIから生成できる外出準備サンプルです。中断、Wake、音声再開、部分再計画までを小さなDomainで実証します。
+## Quick start
 
-複数料理を同時に完成させる **PEAR Cook** は、cook-agentの知見を引き継ぐ第二のReference Applicationです。
-
-- 複数レシピの統合計画
-- 人数、器具、時間の制約を考慮した計画
-- 音声による工程案内
-- 遅延や材料不足の記録
-- 状況変化を反映したリアルタイム再計画
-- 待機中の音声セッション中断と再開
-
-料理固有の機能を基盤へ埋め込まず、PEAR CookをPEAR Runtimeの汎用性を検証する用途として扱います。
-
-## アーキテクチャ
-
-```text
-Browser
-├─ React UI
-├─ Microphone / Audio playback
-└─ Gemini Live（音声セッション）
-          │
-          ▼
-Cloudflare Workers
-├─ PEAR Agent API
-├─ AI SDK（計画・再計画・構造化出力）
-├─ Execution Session API
-└─ Runtime Tool Call
-          │
-          ├─ Cloudflare Agents（セッション状態・スケジュール）
-          ├─ D1（一覧・永続データ）
-          └─ Workflows（長時間処理）
+```bash
+pnpm dlx create-pear-agent@beta my-agent
+cd my-agent
+pnpm install
+cp .env.example .env
+cp .dev.vars.example .dev.vars
+# Set GEMINI_API_KEY in .dev.vars
+pnpm dev
 ```
 
-## 技術スタック
+The starter pins all four PEAR Runtime packages to `0.1.0-beta.1`, carries its own `migrations/0001_init.sql`, and demonstrates **Sources → Compile → Review → Execute** with an artifact inspector. It fails closed outside local development until the host supplies authorization. During the beta, `--example outing` is not bundled in npm; use `--from <pear-agent-root>` or `PEAR_AGENT_ROOT` from a monorepo checkout.
 
-- TypeScript
-- React + Vite
-- Hono on Cloudflare Workers
-- Cloudflare Agents / Durable Objects
-- Cloudflare D1 / Workflows
-- Vercel AI SDK（Planner / Replanner / Tool Calling）
-- Gemini Live API（Realtime Voice）
-- Zod
-- Oxlint / Oxfmt / tsgo
-- Vitest / Playwright
+## Runtime state
 
-AI SDKはモデル呼び出し、構造化出力、Tool Callingを担当します。Gemini Liveは連続音声のWebSocketセッションとして分離します。
+- **PlanArtifact** — sources, interpretation revisions, clarification, plan versions, generation metadata
+- **CompileJob** — durable compile phase/status/budget/error record
+- **Execution Session** — durable real-world work state and event log
+- **Voice Session** — temporary Gemini Live connection; never the source of truth
+- **Continuation** — durable suspension and resume intent
 
-## 状態の基本モデル
+## Development
 
-| 状態 | 役割 |
-| --- | --- |
-| Execution Session | 現実の作業そのものの進行状態 |
-| Voice Session | 音声モデルとの一時的な接続 |
-| Continuation | 中断後に再開するための予約状態 |
+```bash
+pnpm typecheck
+pnpm lint
+pnpm format:check
+pnpm test
+```
 
-加熱待ちの例：`Execution Session: active`、`Voice Session: disconnected`、`Continuation: suspended`、`Timer: running`。
-
-## v0.1の範囲
-
-### 実装するもの
-
-- 複数Actorを持てるExecution Session
-- 複数Stepの並行実行
-- 手動中断と時刻指定による中断
-- Continuationの永続化
-- Cloudflare上のWake処理
-- ページ再読み込み後の状態復元
-- 最新Runtime Snapshotからの音声再開
-- 影響範囲だけを更新する部分再計画
-- 外出準備サンプルによる計画・実行・再計画デモ
-- React hooks、CLI、簡易Devtools
-
-### 初期対象外
-
-- ブラウザを閉じた状態での自動マイク起動
-- 共同編集UI
-- 複数Voice Providerへの対応
-- Domain Marketplaceやノーコード作成機能
-- 長時間・大規模Plan向けの高度な最適化
-
-## 開発方針
-
-1. Execution SessionをVoice Sessionから分離する
-2. D1やAgent Stateを作業状態の正とする
-3. Providerの会話履歴やresume handleは補助情報として扱う
-4. LLMに状態遷移を任せず、RuntimeのToolを通して変更する
-5. 料理固有の概念はDomain側へ閉じ込める
-6. まず中断・再開・再計画の一連のデモを完成させる
-
-詳細仕様は[要件定義](./docs/requirements.md)と[`docs/`](./docs/)を参照してください。
-
-> **AIが計画と実行を支援し、現実の変化を評価して、実行中に計画を更新する閉ループ型の実行支援基盤。**
+Architecture and behavioral contracts live in [`docs/`](./docs/). Start with the [AI-native RFC](./docs/rfcs/2026-07-15-ai-native-runtime.md), [requirements](./docs/requirements.md), and [architecture](./docs/architecture.md).

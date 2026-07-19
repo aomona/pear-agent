@@ -1,115 +1,61 @@
 # PEAR Runtime Lifecycle
 
+## Plan Artifact
+
+```text
+draft -> compiling -> awaiting_clarification -> compiling -> review -> ready
+  |          |                                      |          |
+  |          +-> failed -> retry -------------------+          +-> archived
+  +-> cancelled                                               stale
+```
+
+Compile jobとPlan Artifactのstatusは分離します。Source変更は既存interpretationとPlanを
+`stale`にし、再compileまたは差分編集を要求します。失敗・cancelされた中間artifactは
+inspect/retryのため保持します。
+
+## Compile
+
+```text
+ingest -> interpret -> clarify? -> synthesize -> validate -> reconcile? -> review
+```
+
+重大な不足・矛盾だけclarificationを要求します。回答待ちは標準7日です。
+初回Planは自動でreadyにならず、Review後の明示操作を必要とします。
+
+## Draft edit
+
+```text
+natural-language request -> AI Patch/full draft -> validate -> diff -> confirm -> new version
+```
+
+全体再生成はExecution Session開始前だけ許可します。競合するbase versionは拒否し、
+最新Planを使って再提案します。
+
 ## Execution Session
 
 ```text
-not_started → active → paused → active → completed
-       └──────────────────────────────→ cancelled
+not_started -> active -> paused -> active -> completed
+       +-------------------------------------> cancelled
 ```
 
-SessionのVoice接続が切れてもExecution Sessionは継続できます。
-
-## Step
-
-```text
-blocked → ready → active → completed
-                    ├────→ paused → active
-                    ├────→ failed
-                    └────→ skipped
-```
-
-- 依存Stepが未完了なら`blocked`
-- 依存関係とResource条件を満たすと`ready`
-- 複数Stepを同時に`active`にできる
-- 完了済みStepはPlan Patchで変更できない
-
-## Voice Session
-
-```text
-disconnected → connecting → connected
-connected ↔ muted
-connected → recovering → connected
-connected → disconnected
-```
-
-- Execution Sessionごとに同時接続は1つ
-- Voice Leaseを取得したActorだけが接続できる
-- Provider resume handleは補助情報として永続化する
-
-## Continuation
-
-```text
-none → suspended → wake_pending → resuming → completed
-                                      └────→ expired
-```
-
-### Suspend
-
-```text
-suspend要求
-→ Snapshot取得
-→ Continuation保存
-→ Event追加
-→ Wake登録
-→ Voice切断
-```
-
-### Resume
-
-```text
-Wake条件成立
-→ wake_pending
-→ Reactへ同期
-→ ユーザーが再開
-→ resumingをatomicに取得
-→ Gemini Live接続
-→ Snapshot再同期
-→ completed
-```
-
-## PEAR Loop
-
-```text
-Goal + Normalized Input + WorldState
-                  ↓
-                Plan
-                  ↓
-               Execute
-                  ↓
-          Event / Observation
-                  ↓
-               Assess
-                  ↓
-          Replanが必要か？
-             │          │
-            No         Yes
-             │          ↓
-             │   Impact Analysis
-             │          ↓
-             │     Plan Patch
-             │          ↓
-             └─────→ Execute
-```
+Ready Plan versionを開始時にforkします。Voice Session切断はExecution Sessionを停止しません。
 
 ## Replan
 
 ```text
-Eventを記録
-→ WorldState更新
-→ Affected Subgraph特定
-→ Patch生成
-→ Schema検証
-→ DAG検証
-→ Policy検証
-→ 新Plan Version保存
-→ atomicに有効化
-→ Step State再計算
-→ 音声とUIで説明
+Domain observation/event -> Assess -> affected subgraph -> Patch proposal
+  -> diff + confirmation -> validation -> atomic activation -> execute
 ```
 
-検証に失敗した場合は旧Planを維持し、`replan_failed`イベントを追加します。
+標準modeは`confirm`です。完了済みStepは変更不可、active Step変更はpauseが必要です。
+検証失敗時は旧Planを維持して`replan_failed`を記録します。
 
-## Goal Completion
+## Voice Session
 
-成功条件は人間、Tool、状態ルール、AIのいずれかで評価します。全条件を満たした場合、Completion Policyに従って自動完了または人間確認へ進みます。
+```text
+disconnected -> connecting -> connected <-> muted
+connected -> recovering -> connected
+connected -> disconnected
+```
 
+生音声と全文transcriptは標準保存せず、状態変更に使った構造化summaryだけEventに残します。

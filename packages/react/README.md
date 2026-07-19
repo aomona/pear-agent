@@ -1,0 +1,110 @@
+# `@pear-agent/react`
+
+Typed Worker client, `PearProvider`, and hooks for PEAR Execution Runtime — without a fixed UI kit.
+
+## Install
+
+Install the public beta and its peer dependencies from npm:
+
+```bash
+pnpm add @pear-agent/react@beta @pear-agent/core@beta react agents
+```
+
+`agents` is required for realtime Agent WebSocket sync. Set `realtime={false}` on `PearProvider` to use HTTP-only snapshot loads (tests / offline tooling).
+
+## Host Worker
+
+Use `createPearWorker` from `@pear-agent/cloudflare` so `/agents/execution-session-agent/:sessionId` is routed and authorized for WebSockets (`session.read` via `?pearContext=`).
+
+## Sync model
+
+- **HTTP** is the source of truth for Runtime Snapshots (`GET /sessions/:id/snapshot`).
+- **Agent WebSocket** broadcasts a lightweight invalidation pulse (`revision`, `lastEventId`).
+- On revision advance or reconnect, hooks re-fetch the snapshot over HTTP.
+- Snapshot + continuation hooks share one channel per session + client instance.
+
+## Usage
+
+```tsx
+import {
+  PearProvider,
+  useExecutionSession,
+  useRuntimeSnapshot,
+  useContinuation,
+} from "@pear-agent/react";
+
+function App() {
+  return (
+    <PearProvider
+      baseUrl="https://my-worker.example.workers.dev"
+      // Inline getContext is fine — the provider keeps PearClient stable.
+      getContext={() => ({
+        actorId: "user-1",
+        roles: ["owner"],
+        claims: {},
+      })}
+    >
+      <SessionPanel />
+    </PearProvider>
+  );
+}
+
+function SessionPanel() {
+  // Unbound: omit the argument (or pass null). Do not pass null if you meant controlled mode.
+  const session = useExecutionSession();
+  // Snapshot + continuation share one session channel (one WS / HTTP hydrate).
+  const { snapshot, continuation, status, error, refetch } = useRuntimeSnapshot(session.sessionId);
+  // Optional alias if you only need continuation fields:
+  // const cont = useContinuation(session.sessionId);
+
+  void snapshot;
+  void continuation;
+  void status;
+  void error;
+  void refetch;
+  return null;
+}
+```
+
+### Hooks
+
+| Hook                  | Role                                                                                                                 |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `useExecutionSession` | Create/bind session; type-safe step/timer/event actions                                                              |
+| `useRuntimeSnapshot`  | HTTP hydrate + Agent pulse invalidation; loading/error/reconnect                                                     |
+| `useContinuation`     | Durable Continuation read model plus suspend / claim-resume / complete operations                                    |
+| `useVoiceSession`     | Voice Lease + ephemeral token + Live connect; **browser mic/speaker bridge**; tool bridge; disconnect ≠ session stop |
+
+```tsx
+import { useVoiceSession, FakeVoiceProvider } from "@pear-agent/react";
+
+function VoicePanel({ sessionId }: { sessionId: string }) {
+  const voice = useVoiceSession(sessionId);
+  // After connect(): mic capture + model audio playback start automatically
+  // (disable with enableBrowserMedia: false).
+  // Tests: useVoiceSession(sessionId, { provider: new FakeVoiceProvider(), enableBrowserMedia: false })
+  return (
+    <button type="button" onClick={() => void voice.connect()}>
+      Connect voice ({voice.status})
+    </button>
+  );
+}
+```
+
+Optional peer: `@google/genai` for `GeminiLiveVoiceProvider` (default when no `provider` override). Host apps should depend on `@google/genai` so the browser can load it.
+
+Live defaults (gemini-live-api-dev skill): model `gemini-3.1-flash-live-preview`, ephemeral tokens from the Worker, `sendRealtimeInput` for audio/text, `audioStreamEnd` on mute, flush playback on `interrupted`.
+
+Resume handles are debounced during a Live session and flushed before disconnect/suspend. The hook
+also performs a best-effort flush on `pagehide` and when `visibilitychange` enters `hidden`, reducing
+the chance of leaving a newer handle only in memory when a tab is closed or discarded. Lifecycle
+flushes use fetch `keepalive`; ordinary debounce, disconnect, and suspend writes use normal fetches.
+
+### Partial Replanning
+
+Use `PearClient.requestReplan(sessionId, mode)`, `confirmPlanPatch(sessionId, patchId)`, and `getLatestPlanChange(sessionId)` for the three Replan modes. `RuntimeSnapshot.latestPlanChange` carries the latest Patch status, cause Events, failure reason, and operation list, so UI can distinguish proposed/rejected/applied diffs without diffing whole Plans.
+
+### Auth
+
+- HTTP: `getContext()` → `x-pear-context`
+- Agent WebSocket: same context as `?pearContext=` (JSON), authorized as `session.read` on the Worker

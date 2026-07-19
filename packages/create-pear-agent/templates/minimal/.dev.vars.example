@@ -1,0 +1,6 @@
+# Explicitly enables allow-all authorization for local development only.
+# Never set this flag in a deployed Worker.
+PEAR_INSECURE_ALLOW_ALL=true
+
+# Required by the default AI-native compiler. Keep this Worker-only.
+GEMINI_API_KEY=

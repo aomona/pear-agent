@@ -1,0 +1,63 @@
+{
+  "name": "@pear-agent/cloudflare",
+  "version": "0.1.0-beta.1",
+  "homepage": "https://github.com/aomona/pear-agent#readme",
+  "bugs": {
+    "url": "https://github.com/aomona/pear-agent/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aomona/pear-agent.git",
+    "directory": "packages/cloudflare"
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "tag": "beta"
+  },
+  "scripts": {
+    "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\" && tsgo -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "pretypecheck": "pnpm build",
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@pear-agent/core": "workspace:0.1.0-beta.1",
+    "agents": "^0.17.3",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.29",
+    "zod": "^4.3.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.4",
+    "@cloudflare/workers-types": "^5.20260711.1",
+    "@google/genai": "^2.11.0",
+    "drizzle-kit": "^0.31.10",
+    "vitest": "^4.1.6",
+    "wrangler": "^4.110.0"
+  },
+  "peerDependencies": {
+    "@google/genai": "^1.0.0 || ^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@google/genai": {
+      "optional": true
+    }
+  }
+}

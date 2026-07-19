@@ -1,0 +1,41 @@
+{
+  "name": "@pear-agent/core",
+  "version": "0.1.0-beta.1",
+  "homepage": "https://github.com/aomona/pear-agent#readme",
+  "bugs": {
+    "url": "https://github.com/aomona/pear-agent/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aomona/pear-agent.git",
+    "directory": "packages/core"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "tag": "beta"
+  },
+  "scripts": {
+    "build": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\" && tsgo -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "pretypecheck": "pnpm build",
+    "typecheck": "tsgo --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "^4.3.5"
+  }
+}
