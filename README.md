@@ -42,6 +42,17 @@ pnpm dev
 
 The starter pins all four PEAR Runtime packages to `0.1.0-beta.1`, carries its own `migrations/0001_init.sql`, and demonstrates **Sources → Compile → Review → Execute** with an artifact inspector. It fails closed outside local development until the host supplies authorization. During the beta, `--example outing` is not bundled in npm; use `--from <pear-agent-root>` or `PEAR_AGENT_ROOT` from a monorepo checkout.
 
+## Documentation and Agent Skill
+
+- Documentation site: [pear-agent.aomona.me](https://pear-agent.aomona.me/)
+- Portable coding-agent skill: [`skills/pear-agent`](./skills/pear-agent)
+
+```bash
+npx skills add aomona/pear-agent --skill pear-agent
+```
+
+The skill guides greenfield and existing-app integration across Domain design, AI compile, Cloudflare bindings, React, verification, and deployment.
+
 ## Runtime state
 
 - **PlanArtifact** — sources, interpretation revisions, clarification, plan versions, generation metadata
