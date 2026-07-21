@@ -44,7 +44,7 @@ The starter pins all four PEAR Runtime packages to `0.1.0-beta.1`, carries its o
 
 ## Documentation and Agent Skill
 
-- Documentation site: [pear-agent-docs.pages.dev](https://pear-agent-docs.pages.dev/)
+- Documentation site: [pear-agent.aomona.me](https://pear-agent.aomona.me/)
 - Portable coding-agent skill: [`skills/pear-agent`](./skills/pear-agent)
 
 ```bash

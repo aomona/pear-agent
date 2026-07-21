@@ -69,4 +69,4 @@ Do not report completion from compilation alone. Show:
 - secrets stay server-side and authorization is not silently permissive in production;
 - the project's own verification commands pass.
 
-Full documentation: https://pear-agent-docs.pages.dev/
+Full documentation: https://pear-agent.aomona.me/
