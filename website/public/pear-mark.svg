@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PEAR Agent">
+  <path fill="#557a2d" d="M37 14c1-7 7-11 14-10-1 7-6 11-14 10Z"/>
+  <path fill="#a6d957" d="M33 12c-5 0-9 4-10 10-1 5-4 8-8 13-3 4-5 9-5 14 0 8 8 12 22 12s22-4 22-12c0-5-2-10-5-14-4-5-7-8-8-13-1-6-4-10-8-10Z"/>
+  <circle cx="26" cy="42" r="3" fill="#102019"/>
+  <circle cx="39" cy="42" r="3" fill="#102019"/>
+  <path fill="none" stroke="#102019" stroke-linecap="round" stroke-width="3" d="M27 51c3 2 7 2 10 0"/>
+</svg>
