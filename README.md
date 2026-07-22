@@ -1,34 +1,34 @@
-# PEAR Agent 🍐
+# PEAR Agent
 
-**Natural-language sources → Plan → Execute → Assess → Replan.**
+[![npm](https://img.shields.io/npm/v/create-pear-agent?label=create-pear-agent&color=5f9f62)](https://www.npmjs.com/package/create-pear-agent)
+[![CI](https://github.com/aomona/pear-agent/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/aomona/pear-agent/actions/workflows/ci.yml)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-PEAR Runtime は、レシピ、PDF、URL、メモなどの曖昧な入力を LLM で構造化し、一貫した実行計画へ変換して、現実の進行に合わせて更新し続ける Cloudflare-first TypeScript runtime です。
+**Build execution-support applications that turn unstructured sources into validated plans and keep them aligned with real-world progress.**
 
-```text
-Sources → Interpret → Clarify? → Plan → Review → Execute → Assess → Replan
-                         ↑                                  │          │
-                         └──────── durable artifacts ───────┴──────────┘
-```
+Sources → Interpret → Clarify → Plan → Review → Execute → Assess → Replan
 
-## AI-native by default
+[Documentation](https://pear-agent.aomona.me/) · [Quick Start](#quick-start) · [Agent Skill](./skills/pear-agent)
 
-- `@pear-agent/ai` は Vercel AI SDK の structured output を使い、`SourceInterpreter`、Planner、Editor を provider-neutral に実装します。
-- Gemini は検証済みの既定 provider です。text planning と Gemini Live realtime は別セッションです。
-- Runtime が ID、version、状態遷移、認可、retry budget、provenance を所有します。LLM 出力は必ず Zod と Domain invariant を通ります。
-- deterministic planner は明示 adapter / fixture として利用できます。AI 障害時の暗黙 fallback はしません。
+## What is PEAR Agent?
 
-## Packages (v0.1)
+PEAR Agent is a Cloudflare-first TypeScript runtime for applications that guide people through real-world work.
 
-- `@pear-agent/core` — portable schemas, reducers, Domain/AI Ports, plan/replan contracts
-- `@pear-agent/ai` — Vercel AI SDK structured interpretation, planning, editing, replan
-- `@pear-agent/cloudflare` — Hono, Agents/DO, D1 + Drizzle, R2, compile/replan APIs
-- `@pear-agent/react` — hooks-only plan compile, execution, continuation, voice APIs
-- `create-pear-agent` — AI-first Minimal Starter scaffold
+It converts PDFs, URLs, notes, and other natural-language sources into validated plan artifacts, then manages execution through a durable **Plan → Execute → Assess → Replan** loop.
 
-v0.1 の検証軸は **Runtime + Minimal Starter**（Sources → Compile → Review → Execute）です。  
-Outing（`examples/outing-*`）は互換サンプルとして残します。Cook / Presentation などの本格 Reference Application は v0.1 外で別途作ります。
+## Why PEAR?
 
-## Quick start
+| Capability                | Description                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------- |
+| **Validated planning**    | AI output is checked against Zod schemas and host-defined domain invariants.           |
+| **Durable execution**     | Execution state and event history survive reconnects, restarts, and long-running work. |
+| **Controlled replanning** | Replans update only affected work while protecting completed and skipped steps.        |
+| **Host-owned policy**     | The host application retains control of authorization, domain rules, UI, and adapters. |
+
+## Quick Start
+
+Requirements: Node.js 20 or later and pnpm.
 
 ```bash
 pnpm dlx create-pear-agent@beta my-agent
@@ -40,34 +40,93 @@ cp .dev.vars.example .dev.vars
 pnpm dev
 ```
 
-The starter pins all four PEAR Runtime packages to `0.1.0-beta.1`, carries its own `migrations/0001_init.sql`, and demonstrates **Sources → Compile → Review → Execute** with an artifact inspector. It fails closed outside local development until the host supplies authorization. During the beta, `--example outing` is not bundled in npm; use `--from <pear-agent-root>` or `PEAR_AGENT_ROOT` from a monorepo checkout.
+The generated starter demonstrates **Sources → Compile → Review → Execute** with an artifact inspector. Gemini is the verified default provider. Authorization fails closed outside local development until the host supplies an authorization policy.
 
-## Documentation and Agent Skill
+## How It Works
 
-- Documentation site: [pear-agent.aomona.me](https://pear-agent.aomona.me/)
-- Portable coding-agent skill: [`skills/pear-agent`](./skills/pear-agent)
+```text
+Sources
+   │
+   ▼
+Interpret ──► Clarify?
+   │
+   ▼
+Plan ──► Review
+   │
+   ▼
+Execute ──► Assess ──► Replan
+   ▲                     │
+   └─────────────────────┘
+```
+
+- **Plan Artifact** stores source references, interpretation revisions, clarification state, versioned plans, and generation metadata.
+- **Execution Session** stores durable work state and its event history.
+- **Voice Session** is an ephemeral Gemini Live connection and never the source of truth.
+- **Continuation** stores durable suspension and resume intent.
+
+## Packages
+
+| Package                                             | Purpose                                                                                |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`@pear-agent/core`](./packages/core)               | Portable schemas, pure reducers, domain ports, and plan/replan contracts               |
+| [`@pear-agent/ai`](./packages/ai)                   | Structured interpretation, planning, editing, and replanning through the Vercel AI SDK |
+| [`@pear-agent/cloudflare`](./packages/cloudflare)   | Hono APIs, Durable Objects, D1 + Drizzle, R2, and Workflows                            |
+| [`@pear-agent/react`](./packages/react)             | Typed clients and React hooks for compile, execution, continuation, and voice          |
+| [`create-pear-agent`](./packages/create-pear-agent) | Minimal AI-first starter generator                                                     |
+
+## Core Guarantees
+
+- AI and tool output never mutate runtime state directly.
+- Every external boundary is validated with Zod and host-defined domain invariants.
+- Runtime mutations pass through typed events and pure reducers.
+- Event append and materialized-state updates remain atomic and idempotent.
+- HTTP snapshots are the source of truth; WebSockets only signal invalidation.
+- Replanning cannot silently rewrite completed or skipped work.
+- AI failures do not trigger an implicit deterministic fallback.
+
+## Documentation
+
+Read the complete documentation at **[pear-agent.aomona.me](https://pear-agent.aomona.me/)**.
+
+- [Getting Started](https://pear-agent.aomona.me/guide/getting-started)
+- [Core Concepts](https://pear-agent.aomona.me/guide/concepts)
+- [Domain Design](https://pear-agent.aomona.me/guide/domain)
+- [AI Compilation](https://pear-agent.aomona.me/guide/ai-compilation)
+- [Cloudflare Integration](https://pear-agent.aomona.me/guide/cloudflare)
+- [React Integration](https://pear-agent.aomona.me/guide/react)
+
+Architecture and behavioral contracts live in [`docs/`](./docs/). Start with the [AI-native RFC](./docs/rfcs/2026-07-15-ai-native-runtime.md), [requirements](./docs/requirements.md), and [architecture](./docs/architecture.md).
+
+### Agent Skill
+
+Install the portable PEAR Agent skill for coding agents:
 
 ```bash
 npx skills add aomona/pear-agent --skill pear-agent
 ```
 
-The skill guides greenfield and existing-app integration across Domain design, AI compile, Cloudflare bindings, React, verification, and deployment.
-
-## Runtime state
-
-- **PlanArtifact** — sources, interpretation revisions, clarification, plan versions, generation metadata
-- **CompileJob** — durable compile phase/status/budget/error record
-- **Execution Session** — durable real-world work state and event log
-- **Voice Session** — temporary Gemini Live connection; never the source of truth
-- **Continuation** — durable suspension and resume intent
+The skill covers domain design, AI compilation, Cloudflare bindings, React integration, verification, and deployment for both new and existing applications.
 
 ## Development
 
 ```bash
+pnpm install
 pnpm typecheck
 pnpm lint
 pnpm format:check
 pnpm test
 ```
 
-Architecture and behavioral contracts live in [`docs/`](./docs/). Start with the [AI-native RFC](./docs/rfcs/2026-07-15-ai-native-runtime.md), [requirements](./docs/requirements.md), and [architecture](./docs/architecture.md).
+The required pre-push gate is:
+
+```bash
+pnpm typecheck && pnpm lint && pnpm format:check && pnpm test
+```
+
+## Project Status
+
+PEAR Agent is currently in beta. APIs may change before the stable `0.1` release.
+
+## License
+
+Released under the [MIT License](./LICENSE).
